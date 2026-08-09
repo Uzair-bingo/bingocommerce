@@ -1,0 +1,50 @@
+---
+description: WooCommerce development rules — HPOS-only, CRUD objects, checkout safety.
+globs: wp-content/**/*.php
+alwaysApply: false
+---
+
+# WooCommerce Rules
+
+## HPOS Only (ADR-004)
+
+- HPOS is enabled from day one. NEVER read/write orders via `postmeta`,
+  `get_post_meta( $order_id )`, or direct posts-table queries.
+- Always use CRUD objects: `wc_get_order()`, `WC_Order`, `WC_Product`,
+  `$order->get_meta()` / `$order->update_meta_data()` / `$order->save()`.
+- Declare HPOS compatibility in every custom plugin:
+  `FeaturesUtil::declare_compatibility( 'custom_order_tables', ... )`.
+
+## Products
+
+- Use WooCommerce product types (simple, variable) for physical goods.
+- Digital bingo packages extend a WooCommerce product with a digital package
+  definition stored in custom tables (ADR-005) — never in raw postmeta blobs.
+- An immutable purchase snapshot is created at checkout: later product edits
+  must never alter what a customer already bought.
+
+## Cart & Checkout
+
+- One cart and one order belong to exactly ONE hall (BR-003). Because each hall
+  is its own Multisite site, this is native — never write code that merges or
+  references another site's cart/products/orders.
+- Availability rules (session, day-of-week, sales window) are enforced
+  server-side at EVERY step: display, add-to-cart, cart update, checkout,
+  and payment completion. Front-end hiding alone is never authorization.
+- Session capacity (BR-025) is validated atomically at checkout via the custom
+  capacity table — see the database rule file.
+
+## Payments
+
+- Use WooCommerce's pluggable payment gateway API (ADR-010). Never hardcode
+  a specific provider. Gateway-specific behavior stays behind an adapter.
+- Verify payment webhooks; protect against replay and duplicate delivery.
+  Repeated webhook delivery must never duplicate charges, orders, stock
+  changes, or emails.
+
+## Orders & Refunds
+
+- Order state, physical fulfillment state, and digital entitlement state are
+  separate concepts — keep them separate in code and UI.
+- Refunding an order must void its digital entitlement (BR-011) and release
+  its session capacity slot (BR-025).

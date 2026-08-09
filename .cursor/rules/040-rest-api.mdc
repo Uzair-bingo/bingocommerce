@@ -1,0 +1,48 @@
+---
+description: REST API rules — custom endpoints, Android device API, QR redemption.
+globs: wp-content/**/*.php
+alwaysApply: false
+---
+
+# REST API Rules (ADR-011)
+
+## Every Custom Endpoint
+
+- Register on `rest_api_init` with a versioned namespace:
+  `bingocommerce/v1`.
+- EVERY route has an explicit `permission_callback` performing a real check —
+  `__return_true` on a mutating or data-exposing endpoint is rejected.
+- EVERY parameter has `sanitize_callback` (and `validate_callback` where
+  applicable).
+- Any direct DB query inside an endpoint uses `$wpdb->prepare()`.
+- Errors return safe messages — never expose SQL, stack traces, payment
+  details, or secret material.
+
+## Machine Authentication
+
+- WooCommerce-specific integrations (POS sync): WooCommerce REST API Consumer
+  Keys, scoped per integration with explicit Read / Write / Read-Write.
+- Non-WooCommerce REST integrations: WordPress core Application Passwords
+  (revocable per application).
+- NEVER build custom API-key auth systems for machine clients (ADR-011 /
+  anti-pattern list).
+
+## Android Device API (QR redemption)
+
+- No permanent hall-wide API key. Every device has: unique ID, hall (blog_id)
+  assignment, its own revocable credential, status, last-seen timestamp
+  (network-wide registry table, ADR-018).
+- Device tokens are short-lived; a compromised device must be revocable
+  without affecting other devices in that hall.
+- Redemption endpoint must be: rate-limited, hall-scoped, and ATOMIC —
+  validate hall, order, payment, session, expiry, refund/cancellation status,
+  and device eligibility, then transition the ticket `issued` → `redeemed`
+  and bind the device in one atomic operation. Repeated or simultaneous scans
+  are rejected and logged.
+- A second device can never redeem the same order unless a staff-gated
+  reactivation cleared the binding first (BR-009, BR-010).
+
+## Platform Hardening
+
+- Unauthenticated `/wp/v2/users` is disabled network-wide (prevents hall staff
+  username enumeration).

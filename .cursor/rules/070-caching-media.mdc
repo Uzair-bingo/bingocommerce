@@ -1,0 +1,46 @@
+---
+description: Caching, cache invalidation, and media handling rules.
+globs: wp-content/**/*.php
+alwaysApply: false
+---
+
+# Caching & Media (ADR-007, ADR-008, ADR-009)
+
+## Never Cache (page cache or CDN)
+
+Cart, checkout, my-account, order confirmation / thank-you, QR / redemption
+endpoints, payment callbacks and webhooks, wp-admin, and ANY logged-in
+response. Serving one visitor's cart or account to another is a
+critical-severity bug.
+
+## Object Cache (Redis — planned infrastructure)
+
+- Every key includes the site ID: `bc:{blog_id}:...`.
+- Redis is NEVER the source of truth — every cached value must be rebuildable
+  from the database.
+- Platform requires `WP_REDIS_SELECTIVE_FLUSH` + distinct `WP_REDIS_PREFIX`
+  per site. NEVER flush the whole network's cache for one hall's change.
+- Code must not assume Redis exists (it is planned infrastructure): always
+  use the WordPress object-cache API (`wp_cache_get/set/delete` with cache
+  groups), never call Redis clients directly.
+
+## Page Cache & CDN (planned infrastructure)
+
+- Public catalog pages may be page-cached; cache MUST vary by Host so each
+  hall subdomain is its own namespace.
+- Content mutations (product save, price/stock change, session/availability
+  change) trigger a TARGETED purge of affected URLs only (product page,
+  category/tag archives, shop page) through one central helper. Never
+  "purge everything" on a content edit.
+- Goal (D-005): hall manager edits → normal browser refresh shows it.
+  HTML: `Cache-Control: no-cache`. Static assets: long TTL + versioned URLs.
+
+## Media
+
+- Product images offload to S3-compatible storage via a plugin with CONFIRMED
+  Multisite support (per-site paths like `sites/{blog_id}/`). Vendor is open
+  (S3 / R2 / Spaces) — never hardcode vendor SDKs (ADR-009).
+- Local disk is acceptable ONLY in local dev; production never stores uploads
+  on local disk long-term.
+- Validate uploads (MIME, extension, dimensions, size). No unrestricted SVG
+  uploads by hall users. Serve AVIF with WebP fallback via CDN.

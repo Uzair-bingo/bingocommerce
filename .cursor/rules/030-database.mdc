@@ -1,0 +1,52 @@
+---
+description: Database, custom tables, and migrations rules for BingoCommerce.
+globs: wp-content/**/*.php
+alwaysApply: false
+---
+
+# Database & Custom Tables (ADR-005, ADR-018)
+
+## Source of Truth Split
+
+- Commerce data (products, orders, customers, taxes, shipping): WooCommerce +
+  HPOS, per-site table sets (native Multisite isolation).
+- Identity: network-global `wp_users` / `wp_usermeta` (shared login across halls).
+- Bingo operational data: custom indexed `bc_*` tables — NEVER unindexed postmeta:
+  sessions, availability rules, digital tickets/entitlements, redemption events,
+  capacity counters (per-site); device registry, hall billing status, audit log,
+  reporting facts (network-wide).
+
+## Table Rules
+
+- Per-site tables: `$wpdb->prefix . 'bc_<name>'` (auto-scoped to the hall).
+- Network-wide tables: `$wpdb->base_prefix . 'bc_<name>'` and MUST include an
+  indexed `blog_id` column.
+- Every table has an indexed hall/site reference column. Common indexed columns:
+  `blog_id`, `session_id`, `order_id`, `status`, `created_at`, `expires_at`,
+  `token_hash`, `device_id`.
+- Create/update via `dbDelta()` + a `bc_<table>_version` option for migrations.
+  Migrations must be backward-aware and safe to run at network scale.
+
+## Digital Ticket Table (canonical schema from technical-architecture.md)
+
+Fields: `ticket_token` (unique, unguessable — store a hash where practical),
+`order_id` (unique — ONE ticket per order, not per line item), `blog_id`,
+`status` (`issued` / `redeemed` / `void`), `redeemed_device_id`, `redeemed_at`,
+`reactivated_count`, `last_reactivated_at`, `last_reactivated_by_staff_id`.
+
+## Capacity Counter (BR-025 — read this before touching checkout)
+
+- Session capacity counts QUALIFYING PAID ORDERS, not packages. One order with
+  any digital package(s) for the session consumes exactly ONE slot.
+- An order containing packages for multiple sessions consumes one slot in EACH.
+- Refunded/cancelled orders release their slot; pending/failed never count.
+- Enforcement must be ATOMIC at checkout (e.g. conditional `UPDATE ... SET
+  used = used + 1 WHERE used < cap` and check affected rows, or row locking)
+  to prevent oversell under concurrent purchases. Read-then-write is a race
+  condition and is rejected.
+- Capacity value is configurable per session (default 300). NEVER hardcode 300.
+
+## Reporting
+
+- NEVER loop across hall sites/tables per request for platform reports. Write
+  normalized network reporting facts in the background when orders change.

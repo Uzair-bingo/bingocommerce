@@ -1,0 +1,40 @@
+---
+description: WordPress and PHP coding standards for all BingoCommerce PHP files.
+globs: wp-content/**/*.php
+alwaysApply: false
+---
+
+# WordPress / PHP Standards
+
+## PHP
+
+- Target PHP 8.4 (ADR-017). Use modern syntax where it improves clarity:
+  typed properties, enums, `readonly`, named arguments, `match`.
+- Strict types: declare `strict_types=1` at the top of every class file.
+- No deprecated PHP or WordPress functions. If a function's status is
+  uncertain, verify before using.
+
+## WordPress Coding Standards
+
+- Follow PHPCS `WordPress` ruleset (naming, spacing, Yoda conditions not
+  required but comparisons must be explicit).
+- All user-facing strings internationalized: `__( 'text', 'bingocommerce' )`.
+- Enqueue assets properly via `wp_enqueue_script` / `wp_enqueue_style` with
+  version numbers — never hardcode `<script>`/`<link>` tags.
+- Use hooks, not hacks: extend WooCommerce/WordPress through documented
+  actions and filters only.
+
+## Plugin Structure
+
+- Every plugin starts with the standard plugin header comment.
+- No code executes directly on include — everything registers via hooks
+  (`plugins_loaded`, `init`, `rest_api_init`, etc.).
+- Activation/deactivation hooks handle table creation (`dbDelta`) and cleanup
+  scheduling; uninstall logic lives in `uninstall.php`.
+- Text domain matches the plugin slug.
+
+## Admin / AJAX
+
+- Every AJAX handler verifies a nonce (`check_ajax_referer`) AND a capability.
+- Every admin form processes through nonce verification + sanitization.
+- Never trust `$_GET`/`$_POST`/`$_REQUEST` values without sanitization.

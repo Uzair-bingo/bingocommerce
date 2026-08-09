@@ -1,0 +1,45 @@
+---
+description: Multisite tenant-isolation rules. Cross-hall data leakage is the worst bug class.
+globs: wp-content/**/*.php
+alwaysApply: false
+---
+
+# Multisite & Tenant Isolation (ADR-018)
+
+Each hall is one Multisite site with its own per-site table set
+(`wp_{blog_id}_*`). Identity (`wp_users`) and network registry are global.
+
+## Context Resolution
+
+- Resolve the current hall from the site: `get_current_blog_id()`.
+- NEVER trust a `blog_id` / `hall_id` / site identifier from user input, URL
+  params, or request bodies without verifying authorization for THAT site.
+- An unknown/unmapped hostname must NEVER fall back to another hall's site.
+
+## Data Access
+
+- Hall-owned data (products, orders, customers, tickets, sessions, capacity)
+  lives in per-site tables — native isolation. Do not add `blog_id` columns to
+  per-site tables; the table prefix IS the isolation.
+- Network-wide `bc_*` tables (device registry, billing status, audit,
+  reporting facts) MUST include an indexed `blog_id` and every query against
+  them filters by it unless the caller is a Platform Admin.
+- `switch_to_blog()` only when cross-hall access is explicitly required AND
+  the user is Platform Admin; always pair with `restore_current_blog()`
+  (try/finally). Cross-hall writes require an audit log entry.
+- Network-activated plugins must not assume single-site behavior.
+
+## Identity Model (locked)
+
+- One network user per email — the same credentials work at every hall (BR-007).
+- Per-hall data stays separate: orders, order history, carts, payment tokens.
+- SHARED across halls: the customer address book (BR-001). Payment methods
+  are per-hall (separate merchant accounts force this naturally).
+- Staff may belong to multiple sites; the hall switcher lists only sites the
+  user is explicitly authorized for (BR-019).
+
+## Testing Requirement
+
+Any feature touching hall data must include a test asserting Hall A cannot
+read or modify Hall B's products, orders, customers, media, reports, payment
+settings, tickets, or devices.

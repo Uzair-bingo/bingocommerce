@@ -1,0 +1,96 @@
+# ===== BingoCommerce .gitignore =====
+# Location: project root (bingocommerce/). File must be named exactly: .gitignore
+
+# ============================================================
+# PROJECT-CRITICAL — do not remove these sections
+# ============================================================
+
+# WordPress core — never edited, never committed
+/wp-admin/
+/wp-includes/
+/wp-*.php
+!/wp-config-sample.php
+/index.php
+/license.txt
+/readme.html
+/xmlrpc.php
+
+# wp-content: track ONLY our custom code.
+# Third-party plugins/themes (incl. WooCommerce) are managed via
+# Composer / deploy manifest per the architecture spec — not committed.
+/wp-content/*
+!/wp-content/plugins/
+!/wp-content/mu-plugins/
+!/wp-content/themes/
+
+/wp-content/plugins/*
+!/wp-content/plugins/bingocommerce-*/
+
+/wp-content/mu-plugins/*
+!/wp-content/mu-plugins/bingocommerce-*/
+!/wp-content/mu-plugins/bingocommerce-*.php
+
+/wp-content/themes/*
+!/wp-content/themes/bingocommerce-*/
+
+# Secrets — NEVER commit
+wp-config.php
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# ============================================================
+# Generated / runtime content
+# (redundant with the wp-content block above, kept as a safety net)
+# ============================================================
+wp-content/uploads/
+wp-content/cache/
+wp-content/upgrade/
+wp-content/upgrade-temp-backup/
+wp-content/backups/
+wp-content/backup*/
+wp-content/ai1wm-backups/
+*.log
+debug.log
+wp-content/debug.log
+
+# Local database dumps
+*.sql
+*.sql.gz
+
+# ============================================================
+# Dependencies & build artifacts
+# ============================================================
+vendor/
+node_modules/
+dist/
+build/
+
+# ============================================================
+# Testing
+# ============================================================
+coverage/
+.phpunit.result.cache
+
+# ============================================================
+# OS / IDE / local tooling
+# ============================================================
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+*.tmp
+*.temp
+*.swp
+.wp-env/
+
+# ============================================================
+# AI agent tooling — personal/local overrides only
+# ============================================================
+.claude/settings.local.json
