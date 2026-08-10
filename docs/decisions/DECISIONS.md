@@ -28,7 +28,10 @@ Append-only log. Every entry here is locked — do not silently revise an entry 
 - **ADR-015 — [2026-08-08] — Naming Conventions:** Plugin slugs `bingocommerce-*`; PHP namespace `BingoCommerce\<PluginName>`; functions/hooks prefixed `bingocommerce_`; custom DB tables `$wpdb->prefix . 'bc_<name>'` (per-site) or `$wpdb->base_prefix . 'bc_<name>'` (network-wide).
 - **ADR-016 — [2026-08-08] — AI Agent Memory Architecture:** `AGENTS.md` is the single shared source of truth read natively by Cursor, Claude Code, and CodeX.
 - **ADR-017 — [2026-08-08] — Confirmed Local Dev Stack:** PHP 8.4.14, MySQL 9.3, WordPress 7.0.3.
-
+**ADR-018** — [2026-08-10] — WordPress table prefix set to `bc_` (changed from
+default `wp_`). Custom tables use `$wpdb->prefix . '<name>'` directly with no
+additional sub-prefix (avoids a `bc_bc_` stutter, since the base prefix already
+signals custom/branded tables).
 ---
 
 ## Business Rules (BR)

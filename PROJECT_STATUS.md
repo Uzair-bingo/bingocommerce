@@ -19,7 +19,7 @@
   A qualifying order is a completed order containing at least one digital package for that session.
   Multiple digital packages in one order still count as one qualifying order.
 - **[2026-08-07]** AI instruction & memory layer created: `AGENTS.md`, `CLAUDE.md`, `README.md`, `.claude/`.
-
+- **[2026-08-10]** Verified per-site permission isolation manually: Super Admin login works on every hall site (network-wide, as expected); a hall-scoped admin login correctly redirected/denied when attempting to access a different hall's dashboard, confirming BR-018/BR-019 role isolation works as designed.
 ---
 
 ## In Progress

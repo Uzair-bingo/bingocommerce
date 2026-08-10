@@ -72,7 +72,7 @@ Custom code lives ONLY in:
 - **Plugin Slugs:** `bingocommerce-*` (e.g., `bingocommerce-core`, `bingocommerce-digital-tickets`)
 - **PHP Namespace:** `BingoCommerce\<PluginName>` (e.g., `BingoCommerce\DigitalTickets`)
 - **Functions & Hooks:** `bingocommerce_` prefix
-- **Custom DB Tables:** `$wpdb->prefix . 'bc_<name>'` for per-site tables; `$wpdb->base_prefix . 'bc_<name>'` for network-wide tables.
+- **Custom DB Tables:** `$wpdb->prefix . '<name>'` for per-site tables; `$wpdb->base_prefix . '<name>'` for network-wide tables.
 - **Options & Meta Keys:** `bc_` prefix
 
 ---

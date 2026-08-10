@@ -18,15 +18,17 @@ alwaysApply: false
 
 ## Table Rules
 
-- Per-site tables: `$wpdb->prefix . 'bc_<name>'` (auto-scoped to the hall).
-- Network-wide tables: `$wpdb->base_prefix . 'bc_<name>'` and MUST include an
+- Per-site tables: `$wpdb->prefix . '<name>'` (auto-scoped to the hall).
+- Network-wide tables: `$wpdb->base_prefix . '<name>'` and MUST include an
   indexed `blog_id` column.
 - Every table has an indexed hall/site reference column. Common indexed columns:
   `blog_id`, `session_id`, `order_id`, `status`, `created_at`, `expires_at`,
   `token_hash`, `device_id`.
 - Create/update via `dbDelta()` + a `bc_<table>_version` option for migrations.
   Migrations must be backward-aware and safe to run at network scale.
-
+- Table names must be distinctive — never reuse WP core or WooCommerce table
+  names (ADR-019 guardrail).
+  
 ## Digital Ticket Table (canonical schema from technical-architecture.md)
 
 Fields: `ticket_token` (unique, unguessable — store a hash where practical),

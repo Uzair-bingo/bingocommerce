@@ -29,8 +29,10 @@ conflicts with them, STOP and ask.
 - Plugin slugs: `bingocommerce-*`
 - PHP namespace: `BingoCommerce\<PluginName>`
 - Functions/hooks: `bingocommerce_` prefix
-- DB tables: `$wpdb->prefix . 'bc_<name>'` (per-site) or
-  `$wpdb->base_prefix . 'bc_<name>'` (network-wide)
+- DB tables: `$wpdb->prefix . '<name>'` (per-site) or
+  `$wpdb->base_prefix . '<name>'` (network-wide). No sub-prefix — the base
+  prefix `bc_` is the platform namespace (ADR-019). Custom table names must not
+  collide with WP core or WooCommerce table names.
 - Options/meta keys: `bc_` prefix
 
 ## Honesty Rules (anti-hallucination)
