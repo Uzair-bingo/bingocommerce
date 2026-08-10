@@ -27,11 +27,23 @@ Append-only log. Every entry here is locked — do not silently revise an entry 
 - **ADR-014 — [2026-08-08] — Repository Structure:** WordPress Core is git-ignored and never edited. Custom code lives ONLY in `wp-content/plugins/bingocommerce-*`, `wp-content/mu-plugins/bingocommerce-*`, and `wp-content/themes/bingocommerce-*`.
 - **ADR-015 — [2026-08-08] — Naming Conventions:** Plugin slugs `bingocommerce-*`; PHP namespace `BingoCommerce\<PluginName>`; functions/hooks prefixed `bingocommerce_`; custom DB tables `$wpdb->prefix . 'bc_<name>'` (per-site) or `$wpdb->base_prefix . 'bc_<name>'` (network-wide).
 - **ADR-016 — [2026-08-08] — AI Agent Memory Architecture:** `AGENTS.md` is the single shared source of truth read natively by Cursor, Claude Code, and CodeX.
-- **ADR-017 — [2026-08-08] — Confirmed Local Dev Stack:** PHP 8.4.14, MySQL 9.3, WordPress 7.0.3.
-**ADR-018** — [2026-08-10] — WordPress table prefix set to `bc_` (changed from
-default `wp_`). Custom tables use `$wpdb->prefix . '<name>'` directly with no
-additional sub-prefix (avoids a `bc_bc_` stutter, since the base prefix already
-signals custom/branded tables).
+- **ADR-017 — [2026-08-08] — Confirmed Local Dev Stack:** PHP 8.4.14, MySQL 9.5, WordPress 7.0.3.
+- **ADR-018 — [2026-08-10] — WordPress Table Prefix & Custom Table Naming:**
+  WordPress table prefix is `bc_` instead of the default `wp_`.
+  Custom per-site tables use `$wpdb->prefix . '<name>'` and network-wide tables
+  use `$wpdb->base_prefix . '<name>'`, with no additional `bc_` sub-prefix.
+  This supersedes only the custom-table-naming portion of ADR-015; all other
+  ADR-015 naming conventions remain in force.
+  *Rationale:* The configured WordPress prefix already provides the `bc_`
+  namespace, avoiding redundant names such as `bc_bc_sessions`.
+  - **ADR-019 — [2026-08-10] — WooCommerce Network Activation:**
+  WooCommerce is installed and network-activated across the BingoCommerce
+  Multisite network. Hall sites are commerce stores by platform design;
+  individual hall administrators cannot activate or deactivate WooCommerce.
+  The primary network site may expose WooCommerce internally but is not
+  required to operate as a customer-facing storefront.
+  *Rationale:* Commerce is a mandatory platform capability for every hall,
+  and centralized activation prevents configuration drift between hall sites.
 ---
 
 ## Business Rules (BR)
@@ -60,6 +72,16 @@ signals custom/branded tables).
 - **BR-022 — [2026-08-08] — Storefront Templates:** Phase 2 template library uses block-theme starter site imports (one-time copy into hall site).
 - **BR-023 — [2026-08-08] — Platform Admin Override:** Platform Admins can create, edit, and publish products directly inside any hall store.
 - **BR-024 — [2026-08-08] — Onboarding Modes:** Supports both self-service hall onboarding and assisted setup by Bingo Innovation.
+**BR-025** — [2026-08-10] — Session Capacity Canonical Definition: a
+qualifying order is a completed order containing at least one digital
+package for that session. Multiple digital packages in one order still
+count as ONE qualifying order. Supersedes the looser summation language in
+BR-002.
+**BR-026** — [2026-08-10] — Super Admin Access Restriction: Platform Admin
+(native WordPress Super Admin) access is restricted to trusted platform
+operators only. Hall Manager and Game Operator roles must never be granted
+Super Admin. Any future restricted operational-admin tier is implemented
+via explicit bc_ capabilities, not broader network privileges.
 
 ---
 
