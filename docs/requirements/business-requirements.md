@@ -33,15 +33,17 @@ Three roles — do not conflate or merge:
 | **Game Operator** | One hall, floor/session only | Scan/redeem digital tickets, look up redemptions, staff-gated ticket reactivation | Pricing, products, billing — zero access |
 | **Platform Admin** | Network-wide | Provision halls, edit/create products in any hall's store, set billing status, manage retention/export | Not assigned to any single hall |
 
-(BR-018, BR-019, BR-020, BR-023)
+(BR-018, BR-019, BR-020, BR-023, BR-027, BR-029)
 
 ## Customer Accounts
 - Guest checkout is the primary path, no account required. (BR-007)
 - Registered accounts: one shared login (email + password) works across every
   hall's site — but order history and cart stay fully separated per hall. (BR-007)
-- Address book is shared across a customer's accounts at different halls (native
-  behavior); payment methods/tokens stay isolated per hall (enforced naturally —
-  separate merchant accounts). (BR-001)
+- Address book: previously used addresses may be suggested/reused across a
+  customer's accounts at different halls to reduce data entry, but each hall
+  stores its own separate copy for commerce/order records — updating an
+  address at one hall never rewrites another hall's stored data. Payment
+  methods/tokens remain fully hall-isolated (separate merchant accounts). (BR-028)
 - No phone/email verification required for guest purchases — email is only used
   to deliver the receipt/QR. (BR-008)
 

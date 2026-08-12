@@ -34,20 +34,25 @@ Rules:
 - Do not introduce Composer solely for class loading at this stage.
 - Nothing executes on file include; everything registers via hooks
 - Class files: `*.php` inside `src/`; one concern per class
+> **Implementation status:** `Plugin.php`, `HallContext.php`, and `Roles.php` are implemented. `AuditLog.php`, `Migrations.php`, and `uninstall.php` remain planned.
 
-## 3. Multisite Activation Contract (critical)
+## 3. Multisite Provisioning Contract (critical)
 
-Network-activated plugins must install per-site artifacts (roles, options,
-tables) correctly in BOTH situations:
+Network-activated BingoCommerce plugins that install per-site artifacts must
+support BOTH situations:
 
-1. **Activation on an existing network:** loop existing sites
-   (`get_sites( [ 'number' => 0 ] )` + `switch_to_blog()`) and install on each.
-   Always `restore_current_blog()` (try/finally).
-2. **New hall provisioned later:** hook `wp_initialize_site` and install on the
-   new site automatically.
+1. Existing sites during deployment/upgrade:
+   - use a versioned, idempotent provisioning mechanism
+   - enumerate sites only while the installed schema/version is stale
+   - use `switch_to_blog()` / `restore_current_blog()` safely
+   - deployment must NOT depend on network deactivate/reactivate
 
-Test for both paths is mandatory. A feature that works on Sunrise but breaks
-on the next hall created is a failed feature.
+2. Newly created sites:
+   - use the appropriate Multisite initialization lifecycle
+   - provision automatically
+   - reconcile dependencies that may initialize later
+
+A feature that works on existing halls but fails on a newly created hall is incomplete.
 
 ## 4. Migration Framework (core owns this)
 
@@ -69,10 +74,9 @@ on the next hall created is a failed feature.
 - If platform operations later require a restricted operational-admin layer,
   implement it through explicit capabilities/UI rather than granting unnecessary
   network privileges.
-- Custom capabilities prefixed `bc_` (e.g. `bc_manage_sessions`,
-  `bc_redeem_tickets`, `bc_reactivate_tickets`)
+- Custom capabilities prefixed `bc_`. Full ratified capability list per role: BR-027.
 - Roles are per-site in Multisite (`{prefix}user_roles` option) — installation
-  follows the Multisite Activation Contract above
+  follows the Multisite Provisioning Contract above
 - All authorization checks: `current_user_can( 'bc_...' )` — never role-name
   comparisons (AGENTS.md rule 5.5/7)
 

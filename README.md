@@ -18,8 +18,8 @@ Each hall operates its own independent WooCommerce store on a subdomain (`hallna
 | **Commerce Engine** | WooCommerce with HPOS (High-Performance Order Storage) |
 | **Runtime** | PHP 8.4 |
 | **Database** | MySQL 9.5 (InnoDB) |
-| **Object Cache** | Redis (per-hall keys, selective flush enabled) |
-| **Media Storage** | S3-compatible Object Storage + CDN |
+| **Object Cache** | Redis — approach locked per ADR-007; managed-service provider TBD |
+| **Media Storage** | S3-compatible object storage + CDN — approach locked per ADR-009; provider TBD |
 | **Custom Logic** | `bingocommerce-*` custom plugins + custom indexed tables |
 
 ---
@@ -29,7 +29,7 @@ Each hall operates its own independent WooCommerce store on a subdomain (`hallna
 | Path | Purpose |
 | :--- | :--- |
 | `wp-content/plugins/bingocommerce-*` | Custom feature plugins — **All core business logic** |
-| `wp-content/mu-plugins/bingocommerce-*` | Must-Use platform guards (billing engine, capacity locks, isolation) |
+| `wp-content/mu-plugins/bingocommerce-*` | Reserved for narrowly scoped, explicitly approved always-on platform guards; feature/domain business logic remains in normal `bingocommerce-*` plugins |
 | `wp-content/themes/bingocommerce-*` | Phase 1 standard storefront theme |
 | `docs/requirements/` | Business requirements & domain specs |
 | `docs/architecture/` | Technical architecture & system data flow |
@@ -49,11 +49,12 @@ Each hall operates its own independent WooCommerce store on a subdomain (`hallna
 - **PHP 8.4**
 - **MySQL 9.5**
 - Local Web Server (Apache / Nginx / Local)
-- **WordPress 7.0.3** (included in repository root)
+- **WordPress 7.0.3** installed locally at the repository root (WordPress Core is git-ignored)
 
 ### Setup Steps
 1. **Database Creation:** Create a local MySQL database (e.g., `bingocommerce`) via CLI or GUI client.
-2. **Configuration:** Copy `wp-config-sample.php` to `wp-config.php` in root, fill in local database credentials, and generate unique security salts.
+2. **Configuration:** Copy `wp-config-sample.php` to `wp-config.php` in root, fill in local
+   database credentials, set `$table_prefix = 'bc_';` (not the default `wp_`, per ADR-018), and generate unique security salts.
 3. **Web Server Host:** Point your local vhost/web server to the repository root directory.
 4. **WordPress Installation:** Complete the initial WordPress setup wizard.
 5. **Convert to Subdomain Multisite:**
@@ -61,7 +62,7 @@ Each hall operates its own independent WooCommerce store on a subdomain (`hallna
    - Go to **Tools -> Network Setup** in `wp-admin`, select **Subdomains**, and run the setup.
    - Update `wp-config.php` and `.htaccess` with the generated Multisite configuration rules.
 6. **Activate WooCommerce:** Network-activate WooCommerce and ensure High-Performance Order Storage (HPOS) is enabled under WooCommerce Settings.
-7. **Create Test Hall:** Create your first test site (e.g., `sunrise.localhost`) and verify subdomain routing.
+7. **Create Test Hall:** Create a test site such as `sunrise.bingocommerce.test` and verify local subdomain routing.
 
 ---
 

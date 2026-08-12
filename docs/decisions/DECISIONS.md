@@ -36,7 +36,7 @@ Append-only log. Every entry here is locked — do not silently revise an entry 
   ADR-015 naming conventions remain in force.
   *Rationale:* The configured WordPress prefix already provides the `bc_`
   namespace, avoiding redundant names such as `bc_bc_sessions`.
-  - **ADR-019 — [2026-08-10] — WooCommerce Network Activation:**
+- **ADR-019 — [2026-08-10] — WooCommerce Network Activation:**
   WooCommerce is installed and network-activated across the BingoCommerce
   Multisite network. Hall sites are commerce stores by platform design;
   individual hall administrators cannot activate or deactivate WooCommerce.
@@ -44,6 +44,38 @@ Append-only log. Every entry here is locked — do not silently revise an entry 
   required to operate as a customer-facing storefront.
   *Rationale:* Commerce is a mandatory platform capability for every hall,
   and centralized activation prevents configuration drift between hall sites.
+- **ADR-020** — [2026-08-11] — Hall Role Provisioning Mechanism: versioned,
+  idempotent capability reconciliation via a network-level and per-site
+  version option (not register_activation_hook, not destructive
+  remove_role()/add_role()). Existing sites sync via admin_init; new sites
+  sync via wp_initialize_site (priority 20), with self-healing for
+  WooCommerce Shop Manager's lazy initialization timing. Every sync
+  converges each role to its exact desired capability set — additions AND
+  removals — preventing capability drift over time.
+- **ADR-021 — [2026-08-12] — PHP Method & Hook Naming:**
+  Namespaced class methods under `BingoCommerce\<PluginName>` do not require a
+  `bingocommerce_` method-name prefix because the namespace already prevents
+  collisions. The `bingocommerce_` prefix remains mandatory for custom
+  WordPress hook-name strings and for rare standalone procedural functions.
+  This supersedes only the function/method naming portion of ADR-015; all other
+  ADR-015 naming conventions remain in force.
+- **ADR-022 — [2026-08-12] — Multisite Data Model (supersedes ADR-002):**
+  BingoCommerce uses one shared MySQL database with native WordPress Multisite
+  table separation. Hall-owned WordPress and WooCommerce data is stored in
+  per-site table sets (for example `bc_{blog_id}_posts` and
+  `bc_{blog_id}_wc_orders`), while WordPress network identity and registry data
+  uses shared network tables such as `bc_users`, `bc_usermeta`, `bc_blogs`,
+  `bc_site`, and `bc_sitemeta`.
+
+  Custom BingoCommerce tables follow the same ownership principle:
+  hall-owned operational data is per-site unless there is a documented reason
+  for network-wide storage; genuinely network-level data may use network-wide
+  tables with an indexed `blog_id`/`site_id` where tenant attribution is
+  required.
+
+  BingoCommerce does NOT use database-per-hall.
+
+  This supersedes ADR-002.
 ---
 
 ## Business Rules (BR)
@@ -72,17 +104,132 @@ Append-only log. Every entry here is locked — do not silently revise an entry 
 - **BR-022 — [2026-08-08] — Storefront Templates:** Phase 2 template library uses block-theme starter site imports (one-time copy into hall site).
 - **BR-023 — [2026-08-08] — Platform Admin Override:** Platform Admins can create, edit, and publish products directly inside any hall store.
 - **BR-024 — [2026-08-08] — Onboarding Modes:** Supports both self-service hall onboarding and assisted setup by Bingo Innovation.
-**BR-025** — [2026-08-10] — Session Capacity Canonical Definition: a
-qualifying order is a completed order containing at least one digital
-package for that session. Multiple digital packages in one order still
-count as ONE qualifying order. Supersedes the looser summation language in
-BR-002.
-**BR-026** — [2026-08-10] — Super Admin Access Restriction: Platform Admin
-(native WordPress Super Admin) access is restricted to trusted platform
-operators only. Hall Manager and Game Operator roles must never be granted
-Super Admin. Any future restricted operational-admin tier is implemented
-via explicit bc_ capabilities, not broader network privileges.
+- **BR-025 — [2026-08-10] — Session Capacity Canonical Definition:** A qualifying order is a completed order containing at least one digital package for that session. Multiple digital packages in one order still count as ONE qualifying order. Supersedes the looser summation language in BR-002.
+- **BR-026 — [2026-08-10] — Super Admin Access Restriction:** Phase 1 Platform Admin authority is exercised only by trusted native WordPress Super Admins. Hall Manager and Game Operator must never receive Super Admin. If a restricted operational-admin tier is needed later, implement it with explicit `bc_*` capabilities/UI — not broader network privileges.
+- **BR-027** — [2026-08-11] — Hall Role Capability Model (ratified after
+manual authorization testing across Sunrise, Tampa, and Orlando):
+bc_hall_manager = live WooCommerce Shop Manager baseline (synced, not
+hardcoded) minus prohibited capabilities, plus bc_manage_hall,
+bc_manage_hall_staff, bc_manage_hall_settings, bc_manage_products,
+bc_manage_orders, bc_manage_sessions, bc_view_orders, bc_view_sessions,
+bc_redeem_tickets, bc_reactivate_tickets. bc_game_operator = read only,
+plus bc_view_orders, bc_view_sessions, bc_redeem_tickets,
+bc_reactivate_tickets — no native management capabilities. Both roles are
+unconditionally stripped of: install/activate/delete/update/edit_plugins,
+install/switch/edit/delete/update_themes, manage_network*, promote_users,
+delete_users.
+- **BR-028 — [2026-08-12] — Cross-Hall Address Reuse:**
+  A registered customer's previously used addresses may be suggested/reused
+  across hall storefronts to reduce data entry, but each hall stores its own
+  copy for commerce/order records. Updating an address in one hall must not
+  silently rewrite another hall's stored customer/order data.
+  This supersedes the "shared address book" portion of BR-001; payment
+  methods/tokens remain hall-isolated.
+- **BR-029 — [2026-08-12] — Hall Storefront Customization:**
+  Hall Managers may customize their hall's approved BingoCommerce storefront,
+  including fonts, styles, navigation, pages, and provided theme/template
+  layouts. They may not install, upload, switch, delete, or introduce
+  unapproved themes, plugins, or executable platform code.
+- **BR-030 — [2026-08-12] — Full Hall Lifecycle States (extends BR-016 and BR-017):**
+  The complete hall lifecycle is:
 
+  Active → Overdue → Restricted → Suspended → Terminated →
+  Pending Deletion → Deleted.
+  `Pending Deletion` means permanent deletion has been scheduled but has not
+  yet occurred. A Platform Admin may pause or extend the deletion schedule in
+  accordance with retention policy.
+  `Deleted` means the hall's deletable operational data has been permanently
+  removed following the required retention period and administrative checks.
+  Deletion completion or failure must be recorded and surfaced to Platform
+  Admin.
+  A hall's billing/lifecycle state alone must not invalidate digital tickets
+  already purchased by customers before restriction or suspension. Such
+  tickets remain subject to their normal session, refund, cancellation,
+  redemption, and entitlement-validity rules.
+  
+- **BR-031 — [2026-08-12] — Session Capacity State Transitions (extends BR-025):**
+  A qualifying order consumes one capacity slot in each session for which that
+  order contains at least one qualifying digital package. Therefore, an order
+  containing qualifying packages for multiple sessions consumes one slot in
+  EACH applicable session.
+
+  Pending, failed, abandoned, or otherwise non-completed orders do not consume
+  session capacity.
+
+  If a qualifying order is fully refunded or cancelled before the applicable
+  session's capacity can no longer be resold, its capacity reservation for that
+  session is released. Refunds or cancellations occurring after the session is
+  no longer eligible for sale must remain visible in historical reporting and
+  must not retroactively distort the session's historical capacity usage.
+
+- **BR-032 — [2026-08-12] — Package Transaction Limit:**
+  A customer may purchase at most one BingoCommerce package in a single
+  customer checkout transaction, regardless of package type (paper,
+  electronic/computer, or hybrid).
+
+  The customer cart may contain no more than one product classified as a
+  package at any time. If a package is already present, adding another package
+  is blocked. A customer may remove the existing package and select a different
+  package before checkout.
+
+  Package identity is determined by explicit BingoCommerce product metadata
+  and is NOT inferred from WooCommerce categories, titles, tags, or cart
+  contents:
+
+  - `bc_product_kind = package | regular`
+    Defines whether the independently purchasable product is a BingoCommerce
+    package.
+
+  - `bc_package_relation = none | package_only_addon`
+    Defines whether an independently represented product may be purchased
+    without an eligible package.
+
+  A WooCommerce category such as "Bingo Packages" may be used for catalog
+  organization, merchandising, filtering, or reporting, but is never the
+  authoritative source for package transaction enforcement.
+
+  A product with `bc_product_kind = package` cannot be added when another
+  package is already present in the customer cart.
+
+  A product with `bc_package_relation = package_only_addon` may be purchased
+  only while an eligible package is present in the cart. Where an add-on is
+  limited to specific packages, BingoCommerce must maintain an explicit
+  package-to-add-on eligibility relationship rather than assuming that the
+  presence of any package is sufficient.
+
+  The cart and checkout must never remain in an invalid state. If removal or
+  replacement of a package causes a package-only add-on to lose its eligible
+  parent package, the dependent item must be removed or checkout must be
+  prevented until the invalid item is resolved.
+
+  Regular merchandise
+  (`bc_product_kind = regular`, `bc_package_relation = none`) may be purchased
+  independently and may coexist with one package in the same cart.
+
+  The same physical merchandise may be represented by separate SKUs when the
+  business requires different purchase behavior. For example, a standard
+  dauber may be independently purchasable while a separate promotional or
+  package-specific dauber SKU may be restricted to an eligible package.
+
+  For a WooCommerce Bundle that itself represents the BingoCommerce package,
+  the bundle/container product carries `bc_product_kind = package`. Internal
+  bundle components do not count as additional packages merely because they
+  appear as components of that package. Independently purchasable component
+  products retain their own BingoCommerce classification.
+
+  Tied WooCommerce Product Add-ons configured as options on the package product
+  are part of that package selection and do not count as independent packages
+  for this transaction-limit rule.
+
+  This rule applies to the normal customer cart and checkout flow and must be
+  enforced server-side as well as reflected in the storefront UI.
+
+  This supersedes only the assumption in BR-025 that multiple independently
+  purchased package products may normally occur within a single customer
+  checkout. BR-025's capacity rule remains defensive and authoritative for
+  capacity accounting: a qualifying order consumes capacity according to the
+  session(s) represented by its qualifying digital entitlements, including
+  imported, administratively created, or legacy orders if such data exists.
 ---
 
 ## Still Open / TBD Items (Unresolved)

@@ -15,17 +15,21 @@ BingoCommerce is a hosted multi-tenant e-commerce platform for bingo halls, chur
 ---
 
 ## 2. Confirmed Application Architecture
+
 ### Confirmed
 - WordPress Multisite
 - Subdomain mode
 - WooCommerce
 - Custom BingoCommerce plugins
 - Custom indexed tables where appropriate
+- Redis persistent object caching approach (ADR-007)
+- S3-compatible object storage approach (ADR-009)
 
-### Planned / Infrastructure-Dependent
-- Persistent object cache such as Redis
-- S3-compatible object storage
-- CDN
+### Provider / Infrastructure Still Open
+- Redis managed-service provider
+- S3-compatible storage provider
+- CDN provider
+- Overall production hosting provider
 
 ---
 
@@ -34,7 +38,7 @@ This root directory contains the WordPress installation. **WordPress Core is git
 
 Custom code lives ONLY in:
 - `wp-content/plugins/bingocommerce-*` — Custom feature plugins (all business logic)
-- `wp-content/mu-plugins/bingocommerce-*` — Must-Use platform guards (capacity, billing, isolation)
+- `wp-content/mu-plugins/bingocommerce-*` — Reserved for narrowly scoped always-on platform guards only when explicitly approved by architecture; feature/domain business logic remains in normal `bingocommerce-*` plugins.
 - `wp-content/themes/bingocommerce-*` — Phase 1 standard storefront theme
 - `docs/` — Architecture, requirements, decisions, and runbooks (**NEVER** deployed to production)
 
@@ -42,7 +46,7 @@ Custom code lives ONLY in:
 
 ## 4. Roles & Permissions Model
 - **Game Operator:** Floor/session role only. Can scan and redeem digital QR receipts, lookup redemptions, and execute staff-gated ticket reactivations. Zero access to pricing, products, or billing settings.
-- **Hall Manager:** Runs one or more assigned hall stores. Manages products, pricing, inventory, sessions, orders, staff, and refunds. Swaps contexts using a multi-hall switcher. Cannot install plugins or alter network configuration.
+- **Hall Manager:** Runs one or more assigned hall stores. Manages products, pricing, inventory, sessions, orders, staff, refunds, and approved storefront customization. May edit the provided hall theme's fonts, styles, navigation, pages, and layouts, but cannot install/upload/switch themes, install plugins, or alter network configuration.
 - **Platform Admin:** Bingo Innovation network-wide administrator. Provision halls, edit any hall store, manage platform billing status, manage product templates, and oversee data retention.
 
 ---
@@ -63,7 +67,7 @@ Custom code lives ONLY in:
 ### Architecture & Operations
 8. **Custom Tables over Postmeta:** Operational data (sessions, digital entitlements, device registries, audit events, billing logs) lives in custom indexed tables—NEVER in unindexed `postmeta`.
 9. **Atomic Capacity Enforcement:** Session digital capacity (e.g., maximum 300 orders) must be validated server-side during checkout via atomic database locks.
-10. **Redis Selective Flush:** All caching code must respect `WP_REDIS_SELECTIVE_FLUSH` and use unique site prefixes (`WP_REDIS_PREFIX`). Global cache flushes are strictly forbidden.
+10. **Tenant-Safe Object Caching:** If persistent object caching is enabled, cache keys and invalidation behavior MUST remain tenant-safe in Multisite. A hall-scoped cache-clear operation must never invalidate unrelated halls. Exact Redis/plugin/provider configuration must be verified against the selected implementation before production use.
 11. **No Caching on Dynamic Pages:** Never full-page cache `/cart`, `/checkout`, `/my-account`, QR redemption endpoints, or admin dashboards.
 
 ---
@@ -71,7 +75,11 @@ Custom code lives ONLY in:
 ## 6. Naming Conventions
 - **Plugin Slugs:** `bingocommerce-*` (e.g., `bingocommerce-core`, `bingocommerce-digital-tickets`)
 - **PHP Namespace:** `BingoCommerce\<PluginName>` (e.g., `BingoCommerce\DigitalTickets`)
-- **Functions & Hooks:** `bingocommerce_` prefix
+- **Functions & Hooks:** Namespaced class methods (`BingoCommerce\<PluginName>\ClassName::method()`)
+  are the standard — no `bingocommerce_` prefix needed on method names, since the namespace
+  already prevents collisions. The `bingocommerce_` prefix still applies to any literal
+  WordPress hook name string passed to `add_action()`/`add_filter()`, and to any standalone
+  procedural function (rare — only where a class doesn't fit).
 - **Custom DB Tables:** `$wpdb->prefix . '<name>'` for per-site tables; `$wpdb->base_prefix . '<name>'` for network-wide tables.
 - **Options & Meta Keys:** `bc_` prefix
 

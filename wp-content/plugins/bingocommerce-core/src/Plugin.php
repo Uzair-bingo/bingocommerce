@@ -13,6 +13,8 @@ final class Plugin {
 	}
 
 	public static function init(): void {
-		// Core services will be registered here.
+		add_action( 'admin_init', [ Roles::class, 'maybe_provision_network' ] );
+		add_action( 'admin_init', [ Roles::class, 'maybe_sync_current_site' ] );
+		add_action( 'wp_initialize_site', [ Roles::class, 'provision_new_site' ], 20 );
 	}
 }

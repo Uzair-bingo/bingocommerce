@@ -11,9 +11,10 @@ for rationale/history — this file describes *what*, the decision log explains 
 | CMS / Network | WordPress 7.0.x Multisite, subdomain mode | ADR-001, ADR-003 |
 | Commerce | WooCommerce, HPOS enabled | ADR-001, ADR-004 |
 | Runtime | PHP 8.4 | ADR-017 |
-| Database | MySQL 9.5 (InnoDB) — WooCommerce officially tested to 9.0, 9.5 unverified but expected compatible | ADR-017 |
-| Object cache | Redis — approach locked, vendor open | ADR-007 |
-| Media storage | S3-compatible object storage — approach locked, vendor open (AWS S3 vs. R2 vs. other) | ADR-009 |
+| Database | MySQL 9.5 (InnoDB) in current local development; production
+  version requires compatibility verification before deployment | ADR-017 |
+| Object cache | Redis — approach locked; specific managed-service provider open | ADR-007, ADR-013 |
+| Media storage | S3-compatible object storage + CDN — approach locked; specific provider open | ADR-009 |
 | Payment | WooCommerce native pluggable gateway API — no hardcoded provider | ADR-010 |
 
 ## Application Flow
@@ -28,12 +29,17 @@ Request -> hallname.parent-domain.com
         -> Game Operator scans -> REST endpoint validates -> marks redeemed
         -> Android app loads games
 ```
-Platform Admin actions (billing status, cross-hall product edits) route through
-WordPress Network Admin — native cross-site capability, no custom layer.
+Platform administration uses WordPress Network Admin as the trusted entry
+context, with BingoCommerce custom network-level modules/services implementing
+hall provisioning, billing lifecycle, retention/deletion, cross-hall reporting,
+and other platform-specific operations.
 
 ## Data Architecture
-- Each hall = separate Multisite site, own table set (own prefix) — native isolation
-  for products, orders, customers, settings.
+- Each hall has site-scoped products, orders, WooCommerce settings, and
+  hall-specific commerce/customer records.
+- WordPress user identity is network-shared (`bc_users` / `bc_usermeta`);
+  hall membership, roles, orders, merchant/payment context, and commerce
+  records remain hall-scoped.
 - Digital tickets: custom indexed table. Fields: ticket_token (unique, unguessable),
   order_id (unique — one ticket per order, not per item), hall/site_id, status
   (issued/redeemed/void), redeemed_device_id, redeemed_at, reactivated_count,
@@ -88,7 +94,7 @@ WordPress Network Admin — native cross-site capability, no custom layer.
 ## Hosting Requirements
 Must explicitly support (confirm before committing to a provider, don't assume):
 - WordPress Multisite (not default on every managed WP plan)
-- Redis as a managed service
+- Support for a production-grade persistent object-cache service if/when enabled
 - Staging environment separate from production — a bad plugin/core update is
   network-wide, hitting every hall simultaneously; always stage first
 - Automated backups with point-in-time restore

@@ -4,10 +4,10 @@ globs: wp-content/**/*.php
 alwaysApply: false
 ---
 
-# Multisite & Tenant Isolation (ADR-018)
+# Multisite & Tenant Isolation (ADR-022)
 
 Each hall is one Multisite site with its own per-site table set
-(`wp_{blog_id}_*`). Identity (`wp_users`) and network registry are global.
+(`bc_{blog_id}_*`). Identity (`bc_users`) and network registry are global.
 
 ## Context Resolution
 
@@ -21,7 +21,7 @@ Each hall is one Multisite site with its own per-site table set
 - Hall-owned data (products, orders, customers, tickets, sessions, capacity)
   lives in per-site tables — native isolation. Do not add `blog_id` columns to
   per-site tables; the table prefix IS the isolation.
-- Network-wide `bc_*` tables (device registry, billing status, audit,
+- Network-wide custom tables (device registry, billing status, audit,
   reporting facts) MUST include an indexed `blog_id` and every query against
   them filters by it unless the caller is a Platform Admin.
 - `switch_to_blog()` only when cross-hall access is explicitly required AND
@@ -33,8 +33,14 @@ Each hall is one Multisite site with its own per-site table set
 
 - One network user per email — the same credentials work at every hall (BR-007).
 - Per-hall data stays separate: orders, order history, carts, payment tokens.
-- SHARED across halls: the customer address book (BR-001). Payment methods
-  are per-hall (separate merchant accounts force this naturally).
+- Addresses (BR-028): a registered customer's previously used addresses MAY be
+  suggested/reused across hall storefronts to reduce data entry, but each hall
+  stores its OWN copy. Updating an address in one hall must NEVER rewrite
+  another hall's stored customer or order data.
+- The customer-scoped address suggestion above is the ONLY sanctioned
+  cross-hall read for non-platform users: read-only, limited to the
+  authenticated customer's own address records. Every other cross-hall read
+  requires Platform Admin capability + audit log.
 - Staff may belong to multiple sites; the hall switcher lists only sites the
   user is explicitly authorized for (BR-019).
 

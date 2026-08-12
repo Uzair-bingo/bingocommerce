@@ -24,15 +24,17 @@ conflicts with them, STOP and ask.
    role-name string comparisons.
 8. Card data never transits or is stored on our server — gateway hosted fields/SDK only.
 
-## Naming Conventions (locked, ADR-015)
+## Naming Conventions (locked — ADR-015, ADR-018, ADR-021)
 
 - Plugin slugs: `bingocommerce-*`
 - PHP namespace: `BingoCommerce\<PluginName>`
-- Functions/hooks: `bingocommerce_` prefix
-- DB tables: `$wpdb->prefix . '<name>'` (per-site) or
-  `$wpdb->base_prefix . '<name>'` (network-wide). No sub-prefix — the base
-  prefix `bc_` is the platform namespace (ADR-019). Custom table names must not
-  collide with WP core or WooCommerce table names.
+- Namespaced class methods need NO prefix — the namespace prevents collisions (ADR-021).
+- The `bingocommerce_` prefix is MANDATORY for: custom WordPress hook-name strings
+  passed to `add_action()`/`add_filter()`, and any standalone procedural function
+  (rare — only where a class doesn't fit).
+- DB tables: `$wpdb->prefix . '<name>'` (per-site) or `$wpdb->base_prefix . '<name>'`
+  (network-wide). No sub-prefix — the base prefix `bc_` is the platform namespace
+  (ADR-018). Custom table names must never collide with WP core or WooCommerce tables.
 - Options/meta keys: `bc_` prefix
 
 ## Honesty Rules (anti-hallucination)
