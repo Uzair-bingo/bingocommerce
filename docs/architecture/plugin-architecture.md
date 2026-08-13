@@ -36,6 +36,8 @@ Rules:
 - Class files: `*.php` inside `src/`; one concern per class
 > **Implementation status:** `Plugin.php`, `HallContext.php`, and `Roles.php` are implemented. `AuditLog.php`, `Migrations.php`, and `uninstall.php` remain planned.
 
+
+
 ## 3. Multisite Provisioning Contract (critical)
 
 Network-activated BingoCommerce plugins that install per-site artifacts must
@@ -87,3 +89,14 @@ A feature that works on existing halls but fails on a newly created hall is inco
 - Cross-plugin communication via documented hooks (`do_action`/`apply_filters`
   with `bingocommerce_` prefix), never by calling another plugin's internals
 - No business logic in themes; no presentation logic in core services
+
+### Shared Audit Service
+
+`AuditLog.php` is the shared network-wide platform audit service defined by
+ADR-023. Security-sensitive cross-cutting events from staff management,
+ticket reactivation, billing/lifecycle administration, and future platform
+features must use this service rather than creating independent general-purpose
+audit-log tables.
+
+The audit service records accountability events; it does not replace
+feature-specific operational state or history.

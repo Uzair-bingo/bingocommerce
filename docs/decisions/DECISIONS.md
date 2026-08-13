@@ -76,6 +76,58 @@ Append-only log. Every entry here is locked — do not silently revise an entry 
   BingoCommerce does NOT use database-per-hall.
 
   This supersedes ADR-002.
+
+- **ADR-023 — [2026-08-12] — Network-Wide Audit Log Architecture:**
+  BingoCommerce uses a shared network-wide audit service owned by
+  `bingocommerce-core` for security-sensitive and administrative events that
+  require Platform Admin visibility across halls.
+
+  Canonical audit events are stored in a network-wide custom table using
+  `$wpdb->base_prefix`, with tenant attribution through an indexed
+  `blog_id` / `site_id`.
+
+  Audit records must capture sufficient context to reconstruct the action,
+  including at minimum:
+  - hall/site
+  - actor identity
+  - action/event type
+  - target type and target identifier where applicable
+  - timestamp
+  - relevant before/after or contextual metadata where required
+
+  Initial consumers include Hall Staff Management (BR-033), ticket
+  reactivation (BR-010), and hall billing/lifecycle administrative actions
+  (BR-016/BR-030).
+
+  The central audit log is an append-only accountability trail and does NOT
+  replace domain-specific operational state or history. Feature plugins may
+  retain their own domain records where required for correctness, while also
+  emitting the corresponding canonical audit event through the core AuditLog
+  service.
+
+  Feature plugins must not create competing general-purpose audit-log systems
+  when the event belongs in the shared platform audit trail.
+
+  For security-sensitive mutations where an audit event is mandatory, the domain mutation and its audit event form one atomic logical operation.
+  The mutation MUST NOT remain committed if the mandatory audit record cannot
+  be persisted. On audit failure, the operation must fail and the previous
+  domain state must be restored.
+
+  Implementations must not silently continue, downgrade audit failures to
+  warnings, or leave unaudited privilege/security changes in place.
+
+  No WordPress role or capability may grant edit or delete access to audit
+  records. All writes occur exclusively through the AuditLog service's
+  internal methods — never exposed through any UI, REST endpoint, or
+  capability grant.
+
+  The platform audit trail has an independent retention lifecycle governed by platform-level compliance and legal policy. Hall lifecycle transitions, including Terminated, Pending Deletion, and Deleted, do not automatically delete corresponding audit records.
+
+  The exact audit-retention period is not hardcoded and remains subject to
+  platform compliance/legal review.
+
+  Rationale: Platform Admin requires efficient cross-hall auditing, while
+  ADR-022 identifies this as genuinely network-level data.
 ---
 
 ## Business Rules (BR)
@@ -230,6 +282,49 @@ delete_users.
   capacity accounting: a qualifying order consumes capacity according to the
   session(s) represented by its qualifying digital entitlements, including
   imported, administratively created, or legacy orders if such data exists.
+
+- **BR-033 — [2026-08-12] — Hall Staff Management & Hall Manager Delegation:**
+  A Hall Manager may add or remove Game Operators, and may add or remove other
+  Hall Managers, but only for a hall on which they themselves currently hold
+  Hall Manager rights — never network-wide and never for a hall they do not
+  already manage.
+
+  Both existing network users and newly created users may be assigned as hall
+  staff. Assigning an existing user reuses their shared network identity
+  (BR-007) and grants the role only on the specific hall in question.
+
+  Removing a user from hall staff removes their role/capability on that hall
+  only. It must never delete their shared WordPress identity or remove access
+  they legitimately hold on any other hall.
+
+  A Hall Manager may assign only the approved BingoCommerce hall roles:
+  Hall Manager and Game Operator. They may not grant Administrator, Shop
+  Manager, Super Admin, arbitrary WordPress roles, or network capabilities,
+  and may not use staff management to expand their own hall scope.
+
+  Every grant, role change, and removal of Hall Manager or Game Operator status
+  is logged with at least actor, target user, hall, timestamp, previous role,
+  new role, and action. All staff grants, role changes, and removals must emit
+  an audit event through the shared platform audit service defined by ADR-023.
+
+  Platform Admin (native Super Admin, per BR-026) retains an always-on,
+  non-removable override to view, audit, grant, change, and revoke Hall Manager
+  or Game Operator assignments on any hall.
+
+  Normal Hall Manager actions must not remove the last remaining Hall Manager
+  from a hall. Platform Admin may override this safeguard when necessary.
+
+  A Hall Manager may not change or remove their own role or membership on a
+  hall; that change must be performed by another Hall Manager of the same
+  hall or by Platform Admin.
+
+  A Hall Manager role assignment, role change, or hall-membership removal is
+  successful only when its mandatory ADR-023 audit event is persisted
+  successfully. If audit persistence fails, the staff change must fail and
+  the previous staff state must be restored.
+
+  No Hall Manager or Game Operator action under this rule may grant
+  Administrator or Super Admin privileges, consistent with BR-026.
 ---
 
 ## Still Open / TBD Items (Unresolved)
@@ -241,3 +336,4 @@ delete_users.
 - Production hosting provider selection.
 - Production parent domain purchase.
 - Legal review of 90-day financial record retention safety.
+- Platform audit-log retention period and legal/compliance policy.
