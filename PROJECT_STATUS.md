@@ -51,6 +51,10 @@
   Manager storefront customization boundary (BR-029). Fixed Redis/S3
   "TBD vs. locked" contradiction across technical-architecture.md, README.md,
   and AGENTS.md that had drifted from ADR-007/ADR-009.
+- **[2026-08-13]** Core network migration framework implemented and verified.
+  Network-wide append-only AuditLog foundation implemented and verified.
+  Audit transaction primitive intentionally deferred until Hall Staff Management
+  consumer-level transaction/cache/hook analysis.
 ---
 
 ## In Progress

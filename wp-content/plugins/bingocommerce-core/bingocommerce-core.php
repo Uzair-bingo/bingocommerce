@@ -17,6 +17,8 @@ define( 'BINGOCOMMERCE_CORE_PATH', plugin_dir_path( __FILE__ ) );
 
 require_once BINGOCOMMERCE_CORE_PATH . 'src/HallContext.php';
 require_once BINGOCOMMERCE_CORE_PATH . 'src/Roles.php';
+require_once BINGOCOMMERCE_CORE_PATH . 'src/Migrations.php';
+require_once BINGOCOMMERCE_CORE_PATH . 'src/AuditLog.php';
 require_once BINGOCOMMERCE_CORE_PATH . 'src/Plugin.php';
 
 BingoCommerce\Core\Plugin::boot();

@@ -128,6 +128,26 @@ Append-only log. Every entry here is locked — do not silently revise an entry 
 
   Rationale: Platform Admin requires efficient cross-hall auditing, while
   ADR-022 identifies this as genuinely network-level data.
+  
+- **ADR-024 — [2026-08-13] — Audit Validation and Write Path Extension Policy:**
+  The canonical `bingocommerce-core` AuditLog validation and persistence path
+  must not expose WordPress filters or actions that allow third-party code to
+  alter audit-event acceptance, bypass sensitive-data restrictions, mutate the
+  canonical payload being persisted, or change whether a required audit write
+  succeeds.
+
+  Audit security policy is owned by `bingocommerce-core` and changes to that
+  policy require reviewed code changes rather than runtime extension hooks.
+
+  This restriction does not prohibit observability hooks outside the canonical
+  audit validation/write path where those hooks cannot weaken, modify, or
+  bypass the security control. For example,
+  `bingocommerce_core_migration_failed` may remain as an operational
+  notification emitted after a migration failure.
+
+  Rationale: mandatory audit integrity must not depend on arbitrary plugin or
+  theme callbacks, particularly when AuditLog is used by security-sensitive
+  operations governed by ADR-023.
 ---
 
 ## Business Rules (BR)
