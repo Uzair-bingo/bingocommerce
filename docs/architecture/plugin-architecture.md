@@ -22,10 +22,22 @@ bingocommerce-core/
 │   ├── Plugin.php             # Plugin orchestrator
 │   ├── HallContext.php
 │   ├── Roles.php
+│   ├── Migrations.php
 │   ├── AuditLog.php
-│   └── Migrations.php
+│   ├── PreparedAuditEvent.php
+│   ├── HallStaffIntent.php
+│   ├── HallStaffResult.php
+│   ├── HallStaffRetryToken.php
+│   ├── HallStaffTransactionTransport.php
+│   ├── HallStaffService.php
+│   ├── HallStaffWriterGuard.php
+│   └── HallStaffAdmin.php
 └── uninstall.php
 ```
+
+Test harnesses never live inside the plugin tree — they belong in the
+repository-root `tests/` directory (AGENTS.md §3) so they cannot ship with a
+deployable plugin.
 
 Rules:
 - Namespace: `BingoCommerce\Core` (matching `BingoCommerce\<PluginName>` convention)
@@ -34,7 +46,14 @@ Rules:
 - Do not introduce Composer solely for class loading at this stage.
 - Nothing executes on file include; everything registers via hooks
 - Class files: `*.php` inside `src/`; one concern per class
-> **Implementation status:** `Plugin.php`, `HallContext.php`, and `Roles.php` are implemented. `AuditLog.php`, `Migrations.php`, and `uninstall.php` remain planned.
+> **Implementation status:** every `src/` class listed above is implemented and
+> verified (Hall Staff Phase A). `uninstall.php` remains planned — note that
+> ADR-023 gives the audit trail an independent retention lifecycle, so uninstall
+> must not casually drop `bc_audit_log`.
+>
+> Not yet implemented, locked as intended behavior by BR-035: Hall Manager
+> create/invite-new-operational-user, and the Platform Admin network-identity
+> lifecycle (Disable / Reactivate / Permanently Delete).
 
 
 

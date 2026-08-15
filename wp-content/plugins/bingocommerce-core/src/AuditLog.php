@@ -25,43 +25,14 @@ if ( ! defined( 'ABSPATH' ) ) {
  * no database rollback can undo. Sensitive-field policy is code-owned for
  * Phase 1 and is changed by editing this class under review — never by a hook.
  *
- * ATOMIC MUTATION + AUDIT (ADR-023) — deliberately not implemented here:
+ * ADR-025 adds a narrow Hall Staff transaction integration. AuditLog prepares
+ * an immutable event before BEGIN, then the HallStaffTransactionTransport calls
+ * insert_transactional() with its captured mysqli handle. The critical method
+ * performs only structural assertions and one native prepared INSERT. It does
+ * not call WordPress APIs, $wpdb, hooks, caches, or external services.
  *
- * A generic `atomic( callable $mutation, ... )` wrapper is intentionally
- * absent, because inspection of the APIs the first consumer (Hall Staff
- * Management, BR-033) will need showed that such a wrapper would promise more
- * than it can deliver.
- *
- * TRANSACTION SAFETY IS NOT PROVIDED BY THIS CLASS.
- *
- * No security-sensitive consumer may assume its operation is atomic merely
- * because it called record() between START TRANSACTION and COMMIT. Wrapping
- * statements in a transaction does not, on its own, make an operation
- * transactionally safe. Before any transactional use, consumer-level review of
- * ALL of the following is mandatory:
- *
- *  - Every database write the mutation performs, directly or through a
- *    WordPress/WooCommerce API, including writes to tables the caller did not
- *    expect and any DDL (MySQL commits implicitly on CREATE/ALTER/DROP).
- *  - wpdb reconnect behaviour. wpdb silently reconnects and re-runs a query on
- *    MySQL error 2006 (class-wpdb.php, query()). If that fires during the
- *    mutation, the write commits standalone on a fresh autocommit connection
- *    and a later ROLLBACK is a no-op. A connection-identity check can detect
- *    this but cannot undo it.
- *  - Every WordPress hook the mutation triggers. add_user_to_blog(), for
- *    example, fires the can_add_user_to_blog filter and the add_user_to_blog
- *    action; third-party callbacks may send mail or call external services.
- *  - Object cache state. ROLLBACK reverts the database but NOT the WordPress
- *    object cache, so a rolled-back role grant can stay readable via
- *    current_user_can() for the remainder of the request — worse under a
- *    persistent cache (ADR-007). Cache reconciliation is the consumer's job.
- *  - Irreversible side effects. Email, webhooks, external API calls, queued
- *    remote jobs, and file writes are never rolled back and must not occur
- *    inside the transaction.
- *
- * Where that review cannot establish real atomicity for a given mutation, the
- * correct outcome is to report the limitation — not to present the operation
- * as atomic.
+ * This is intentionally NOT a generic atomic(callable) facility. The Hall Staff
+ * transport owns its complete, reviewed mutation boundary and cache recovery.
  */
 final class AuditLog {
 
@@ -150,13 +121,29 @@ final class AuditLog {
 	 * @return int|\WP_Error Inserted audit row ID, or \WP_Error on failure.
 	 */
 	public static function record( array $event ) {
-		$prepared = self::prepare_event( $event );
+		$prepared = self::prepare_event( $event, null );
 
 		if ( is_wp_error( $prepared ) ) {
 			return $prepared;
 		}
 
 		return self::insert( $prepared );
+	}
+
+	/**
+	 * Prepare a mandatory transactional audit event before BEGIN.
+	 *
+	 * This is an internal core integration point. Feature code must use its
+	 * canonical service rather than calling it directly.
+	 *
+	 * @return PreparedAuditEvent|\WP_Error
+	 */
+	public static function prepare_transactional_event( array $event, string $operation_id ) {
+		if ( ! wp_is_uuid( $operation_id, 4 ) ) {
+			return self::invalid_event( 'The operation_id must be a UUID v4.' );
+		}
+
+		return self::prepare_event( $event, strtolower( $operation_id ) );
 	}
 
 	/**
@@ -167,7 +154,7 @@ final class AuditLog {
 	 *
 	 * @return array|\WP_Error
 	 */
-	private static function prepare_event( array $event ) {
+	private static function prepare_event( array $event, ?string $operation_id ) {
 		$action = self::validate_action( $event );
 		if ( is_wp_error( $action ) ) {
 			return $action;
@@ -193,21 +180,23 @@ final class AuditLog {
 			return $payloads;
 		}
 
-		return [
-			'blog_id'        => $blog_id,
-			'actor_user_id'  => $actor_user_id,
-			'action'         => $action,
-			'target_type'    => $target['target_type'],
-			'target_id'      => $target['target_id'],
-			'previous_value' => $payloads['previous_value'],
-			'new_value'      => $payloads['new_value'],
-			'context'        => $payloads['context'],
+		return new PreparedAuditEvent(
+			Migrations::audit_log_table(),
+			$operation_id,
+			$blog_id,
+			$actor_user_id,
+			$action,
+			$target['target_type'],
+			$target['target_id'],
+			$payloads['previous_value'],
+			$payloads['new_value'],
+			$payloads['context'],
 			// UTC is the single canonical convention for this table. Written
 			// explicitly from application code so the value never depends on
 			// the database server's timezone, and never accepted from the
 			// caller so events cannot be backdated.
-			'created_at'     => current_time( 'mysql', true ),
-		];
+			current_time( 'mysql', true )
+		);
 	}
 
 	/**
@@ -517,15 +506,16 @@ final class AuditLog {
 	 *
 	 * @return int|\WP_Error
 	 */
-	private static function insert( array $prepared ) {
+	private static function insert( PreparedAuditEvent $prepared ) {
 		global $wpdb;
 
-		$table = Migrations::audit_log_table();
+		$table = $prepared->table();
+		$values = $prepared->columns();
 
 		$inserted = $wpdb->insert(
 			$table,
-			$prepared,
-			[ '%d', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ]
+			$values,
+			[ '%s', '%d', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ]
 		);
 
 		if ( false === $inserted ) {
@@ -554,6 +544,146 @@ final class AuditLog {
 		}
 
 		return (int) $wpdb->insert_id;
+	}
+
+	/**
+	 * Persist a prepared mandatory event on the caller's existing transaction.
+	 *
+	 * CRITICAL-SECTION CONTRACT: this method contains no WordPress API calls,
+	 * translations, hooks, cache access, $wpdb execution, or external work.
+	 * Only HallStaffTransactionTransport may call it.
+	 *
+	 * @return int|\WP_Error Insert ID or a transport-safe failure.
+	 */
+	public static function insert_transactional( PreparedAuditEvent $event, \mysqli $connection ) {
+		$columns = $event->columns();
+
+		if ( null === $columns['operation_id'] || ! self::is_uuid_v4_pure( $columns['operation_id'] ) ) {
+			return new \WP_Error( 'invalid_operation_id', 'The prepared audit operation ID is invalid.' );
+		}
+
+		$table = self::quote_identifier( $event->table() );
+		$sql   = "INSERT INTO {$table} (operation_id, blog_id, actor_user_id, action, target_type, target_id, previous_value, new_value, context, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+
+		try {
+			$statement = $connection->prepare( $sql );
+
+			if ( false === $statement ) {
+				return new \WP_Error( 'audit_prepare_failed', 'The mandatory audit statement could not be prepared.', [ 'db_errno' => $connection->errno ] );
+			}
+
+			$operation_id  = $columns['operation_id'];
+			$blog_id       = $columns['blog_id'];
+			$actor_user_id = $columns['actor_user_id'];
+			$action        = $columns['action'];
+			$target_type   = $columns['target_type'];
+			$target_id     = $columns['target_id'];
+			$previous      = $columns['previous_value'];
+			$new           = $columns['new_value'];
+			$context       = $columns['context'];
+			$created_at    = $columns['created_at'];
+
+			$statement->bind_param(
+				'siisssssss',
+				$operation_id,
+				$blog_id,
+				$actor_user_id,
+				$action,
+				$target_type,
+				$target_id,
+				$previous,
+				$new,
+				$context,
+				$created_at
+			);
+
+			if ( ! $statement->execute() ) {
+				$error = new \WP_Error(
+					1062 === $statement->errno ? 'duplicate_operation_id' : 'audit_insert_failed',
+					'The mandatory audit event could not be inserted.',
+					[ 'db_errno' => $statement->errno ]
+				);
+				$statement->close();
+				return $error;
+			}
+
+			$insert_id = (int) $connection->insert_id;
+			$statement->close();
+			return $insert_id;
+		} catch ( \Throwable $throwable ) {
+			return new \WP_Error(
+				1062 === (int) $throwable->getCode() ? 'duplicate_operation_id' : 'audit_insert_failed',
+				'The mandatory audit event could not be inserted.',
+				[ 'db_errno' => (int) $throwable->getCode() ]
+			);
+		}
+	}
+
+	/**
+	 * Read the durable operation witness on an explicitly supplied authoritative
+	 * mysqli connection. This never consults domain state or a cache.
+	 *
+	 * @return array<string,mixed>|null|\WP_Error
+	 */
+	public static function read_operation_witness( \mysqli $connection, string $operation_id ) {
+		if ( ! self::is_uuid_v4_pure( $operation_id ) ) {
+			return new \WP_Error( 'invalid_operation_id', 'The operation ID is invalid.' );
+		}
+
+		$table = self::quote_identifier( Migrations::audit_log_table() );
+		$sql   = "SELECT operation_id, blog_id, actor_user_id, action, target_type, target_id, previous_value, new_value, context, created_at FROM {$table} WHERE operation_id = ?";
+
+		try {
+			$statement = $connection->prepare( $sql );
+
+			if ( false === $statement ) {
+				return new \WP_Error( 'witness_read_failed', 'The operation witness query could not be prepared.', [ 'db_errno' => $connection->errno ] );
+			}
+
+			$statement->bind_param( 's', $operation_id );
+
+			if ( ! $statement->execute() ) {
+				$error = new \WP_Error( 'witness_read_failed', 'The operation witness could not be read.', [ 'db_errno' => $statement->errno ] );
+				$statement->close();
+				return $error;
+			}
+
+			$result = $statement->get_result();
+
+			if ( false === $result ) {
+				$error = new \WP_Error( 'witness_read_failed', 'The operation witness result could not be read.', [ 'db_errno' => $statement->errno ] );
+				$statement->close();
+				return $error;
+			}
+
+			if ( $result->num_rows > 1 ) {
+				$result->free();
+				$statement->close();
+				return new \WP_Error( 'witness_consistency_violation', 'Multiple operation witnesses violate the audit protocol.' );
+			}
+
+			$row = 1 === $result->num_rows ? $result->fetch_assoc() : null;
+			$result->free();
+			$statement->close();
+			return $row;
+		} catch ( \Throwable $throwable ) {
+			return new \WP_Error( 'witness_read_failed', 'The operation witness could not be read.', [ 'db_errno' => (int) $throwable->getCode() ] );
+		}
+	}
+
+	private static function is_uuid_v4_pure( string $operation_id ): bool {
+		return 1 === preg_match(
+			'/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/D',
+			strtolower( $operation_id )
+		);
+	}
+
+	private static function quote_identifier( string $identifier ): string {
+		if ( 1 !== preg_match( '/^[A-Za-z0-9_]+$/D', $identifier ) ) {
+			throw new \InvalidArgumentException( 'Unsafe database identifier.' );
+		}
+
+		return '`' . $identifier . '`';
 	}
 
 	private static function invalid_event( string $message ): \WP_Error {

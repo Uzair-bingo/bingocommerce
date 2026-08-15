@@ -13,6 +13,9 @@ final class Plugin {
 	}
 
 	public static function init(): void {
+		HallStaffWriterGuard::register();
+		HallStaffAdmin::register();
+
 		// Priority 5: core-owned schema is applied before any handler that may
 		// come to depend on it. Gated internally by a network schema version,
 		// so a current network costs one cached option read per request.

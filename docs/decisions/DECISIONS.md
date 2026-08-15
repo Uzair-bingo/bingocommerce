@@ -148,6 +148,33 @@ Append-only log. Every entry here is locked — do not silently revise an entry 
   Rationale: mandatory audit integrity must not depend on arbitrary plugin or
   theme callbacks, particularly when AuditLog is used by security-sensitive
   operations governed by ADR-023.
+
+- **ADR-025 — [2026-08-13] — Fail-Closed Transaction Transport, Operation Identity, and Commit Reconciliation for Mandatory-Audit Mutations**
+
+BingoCommerce security-sensitive mutations that require a mandatory ADR-023 audit event (initially Hall Staff Management per BR-033) must use the following rules:
+
+1. **Transport:** Critical transactional DML (domain mutation + mandatory audit insert + COMMIT/ROLLBACK) MUST execute via **direct mysqli** on a **captured** WordPress connection handle (`$wpdb->dbh` validated as `mysqli`). These statements MUST NOT use `$wpdb->query()`, `$wpdb->insert()`, `$wpdb->update()`, or `$wpdb->delete()`.
+2. **No `$wpdb` mutation fallback:** On any transport or commit uncertainty, BingoCommerce MUST NOT “recover” by re-issuing critical DML through `$wpdb` (reconnect-and-retry hazard). Fail closed.
+3. **Same transaction:** Protected domain DML and the mandatory audit insert MUST occur in **one** InnoDB transaction on that same connection.
+4. **No native WP user/role APIs inside the critical transaction:** `wp_insert_user()`, `add_user_to_blog()`, `remove_user_from_blog()`, `WP_User::set_role()` / `add_role()` / `remove_role()`, and equivalent wrappers MUST NOT run inside the critical transaction. Side effects (email, cache, WooCommerce hooks) occur only after `COMMITTED_VERIFIED`.
+5. **Canonical writer path (Hall Staff):** Assigning, changing, or removing `bc_hall_manager` / `bc_game_operator` on a hall MUST occur only through the BingoCommerce Hall Staff service (or a successor core-owned canonical writer). Parallel native WordPress/WooCommerce user-admin paths, direct usermeta edits, and ad-hoc `$wpdb`/mysqli writers MUST NOT be treated as supported mutation channels for these roles. Platform controls MUST prevent or fail closed against bypasses that would skip locking, operation identity, mandatory audit, and reconciliation rules. Super Admin override of BR-033 safeguards still goes through this canonical writer — it does not authorize an unaudited native shortcut.
+6. **No generic `atomic(callable)`:** Core MUST NOT expose a generic wrapper that claims transactional safety for arbitrary WordPress callbacks.
+7. **Operation identity:** Every mandatory-audit mutation MUST have a server-generated UUID v4 `operation_id` created **before** BEGIN. The ID identifies one logical operation.
+   - Clients MAY resubmit an `operation_id` only for **idempotent retry** of an operation the server previously issued.
+   - A reused `operation_id` MUST be **bound to the original canonical operation intent** recorded by the server (at minimum: hall/`blog_id`, action type, actor, target, and the intended before/after staff state).
+   - BingoCommerce MUST reject reuse when the retry payload does not match that bound intent. A free-floating client-supplied UUID that was not issued for that intent is invalid.
+   - New intent ALWAYS gets a new server-issued `operation_id`.
+8. **Audit schema:** `bc_audit_log` MUST gain a nullable `operation_id CHAR(36)` with a UNIQUE index. Mandatory transactional audits REQUIRE non-NULL `operation_id`. Schema changes bump `bc_core_network_db_version` (v1 → v2); do not silently revise an already-applied version.
+9. **Commit witness:** Durable presence of the audit row with that `operation_id` is the primary proof the transaction committed. Current domain/role state is not a commit witness for a specific operation.
+10. **Ambiguous COMMIT & strongly consistent reconciliation:** If COMMIT acknowledgement is uncertain, reconcile by selecting the audit witness by `operation_id`. That read MUST use the **authoritative writer** (the primary / same strongly consistent database endpoint used for the transactional writes)—not a potentially lagged replica or any read path that can return stale absence/presence of the witness. Map results to `COMMITTED_VERIFIED`, `NOT_COMMITTED_VERIFIED`, `OUTCOME_UNKNOWN`, or `CONSISTENCY_VIOLATION`. Never report success without `COMMITTED_VERIFIED`.
+11. **Caller behavior:** Brief in-request reconciliation only; then return structured unknown/failure — not indefinite HTTP waits. Phase 1 recovery is idempotent retry with the same server-issued `operation_id` and matching bound intent.
+12. **Idempotency:** Before mutating, if a witness exists for `operation_id` **and** the bound intent matches, return success without re-applying DML. UNIQUE(`operation_id`) prevents duplicate mandatory audit rows.
+13. **Locking:** Hall Staff writers for a hall MUST acquire a MySQL advisory lock on the transactional connection and use appropriate InnoDB `FOR UPDATE` row locks for last-Hall-Manager safety. The lock name MUST be **installation/network-scoped**, not merely `bc_hall_staff_{blog_id}`, so distinct WordPress installations or networks sharing a MySQL server cannot collide (for example, include a stable network/installation discriminator derived from BingoCommerce/WordPress network identity together with `blog_id`). Locks are connection-scoped and auto-release on disconnect; reconciliation MUST NOT depend on still holding the lock.
+14. **Incompatible handle/drop-in:** If `$wpdb->dbh` is missing or not `mysqli`, mandatory-audit mutations MUST fail closed until an approved alternate transport exists.
+15. **AuditLog authority:** Only AuditLog writes `bc_audit_log`. It may provide a narrow internal transaction-context insert; feature code never writes audit SQL. ADR-024 remains in force (no validation/write extension hooks).
+16. **Retention:** Operation-ID witness rows MUST NOT be deleted earlier than the idempotent-retry / reconciliation window; hall lifecycle deletion MUST NOT remove them (ADR-023).
+**Rationale:** BR-033 and ADR-023 require privileged mutations to never remain committed without their mandatory audit record. Direct use of the existing `mysqli` session combined with `operation_id` commit witnesses preserves one transactional database boundary while avoiding WordPress's automatic reconnect-and-retry behavior, ensuring strict reconciliation under connection loss, and avoiding the global blast radius of a custom database drop-in.
+
 ---
 
 ## Business Rules (BR)
@@ -345,6 +372,109 @@ delete_users.
 
   No Hall Manager or Game Operator action under this rule may grant
   Administrator or Super Admin privileges, consistent with BR-026.
+
+- **BR-034 — [2026-08-15] — Super Admin Hall Staff Target Policy:**
+  A user holding native WordPress Super Admin status may never be assigned or
+  role-changed into `bc_hall_manager` or `bc_game_operator` on any hall. Such
+  requests are denied regardless of actor.
+
+  If a Super Admin already holds a legacy `bc_hall_manager` or
+  `bc_game_operator` membership, only a Super Admin actor may remove that
+  protected hall membership through the canonical Hall Staff service. A
+  non-Super-Admin Hall Manager may not perform that cleanup.
+
+  Legacy cleanup:
+  - removes only the protected Hall Staff membership for the specified hall;
+  - preserves the WordPress Multisite network identity;
+  - preserves native Super Admin status;
+  - preserves memberships on all other halls;
+  - is treated as a safeguard override;
+  - requires the mandatory ADR-023 audit witness under BR-033/ADR-025.
+
+  This entry formalizes already-implemented and verified behavior.
+
+  Relationship to prior rules: This entry is additive to BR-033 and does not
+  supersede it.
+
+- **BR-035 — [2026-08-15] — Hall Staff Identity and Account Lifecycle:**
+  BingoCommerce distinguishes personal/customer identities from operational
+  Hall Staff identities.
+
+  **1. Separate customer and staff identities.**
+  A person may have separate BingoCommerce network accounts for separate
+  purposes. For example, `john@gmail.com` is a personal/customer identity
+  holding WooCommerce purchases and customer order history, while
+  `john@sunrisebingo.com` is an operational Hall Staff identity holding
+  `bc_hall_manager` or `bc_game_operator` access. These are independent
+  identities even if they belong to the same physical person.
+
+  A customer/subscriber account is not automatically promoted in-place into a
+  protected Hall Staff role. If an existing hall member has a
+  non-canonical/non-Hall-Staff role such as `subscriber`/`customer`, the Hall
+  Staff assignment flow continues to fail closed rather than silently
+  replacing that role. This behavior is intentional product policy, not a
+  defect.
+
+  **2. Hall Manager staff authority.**
+  A Hall Manager may manage Hall Staff only for halls the actor is authorized
+  to manage. The intended canonical Hall Staff lifecycle permits Hall Managers
+  to create/invite operational Hall Staff identities for their own halls;
+  assign only `bc_hall_manager` or `bc_game_operator`; change Hall Staff
+  between those protected roles where permitted; and remove Hall Staff
+  membership from halls they manage.
+
+  Hall Managers may NOT create or assign Administrator, Shop Manager, Editor,
+  Super Admin, or arbitrary WordPress roles; grant network-level privileges;
+  disable an entire WordPress Multisite network identity; permanently delete a
+  WordPress Multisite network identity; or alter memberships belonging to
+  another hall outside their authority.
+
+  *Implementation status:* create/invite-new-operational-user is **not
+  implemented in Phase A**. It is locked intended behavior for the next Hall
+  Staff increment. Phase A supports assignment of existing network users only.
+
+  **3. Removing Hall Staff.**
+  When a Hall Manager removes a Hall Staff member, the protected membership
+  for that hall is removed immediately; access to that hall as Hall Staff is
+  lost immediately; the underlying WordPress Multisite network identity is
+  preserved; memberships on all other halls are preserved; customer
+  identities/accounts are not touched; and Hall Managers never delete the
+  network user as a side effect of Hall Staff removal. This preserves the
+  behavior already verified by Hall Staff Phase A.
+
+  **4. Platform Admin account lifecycle.**
+  Network-level operational-account lifecycle belongs exclusively to Platform
+  Admin. The intended lifecycle is
+  `ACTIVE → UNASSIGNED → DISABLED → optionally PERMANENTLY DELETED`.
+
+  - `ACTIVE` — operational identity currently has authorized network/hall access.
+  - `UNASSIGNED` — operational network identity exists but has no current Hall
+    Staff assignment.
+  - `DISABLED` — network identity remains for history/audit/administration, but
+    login is blocked.
+  - `PERMANENTLY DELETED` — Platform Admin intentionally removes the network
+    identity through a separate network-level destructive action after required
+    safety checks.
+
+  Platform Admin should eventually be able to view operational identities
+  network-wide; see Active/Unassigned/Disabled state; see current hall
+  assignments; see previous staff-hall information where retained by the
+  platform; disable login; reactivate a disabled account; and permanently
+  delete an account when safe.
+
+  *Implementation status:* these Platform Admin lifecycle controls are a
+  **locked product requirement but are NOT implemented**, and are not part of
+  Hall Staff Phase A. Recording this decision does not imply the controls
+  exist.
+
+  **5. Authority boundary.**
+  Canonical authority is: Hall Manager → hall-scoped staff membership
+  lifecycle; Platform Admin → network-identity lifecycle. Removing Hall Staff
+  membership and disabling/deleting a network identity are separate operations
+  with separate authorization boundaries.
+
+  Relationship to prior rules: This entry is additive to BR-033 and does not
+  supersede it.
 ---
 
 ## Still Open / TBD Items (Unresolved)

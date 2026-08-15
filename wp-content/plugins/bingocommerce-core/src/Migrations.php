@@ -29,7 +29,7 @@ final class Migrations {
 	/**
 	 * Bump when network_schema() changes so existing networks re-run dbDelta().
 	 */
-	const NETWORK_DB_VERSION = 1;
+	const NETWORK_DB_VERSION = 2;
 
 	/**
 	 * Network option holding the schema version currently applied network-wide.
@@ -98,6 +98,14 @@ final class Migrations {
 
 			if ( ! self::table_exists( $table ) ) {
 				$missing[] = $table;
+			}
+		}
+
+		if ( empty( $missing ) ) {
+			$verified = self::verify_audit_schema_v2();
+
+			if ( is_wp_error( $verified ) ) {
+				return $verified;
 			}
 		}
 
@@ -196,6 +204,55 @@ final class Migrations {
 	}
 
 	/**
+	 * Verify the additive v2 witness column and unique index exactly.
+	 *
+	 * dbDelta() describes intended changes but does not guarantee they landed.
+	 * The network version therefore remains stale unless both artifacts exist
+	 * with the contract required by ADR-025.
+	 *
+	 * @return true|\WP_Error
+	 */
+	private static function verify_audit_schema_v2() {
+		global $wpdb;
+
+		$table  = self::audit_log_table();
+		$column = $wpdb->get_row(
+			$wpdb->prepare( "SHOW COLUMNS FROM `{$table}` LIKE %s", 'operation_id' ),
+			ARRAY_A
+		);
+
+		if (
+			! is_array( $column )
+			|| 'char(36)' !== strtolower( (string) ( $column['Type'] ?? '' ) )
+			|| 'YES' !== ( $column['Null'] ?? '' )
+		) {
+			return new \WP_Error(
+				'migration_verification_failed',
+				__( 'The audit operation_id column is missing or incompatible.', 'bingocommerce-core' )
+			);
+		}
+
+		$indexes = $wpdb->get_results(
+			$wpdb->prepare( "SHOW INDEX FROM `{$table}` WHERE Key_name = %s", 'operation_id_unique' ),
+			ARRAY_A
+		);
+
+		if (
+			1 !== count( $indexes )
+			|| 0 !== (int) $indexes[0]['Non_unique']
+			|| 'operation_id' !== ( $indexes[0]['Column_name'] ?? '' )
+			|| 1 !== (int) $indexes[0]['Seq_in_index']
+		) {
+			return new \WP_Error(
+				'migration_verification_failed',
+				__( 'The audit operation_id unique index is missing or incompatible.', 'bingocommerce-core' )
+			);
+		}
+
+		return true;
+	}
+
+	/**
 	 * Core-owned network table definitions, keyed by fully qualified table name.
 	 *
 	 * Adding a future core network table means adding one entry here and
@@ -221,8 +278,9 @@ final class Migrations {
 		 * columns are never indexed.
 		 */
 		$schema = [
-			$audit_log => "CREATE TABLE {$audit_log} (
+		$audit_log => "CREATE TABLE {$audit_log} (
 	id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+	operation_id char(36) DEFAULT NULL,
 	blog_id bigint(20) unsigned DEFAULT NULL,
 	actor_user_id bigint(20) unsigned DEFAULT NULL,
 	action varchar(100) NOT NULL,
@@ -233,6 +291,7 @@ final class Migrations {
 	context longtext,
 	created_at datetime NOT NULL,
 	PRIMARY KEY  (id),
+	UNIQUE KEY operation_id_unique (operation_id),
 	KEY blog_created (blog_id,created_at),
 	KEY actor_created (actor_user_id,created_at),
 	KEY action_created (action,created_at),

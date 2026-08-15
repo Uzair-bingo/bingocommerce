@@ -32,8 +32,7 @@ final class Roles {
 	const NETWORK_VERSION_OPTION = 'bc_core_roles_network_provisioned_version';
 
 	/**
-	 * bc_* capabilities. Proposed capability model pending approval — not
-	 * yet ratified in docs/decisions/DECISIONS.md.
+	 * Ratified bc_* capability model defined by BR-027.
 	 */
 	const HALL_MANAGER_CAPS = [
 		'bc_manage_hall',

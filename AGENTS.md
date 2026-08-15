@@ -41,6 +41,7 @@ Custom code lives ONLY in:
 - `wp-content/mu-plugins/bingocommerce-*` — Reserved for narrowly scoped always-on platform guards only when explicitly approved by architecture; feature/domain business logic remains in normal `bingocommerce-*` plugins.
 - `wp-content/themes/bingocommerce-*` — Phase 1 standard storefront theme
 - `docs/` — Architecture, requirements, decisions, and runbooks (**NEVER** deployed to production)
+- `tests/` — CLI integration/verification harnesses (**NEVER** deployed to production). Test harnesses must live here, outside `wp-content/`, so they cannot ship inside a deployable plugin tree.
 
 ---
 
