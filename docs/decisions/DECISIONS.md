@@ -475,6 +475,44 @@ delete_users.
 
   Relationship to prior rules: This entry is additive to BR-033 and does not
   supersede it.
+
+- **BR-036 — [2026-08-17] — Network-Wide Operational Identity Eligibility:**
+  An identity is eligible to hold a protected hall role only if **every**
+  capability row it holds network-wide — the unprefixed `bc_capabilities` and
+  every `bc_{n}_capabilities` — is canonical and contains exclusively protected
+  roles (`bc_hall_manager`, `bc_game_operator`). An identity holding no
+  capability row anywhere is eligible.
+
+  A capability row is canonical only when it decodes to an array of exactly one
+  entry whose key is a protected role and whose value is strictly `true`.
+
+  Any of the following makes the identity non-operational, and assignment is
+  denied with guidance to use a separate operational staff email:
+  - the same capability meta key appears more than once for the user;
+  - a capability value cannot be decoded safely;
+  - a row mixes protected and non-protected roles;
+  - a row contains any unknown, custom, or non-protected role;
+  - a row contains more than one role key, even if both are protected;
+  - a role key's value is not strictly `true`.
+
+  The unprefixed `bc_capabilities` row is real primary-network-site membership
+  and is evaluated like any other site membership. No claim is made about how
+  such a row came to exist; historical creation path is never inferred.
+
+  Eligibility is evaluated as a pre-transaction check and fails closed. It never
+  reads provenance metadata, never repairs or normalizes state, and is never
+  laxer than the target-hall check already performed under BR-033.
+
+  Eligibility is evaluated immediately before assignment but is not revalidated
+  inside the ADR-025 assignment transaction. A narrow TOCTOU window therefore
+  remains in which an external or independent writer could alter the target
+  identity's network role state between eligibility validation and commit. This
+  is an accepted residual risk for this low-frequency administrative workflow.
+  Supported BingoCommerce assignment paths continue to enforce this rule and
+  fail closed. This does not justify modifying the ADR-025 transaction boundary.
+
+  Relationship to prior rules: This rule is additive to BR-033 and BR-035 and
+  does not supersede either.
 ---
 
 ## Still Open / TBD Items (Unresolved)

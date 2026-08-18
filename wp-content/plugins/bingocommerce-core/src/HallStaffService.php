@@ -9,8 +9,15 @@ if ( ! defined( 'ABSPATH' ) ) {
 /** Canonical and only supported application writer for protected hall roles. */
 final class HallStaffService {
 
-	/** @return HallStaffResult|\WP_Error */
-	public static function assign_existing_user( string $email, string $role, ?string $retry_token = null ) {
+	/**
+	 * @param int|null $expected_user_id When supplied (Create/Invite provisioning),
+	 *                                   the uniquely resolved identity MUST be this
+	 *                                   exact user or nothing is mutated. Generic
+	 *                                   callers pass null but still require a
+	 *                                   unique email and unique login.
+	 * @return HallStaffResult|\WP_Error
+	 */
+	public static function assign_existing_user( string $email, string $role, ?string $retry_token = null, ?int $expected_user_id = null ) {
 		$context = self::authenticate_context();
 		if ( is_wp_error( $context ) ) {
 			return $context;
@@ -32,14 +39,39 @@ final class HallStaffService {
 				return self::error( 'retry_intent_mismatch', 'The retry email does not match the signed operation target.' );
 			}
 
-			$target = get_user_by( 'email', $email );
-			if ( ! $target instanceof \WP_User || (int) $target->ID !== $intent->target_user_id ) {
+			// Authoritative, cache-bypassing resolution. A duplicate email or login
+			// appearing since the token was issued must fail closed rather than let
+			// the retry act on an arbitrarily chosen row.
+			$resolved = HallStaffIdentity::resolve_unique( $email );
+			if ( is_wp_error( $resolved ) ) {
+				return $resolved;
+			}
+
+			if ( null === $resolved || $resolved !== $intent->target_user_id ) {
+				return self::error( 'retry_intent_mismatch', 'The retry email does not match the signed operation target.' );
+			}
+
+			if ( null !== $expected_user_id && $resolved !== $expected_user_id ) {
+				return self::error( 'retry_intent_mismatch', 'The retry email does not match the provisioned account.' );
+			}
+
+			$target = get_userdata( $resolved );
+			if ( ! $target instanceof \WP_User ) {
 				return self::error( 'retry_intent_mismatch', 'The retry email does not match the signed operation target.' );
 			}
 
 			$authorized = self::authorize_context( $context );
 			if ( is_wp_error( $authorized ) ) {
 				return $authorized;
+			}
+
+			// BR-036 is re-evaluated on every retry. A signed intent proves what
+			// was requested, never that the target is still eligible: its
+			// network role state may have changed since the token was issued.
+			// Fail closed before entering ADR-025 retry execution.
+			$eligible = HallStaffEligibility::assert_operational( $intent->target_user_id );
+			if ( is_wp_error( $eligible ) ) {
+				return $eligible;
 			}
 
 			return self::execute( $intent, $retry_token, true );
@@ -55,7 +87,24 @@ final class HallStaffService {
 			return self::error( 'invalid_email', 'Enter a valid email address.' );
 		}
 
-		$target = get_user_by( 'email', $email );
+		// Authoritative, cache-bypassing resolution. bc_users has no unique index
+		// on user_email or user_login, so get_user_by() would happily return one
+		// of several colliding rows; a protected role must never be granted to an
+		// arbitrarily chosen account.
+		$resolved = HallStaffIdentity::resolve_unique( $email );
+		if ( is_wp_error( $resolved ) ) {
+			return $resolved;
+		}
+
+		if ( null === $resolved ) {
+			return self::error( 'target_not_eligible', 'No eligible existing network user matches that email address.' );
+		}
+
+		if ( null !== $expected_user_id && $resolved !== $expected_user_id ) {
+			return self::error( 'identity_state_anomaly', 'That email no longer resolves to the provisioned account. No hall access has been granted. Contact Platform Admin.' );
+		}
+
+		$target = get_userdata( $resolved );
 		if ( ! $target instanceof \WP_User ) {
 			return self::error( 'target_not_eligible', 'No eligible existing network user matches that email address.' );
 		}
@@ -68,6 +117,14 @@ final class HallStaffService {
 
 		if ( (int) $target->ID === $context['actor_user_id'] ) {
 			return self::error( 'target_not_eligible', 'No eligible existing network user matches that email address.' );
+		}
+
+		// BR-036: network-wide operational identity eligibility. Evaluated as a
+		// pre-transaction check that fails closed; never revalidated inside the
+		// ADR-025 transaction, and never reads provenance metadata.
+		$eligible = HallStaffEligibility::assert_operational( (int) $target->ID );
+		if ( is_wp_error( $eligible ) ) {
+			return $eligible;
 		}
 
 		$current = self::current_role( (int) $target->ID, $context['blog_id'] );
@@ -111,6 +168,13 @@ final class HallStaffService {
 				return $authorized;
 			}
 
+			// BR-036 is re-evaluated on every retry: the signed intent proves what
+			// was requested, never that the target is still eligible.
+			$eligible = HallStaffEligibility::assert_operational( $intent->target_user_id );
+			if ( is_wp_error( $eligible ) ) {
+				return $eligible;
+			}
+
 			return self::execute( $intent, $retry_token, true );
 		}
 
@@ -132,6 +196,15 @@ final class HallStaffService {
 
 		if ( $target_user_id === $context['actor_user_id'] && ! $context['actor_is_super'] ) {
 			return self::error( 'self_change_denied', 'A Hall Manager cannot change their own hall role.' );
+		}
+
+		// BR-036: an identity may only hold a protected hall role while its
+		// network-wide capability state is canonical. Applied to role changes as
+		// well as assignment; deliberately NOT applied to removal, so an invalid
+		// identity can always be stripped of protected access.
+		$eligible = HallStaffEligibility::assert_operational( $target_user_id );
+		if ( is_wp_error( $eligible ) ) {
+			return $eligible;
 		}
 
 		$current = self::current_role( $target_user_id, $context['blog_id'] );

@@ -51,6 +51,28 @@ final class HallStaffAdmin {
 
 			<?php self::render_notice( $result, $posted ); ?>
 
+			<h2><?php echo esc_html__( 'Create and invite a staff member', 'bingocommerce-core' ); ?></h2>
+			<p><?php echo esc_html__( 'Creates a separate operational staff identity. The employee receives a secure link and chooses their own password — you never see or set it.', 'bingocommerce-core' ); ?></p>
+			<form method="post">
+				<?php wp_nonce_field( 'bingocommerce_hall_staff_mutation' ); ?>
+				<input type="hidden" name="bc_hall_staff_action" value="create">
+				<table class="form-table" role="presentation">
+					<tr>
+						<th scope="row"><label for="bc-create-email"><?php echo esc_html__( 'Work email address', 'bingocommerce-core' ); ?></label></th>
+						<td><input class="regular-text" id="bc-create-email" type="email" name="email" required></td>
+					</tr>
+					<tr>
+						<th scope="row"><label for="bc-create-name"><?php echo esc_html__( 'Display name', 'bingocommerce-core' ); ?></label></th>
+						<td><input class="regular-text" id="bc-create-name" type="text" name="display_name" required></td>
+					</tr>
+					<tr>
+						<th scope="row"><label for="bc-create-role"><?php echo esc_html__( 'Role', 'bingocommerce-core' ); ?></label></th>
+						<td><?php self::role_select( 'bc-create-role', Roles::GAME_OPERATOR ); ?></td>
+					</tr>
+				</table>
+				<?php submit_button( __( 'Create and invite', 'bingocommerce-core' ) ); ?>
+			</form>
+
 			<h2><?php echo esc_html__( 'Assign an existing user', 'bingocommerce-core' ); ?></h2>
 			<form method="post">
 				<?php wp_nonce_field( 'bingocommerce_hall_staff_mutation' ); ?>
@@ -90,6 +112,12 @@ final class HallStaffAdmin {
 									<?php self::role_select( 'bc-role-' . $member['id'], $member['role'] ); ?>
 									<?php submit_button( __( 'Change role', 'bingocommerce-core' ), 'secondary small', 'submit', false ); ?>
 								</form>
+								<form method="post" style="display:inline-block;margin-right:8px">
+									<?php wp_nonce_field( 'bingocommerce_hall_staff_mutation' ); ?>
+									<input type="hidden" name="bc_hall_staff_action" value="resend_invitation">
+									<input type="hidden" name="target_user_id" value="<?php echo esc_attr( (string) $member['id'] ); ?>">
+									<?php submit_button( __( 'Resend invitation', 'bingocommerce-core' ), 'secondary small', 'submit', false ); ?>
+								</form>
 								<form method="post" style="display:inline-block">
 									<?php wp_nonce_field( 'bingocommerce_hall_staff_mutation' ); ?>
 									<input type="hidden" name="bc_hall_staff_action" value="remove">
@@ -113,7 +141,7 @@ final class HallStaffAdmin {
 	 * client fields are rejected before HallStaffService is called.
 	 *
 	 * @param array<string,mixed> $posted
-	 * @return HallStaffResult|\WP_Error
+	 * @return HallStaffResult|true|\WP_Error true = Resend Invitation succeeded.
 	 */
 	public static function handle_request( array $posted ) {
 		foreach ( [ 'blog_id', 'actor_user_id', 'operation_id' ] as $reserved ) {
@@ -127,6 +155,25 @@ final class HallStaffAdmin {
 
 		$action = sanitize_key( $posted['bc_hall_staff_action'] ?? '' );
 		$token  = isset( $posted['retry_token'] ) ? sanitize_text_field( $posted['retry_token'] ) : null;
+
+		if ( 'create' === $action ) {
+			$creation_token = isset( $posted['creation_retry_token'] )
+				? sanitize_text_field( $posted['creation_retry_token'] )
+				: null;
+
+			return HallStaffProvisioningService::create_and_assign(
+				sanitize_email( $posted['email'] ?? '' ),
+				sanitize_text_field( $posted['display_name'] ?? '' ),
+				sanitize_key( $posted['role'] ?? '' ),
+				$creation_token,
+				$token
+			);
+		}
+
+		if ( 'resend_invitation' === $action ) {
+			// Success stays a genuine success value: true, never a WP_Error.
+			return HallStaffInvitation::resend( absint( $posted['target_user_id'] ?? 0 ) );
+		}
 
 		if ( 'assign' === $action ) {
 			return HallStaffService::assign_existing_user(
@@ -154,10 +201,15 @@ final class HallStaffAdmin {
 		return new \WP_Error( 'invalid_action', __( 'Choose a valid Hall Staff action.', 'bingocommerce-core' ) );
 	}
 
-	/** @param HallStaffResult|\WP_Error|null $result @param array<string,mixed> $posted */
+	/** @param HallStaffResult|true|\WP_Error|null $result @param array<string,mixed> $posted */
 	private static function render_notice( $result, array $posted ): void {
 		if ( $result instanceof HallStaffResult ) {
 			echo '<div class="notice notice-success"><p>' . esc_html__( 'Hall Staff was updated and its audit witness was verified.', 'bingocommerce-core' ) . '</p></div>';
+			return;
+		}
+
+		if ( true === $result ) {
+			echo '<div class="notice notice-success"><p>' . esc_html__( 'A fresh invitation was sent. Any previous link is now invalid.', 'bingocommerce-core' ) . '</p></div>';
 			return;
 		}
 
@@ -165,9 +217,25 @@ final class HallStaffAdmin {
 			return;
 		}
 
-		echo '<div class="notice notice-error"><p>' . esc_html( $result->get_error_message() ) . '</p></div>';
 		$data = $result->get_error_data();
-		if ( ! is_array( $data ) || empty( $data['retry_token'] ) || empty( $posted['bc_hall_staff_action'] ) ) {
+		$data = is_array( $data ) ? $data : [];
+
+		echo '<div class="notice notice-error"><p>' . esc_html( $result->get_error_message() ) . '</p></div>';
+
+		// The Hall Staff assignment has already committed in these two states —
+		// only the invitation failed. Retrying the assignment is not the correct
+		// recovery action here; retry tokens may still be present in the
+		// underlying WP_Error data (kept for API/service-layer callers), but the
+		// UI must direct the Hall Manager to Resend Invitation instead.
+		if ( in_array( $result->get_error_code(), [ HallStaffInvitation::NOT_COMPLETED, HallStaffInvitation::MARKER_UNWRITABLE ], true ) ) {
+			echo '<p>' . esc_html__( 'Use the Resend invitation action for this staff member below.', 'bingocommerce-core' ) . '</p>';
+			return;
+		}
+
+		$has_retry    = ! empty( $data['retry_token'] );
+		$has_creation = ! empty( $data['creation_retry_token'] );
+
+		if ( ( ! $has_retry && ! $has_creation ) || empty( $posted['bc_hall_staff_action'] ) ) {
 			return;
 		}
 
@@ -175,8 +243,13 @@ final class HallStaffAdmin {
 		<form method="post">
 			<?php wp_nonce_field( 'bingocommerce_hall_staff_mutation' ); ?>
 			<input type="hidden" name="bc_hall_staff_action" value="<?php echo esc_attr( sanitize_key( $posted['bc_hall_staff_action'] ) ); ?>">
-			<input type="hidden" name="retry_token" value="<?php echo esc_attr( $data['retry_token'] ); ?>">
-			<?php foreach ( [ 'email', 'role', 'target_user_id' ] as $key ) : ?>
+			<?php if ( $has_retry ) : ?>
+				<input type="hidden" name="retry_token" value="<?php echo esc_attr( $data['retry_token'] ); ?>">
+			<?php endif; ?>
+			<?php if ( $has_creation ) : ?>
+				<input type="hidden" name="creation_retry_token" value="<?php echo esc_attr( $data['creation_retry_token'] ); ?>">
+			<?php endif; ?>
+			<?php foreach ( [ 'email', 'role', 'display_name', 'target_user_id' ] as $key ) : ?>
 				<?php if ( isset( $posted[ $key ] ) ) : ?><input type="hidden" name="<?php echo esc_attr( $key ); ?>" value="<?php echo esc_attr( sanitize_text_field( (string) $posted[ $key ] ) ); ?>"><?php endif; ?>
 			<?php endforeach; ?>
 			<?php submit_button( __( 'Retry the same operation', 'bingocommerce-core' ), 'secondary', 'submit', false ); ?>

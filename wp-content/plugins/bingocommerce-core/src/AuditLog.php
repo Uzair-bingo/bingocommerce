@@ -106,6 +106,7 @@ final class AuditLog {
 	 *         'previous_value' => array|null,
 	 *         'new_value'      => array|null,
 	 *         'context'        => array|null,
+	 *         'operation_id'   => string|null, // optional UUID v4 operation identity
 	 *     ]
 	 *
 	 * blog_id and actor_user_id are required KEYS (their values may be null) so
@@ -121,13 +122,77 @@ final class AuditLog {
 	 * @return int|\WP_Error Inserted audit row ID, or \WP_Error on failure.
 	 */
 	public static function record( array $event ) {
-		$prepared = self::prepare_event( $event, null );
+		$operation_id = null;
+
+		// Optional: an ordinary event may carry its own operation identity so a
+		// non-transactional workflow can be retried idempotently. The UNIQUE
+		// index on operation_id then makes a concurrent double-write collide
+		// rather than duplicate. Callers must still compare the full immutable
+		// intent against the witness — existence alone proves nothing.
+		if ( array_key_exists( 'operation_id', $event ) && null !== $event['operation_id'] ) {
+			if ( ! is_string( $event['operation_id'] ) || ! wp_is_uuid( $event['operation_id'], 4 ) ) {
+				return self::invalid_event( 'The operation_id must be a UUID v4.' );
+			}
+
+			$operation_id = strtolower( $event['operation_id'] );
+		}
+
+		$prepared = self::prepare_event( $event, $operation_id );
 
 		if ( is_wp_error( $prepared ) ) {
 			return $prepared;
 		}
 
 		return self::insert( $prepared );
+	}
+
+	/**
+	 * Read the durable witness for an operation on the ordinary connection.
+	 *
+	 * The non-transactional counterpart to read_operation_witness(), for
+	 * workflows that live outside the ADR-025 boundary. Consults no cache and no
+	 * domain state: the audit row is the only authority.
+	 *
+	 * @return array<string,mixed>|null|\WP_Error Row, null when absent, or error.
+	 */
+	public static function find_operation_witness( string $operation_id ) {
+		global $wpdb;
+
+		if ( ! self::is_uuid_v4_pure( $operation_id ) ) {
+			return new \WP_Error( 'invalid_operation_id', __( 'The operation ID is invalid.', 'bingocommerce-core' ) );
+		}
+
+		$table = Migrations::audit_log_table();
+
+		$rows = $wpdb->get_results(
+			$wpdb->prepare(
+				"SELECT operation_id, blog_id, actor_user_id, action, target_type, target_id,"
+				. " previous_value, new_value, context, created_at FROM {$table} WHERE operation_id = %s",
+				strtolower( $operation_id )
+			),
+			ARRAY_A
+		);
+
+		// get_results() returns an empty array both for "no rows" and for a failed
+		// query, so absence must never be inferred from it alone. last_error is
+		// reset at the start of every query, so it is authoritative here — and an
+		// unreadable witness is a controlled failure, never proof of absence.
+		if ( ! is_array( $rows ) || '' !== (string) $wpdb->last_error ) {
+			return new \WP_Error(
+				'witness_read_failed',
+				__( 'The operation witness could not be read.', 'bingocommerce-core' ),
+				[ 'db_error' => $wpdb->last_error ]
+			);
+		}
+
+		if ( count( $rows ) > 1 ) {
+			return new \WP_Error(
+				'witness_consistency_violation',
+				__( 'Multiple operation witnesses violate the audit protocol.', 'bingocommerce-core' )
+			);
+		}
+
+		return 1 === count( $rows ) ? $rows[0] : null;
 	}
 
 	/**
@@ -524,6 +589,18 @@ final class AuditLog {
 			// lookup below, which would otherwise discard the one diagnostic
 			// worth keeping.
 			$db_error = $wpdb->last_error;
+			$db_errno = ( $wpdb->dbh instanceof \mysqli ) ? (int) $wpdb->dbh->errno : 0;
+
+			// A UNIQUE operation_id collision is reported distinctly so a
+			// concurrent retry can re-read the witness and compare intent.
+			// It is never, on its own, treated as success.
+			if ( 1062 === $db_errno || str_contains( $db_error, 'Duplicate entry' ) ) {
+				return new \WP_Error(
+					'duplicate_operation_id',
+					__( 'An audit event already exists for this operation.', 'bingocommerce-core' ),
+					[ 'db_error' => $db_error ]
+				);
+			}
 
 			// Only reached on failure, so the extra lookup never costs anything
 			// on the success path.
