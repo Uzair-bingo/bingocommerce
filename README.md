@@ -6,7 +6,7 @@ Each hall operates its own independent WooCommerce store on a subdomain (`hallna
 
 **Platform Owner:** Bingo Innovation (Bingo supplies, est. 1978, Pompano Beach, FL)
 
-> **Note:** This is **NOT a marketplace**. One order belongs to exactly one hall. Halls sell physical products and digital bingo packages. A digital order produces **one QR code per order**, which is redeemed to **one Android device** at the hall entrance.
+> **Note:** This is **NOT a marketplace**. One order belongs to exactly one hall. Halls sell physical products and Bingo Packages (Paper, Digital, or Hybrid/Combo). A Paper-only Bingo Package produces no QR; a Digital Bingo Package produces exactly **one QR**; a Hybrid/Combo Bingo Package produces exactly **one QR** covering only its digital entitlement. Ordinary merchandise in a mixed order is not represented by the QR. Each QR redeems to **one Android device** at the hall.
 
 ---
 
@@ -36,7 +36,7 @@ Each hall operates its own independent WooCommerce store on a subdomain (`hallna
 | `docs/decisions/` | Append-only Architecture Decision Log (`DECISIONS.md`) |
 | `docs/runbooks/` | Operational procedures (deployment, backups, incident response) |
 | `docs/ui-ux/` | Design references & wireframe links |
-| `AGENTS.md` | Universal AI agent source of truth (**Cursor, Claude Code, CodeX**) |
+| `AGENTS.md` | Universal AI agent source of truth (**Cursor, Claude Code, Codex**) |
 | `PROJECT_STATUS.md` | Current build status, completed tasks, and immediate roadmap |
 
 *WordPress Core files are git-ignored and MUST NOT be edited directly. `wp-config.php` is never committed.*
@@ -68,7 +68,7 @@ Each hall operates its own independent WooCommerce store on a subdomain (`hallna
 
 ## AI Agent & Developer Guardrails
 
-- **`AGENTS.md`** is the primary source of truth. AI coding tools (Cursor, Claude Code, CodeX) must read this file before generating code.
+- **`AGENTS.md`** is the primary source of truth. AI coding tools (Cursor, Claude Code, Codex) must read this file before generating code.
 - **Locked Decisions:** Decisions recorded in `docs/decisions/DECISIONS.md` are locked and must not be altered implicitly by code changes.
 - **Session Tracking:** `PROJECT_STATUS.md` must be updated at the conclusion of every development session to track active progress.
 

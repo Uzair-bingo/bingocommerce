@@ -23,11 +23,26 @@ Request -> hallname.parent-domain.com
   -> DNS wildcard -> web server
   -> WP Multisite resolves subdomain to hall site (native)
   -> WooCommerce loads that hall's own products/cart/orders
-     -> Physical product: cart -> checkout -> gateway -> order (HPOS)
-     -> Digital product: cart -> checkout -> gateway -> order (HPOS)
-        -> Ticket system generates one QR per order (custom table)
+     -> Physical product / ordinary merchandise: cart -> checkout -> gateway -> order (HPOS)
+     -> Bingo Package (Paper / Digital / Hybrid-Combo): customer selects an
+        eligible dated Session (exact date + Session name) before selecting
+        the Bingo Package; cart -> checkout -> gateway -> order (HPOS)
+        -> Checkout aggregates digital faces per Game Type against the effective
+           electronic-card limit (BR-038/BR-042) -- server-side, authoritative
+        -> when online payment is successfully confirmed (BR-053;
+           do not hardcode a particular WooCommerce order-status name as the
+           business rule):
+              -> freeze purchase-time entitlement snapshot (BR-043)
+              -> Digital/Hybrid packages: issue exactly one digital ticket/QR
+                 for the digital entitlement (custom table); Paper-only
+                 packages issue no QR (BR-044)
         -> Game Operator scans -> REST endpoint validates -> marks redeemed
-        -> Android app loads games
+           (a valid QR remains redeemable after Session start; late redemption
+            during the Session is allowed -- BR-056)
+        -> Redemption confirms/records the player's digital entitlement for
+           that Session (BR-041, BR-045, BR-055); Android uses that entitlement later
+           when the applicable Game Type(s) are actually played -- redemption
+           does not itself launch or change any game
 ```
 Platform administration uses WordPress Network Admin as the trusted entry
 context, with BingoCommerce custom network-level modules/services implementing
@@ -40,15 +55,59 @@ and other platform-specific operations.
 - WordPress user identity is network-shared (`bc_users` / `bc_usermeta`);
   hall membership, roles, orders, merchant/payment context, and commerce
   records remain hall-scoped.
-- Digital tickets: custom indexed table. Fields: ticket_token (unique, unguessable),
-  order_id (unique — one ticket per order, not per item), hall/site_id, status
-  (issued/redeemed/void), redeemed_device_id, redeemed_at, reactivated_count,
-  last_reactivated_at, last_reactivated_by_staff_id.
-- Capacity enforcement is two-tier (ADR-006):
-  - Per-package: WooCommerce native stock management
-  - Session-wide shared cap: custom indexed table, counts qualifying orders
-    (see BR-002/BR-025 in requirements — one order with multiple digital items
-    still counts as one qualifying order), validated atomically at checkout
+- Digital tickets: custom indexed table (exact final schema is a later
+  technical-design decision per ADR-029/ADR-030). Conceptually needs to track:
+  an unguessable ticket reference, the order it was issued from (one ticket
+  per Digital/Hybrid order, not per line item — BR-044), hall/site_id, status
+  (issued/redeemed/void), the redeeming device/tablet identity (BR-045's
+  `caller_id` is the confirmed Android tablet identity — do not lock a
+  differently-named device-identity column ahead of the technical-design
+  pass), redemption time, and reactivation history (count, last timestamp,
+  last staff actor — BR-010). A Paper-only Bingo Package never creates a
+  ticket row; Digital and Hybrid/Combo packages create exactly one, covering
+  the digital entitlement only (BR-044, ADR-030).
+- Bingo Catalog domain (BR-037/BR-039/BR-040, ADR-026): Game Type, Bingo Play
+  Product metadata, and Package/Package-Component/add-on-eligibility definitions
+  are BingoCommerce-owned domain entities, never inferred from a WooCommerce
+  product title, SKU, tag, or category at runtime.
+- Session domain (BR-041, ADR-028, BR-050–BR-052): Session is hall-owned/per-site; tenant
+  context + Session ID is the canonical identity. No network-wide Session
+  registry is required in v1. Sessions no longer carry a capacity counter.
+  A Session has an exact calendar date; display-name time is a label only and
+  does not drive automatic logic (BR-050). Storefront appearance requires the
+  automatic 5-day sales window AND Available for Sale = ON (BR-051). Customers
+  select the Session before the Bingo Package; the order stays associated with
+  that exact Session (BR-052). Week/month future-Session browsing is not a
+  current requirement.
+- Electronic card limit (BR-038/BR-042, ADR-028): a configurable, per-Game-Type
+  maximum — network-level platform maximum with an optional per-site hall
+  override, evaluated dynamically (`effective_limit = min(hall_override,
+  current_platform_maximum)` when an override exists, else the platform
+  maximum, always using the platform maximum's *current* value). Enforced
+  authoritatively server-side at checkout, aggregating digital faces by Game
+  Type; Paper never participates. This replaces the retired session-wide
+  qualifying-order capacity model (superseded ADR-006).
+- Purchase-time entitlement snapshot (BR-043, ADR-029, BR-053): frozen
+  per-Game-Type digital entitlement captured when online payment is
+  successfully confirmed (BR-053); never recalculated from later, mutable
+  Product/Package/Game Type state. Follows ADR-005's general
+  custom-indexed-table principle (not the retired session-capacity
+  mechanism — see ADR-028); exact schema is a later technical-design
+  decision. Do not hardcode a WooCommerce order-status name as the
+  business activation rule.
+- Redemption accumulation (BR-045, BR-055, ADR-030): scoped by hall/tenant + session_id
+  + Android caller_id + Game Type; multiple valid Digital Packages for the same
+  Session may redeem onto the same tablet and accumulate independently by Game
+  Type. An incoming Package/receipt is accepted or rejected as a whole against
+  the effective electronic limit — no partial redemption. A Session starting
+  does not automatically expire a valid QR (BR-056).
+- Reporting facts (BR-054): purchase/payment date and Session attribution are
+  separate. Do not move a Monday payment for Tuesday's Session onto Tuesday's
+  payment/accounting date.
+- Do not introduce an All Game Types Game Type or combined Game-Type bucket
+  (BR-057). Do not design per-game play-history storage as part of this
+  feature (BR-058). Do not expand into separate jackpot/additional-game
+  purchase flows in the current implementation (BR-059).
 - Billing status: status field per hall site + append-only change log (who/when/why)
 
 ## Performance
@@ -61,7 +120,10 @@ and other platform-specific operations.
   (ADR-008) — these stay dynamic. Page caching (e.g. WP Rocket) and object caching
   (Redis) are complementary layers, not substitutes for each other.
 - HPOS keeps order-heavy queries fast as volume grows per hall.
-- Every custom table indexed on the hall/site reference column.
+- Every hall-owned / tenant-attributed custom table indexes its hall/site
+  reference column. Truly network-global tables/records must not invent a
+  fake hall/site reference merely to satisfy this rule (ADR-022). Tenant
+  isolation remains strict wherever tenant attribution exists.
 - PHP-FPM + OPcache required.
 
 ## Image & Media Handling
@@ -110,7 +172,9 @@ Must explicitly support (confirm before committing to a provider, don't assume):
 - Do not put business logic in themes — themes render presentation only
 
 ## Still Open (do not build against an assumed answer)
-- Offline handling strategy for digital ticket redemption
+- Offline QR/Package usability **technical implementation** (local-server /
+  cache / network architecture). The business expectation is locked by
+  BR-060; do not invent that architecture in this pass.
 - Final payment gateway / POS hardware provider (Clover under discussion)
 - Object storage provider (AWS S3 vs. Cloudflare R2 vs. other)
 - Overall hosting provider

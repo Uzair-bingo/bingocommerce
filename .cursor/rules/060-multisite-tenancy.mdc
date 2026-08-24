@@ -18,12 +18,18 @@ Each hall is one Multisite site with its own per-site table set
 
 ## Data Access
 
-- Hall-owned data (products, orders, customers, tickets, sessions, capacity)
+- Hall-owned data (products, orders, customers, tickets, sessions)
   lives in per-site tables — native isolation. Do not add `blog_id` columns to
   per-site tables; the table prefix IS the isolation.
-- Network-wide custom tables (device registry, billing status, audit,
-  reporting facts) MUST include an indexed `blog_id` and every query against
-  them filters by it unless the caller is a Platform Admin.
+- A custom table's scope follows data ownership (ADR-022): hall-owned /
+  tenant-owned operational data is per-site unless a documented decision
+  requires network-wide storage. Genuinely network-wide records (e.g.
+  billing status, audit log per ADR-023, reporting facts) may use
+  `$wpdb->base_prefix` and require an indexed `blog_id`/`site_id` when
+  tenant attribution exists, with every query against them filtering by it
+  unless the caller is a Platform Admin. A future Android/tablet device
+  registry's scope is not yet decided — do not classify it as network-wide
+  or per-site ahead of the upcoming Android/API persistence design.
 - `switch_to_blog()` only when cross-hall access is explicitly required AND
   the user is Platform Admin; always pair with `restore_current_blog()`
   (try/finally). Cross-hall writes require an audit log entry.

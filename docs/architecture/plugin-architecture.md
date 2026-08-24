@@ -6,12 +6,19 @@ independently activatable and testable.
 | Plugin | Responsibility | Depends on |
 |---|---|---|
 | `bingocommerce-core` | Roles & capabilities, tenant context helpers, audit log service, migration framework | WooCommerce (network) |
-| `bingocommerce-sessions` | Session entity, day/date/sales-window availability, capacity counter | core |
-| `bingocommerce-digital-tickets` | Digital entitlement, QR issue/redeem, device binding, staff reactivation, Android REST API | core, sessions |
-| `bingocommerce-platform` | Hall provisioning pipeline, billing lifecycle (BR-016), retention/deletion (BR-017), network reporting | core |
+| `bingocommerce-catalog` | Game Type, Bingo Play Product domain metadata/mapping, Bingo Package definitions/components/add-on eligibility, starter-catalog domain logic (ADR-026) | core |
+| `bingocommerce-sessions` | Calendar-dated Session entity, 5-day sales window, Available for Sale, Package-to-Session assignment, customer Session-before-Package selection (BR-050–BR-052) | core, catalog |
+| `bingocommerce-digital-tickets` | Purchase-time entitlement snapshot (activated on successful online payment confirmation — BR-053), QR issue/redeem, device binding, staff reactivation, Android REST API, redemption accumulation | core, catalog, sessions |
+| `bingocommerce-platform` | Hall provisioning pipeline (triggers `bingocommerce-catalog`'s starter-catalog copy mechanism), billing lifecycle (BR-016), retention/deletion (BR-017), network reporting | core |
 
 Theme: Phase 1 standard storefront in `wp-content/themes/bingocommerce-*`.
 Presentation only — zero business logic (AGENTS.md rule 2).
+
+Plugin boundaries are locked by ADR-026: `bingocommerce-core` stays
+foundational/shared infrastructure only — Catalog domain behavior must not be
+added there. `bingocommerce-sessions` owns Session, never Catalog entities.
+`bingocommerce-platform` does not own Catalog domain rules — it only triggers
+`bingocommerce-catalog`'s copy mechanism during provisioning.
 
 ## 2. Internal Structure (every plugin)
 
@@ -47,13 +54,16 @@ Rules:
 - Nothing executes on file include; everything registers via hooks
 - Class files: `*.php` inside `src/`; one concern per class
 > **Implementation status:** every `src/` class listed above is implemented and
-> verified (Hall Staff Phase A). `uninstall.php` remains planned — note that
-> ADR-023 gives the audit trail an independent retention lifecycle, so uninstall
-> must not casually drop `bc_audit_log`.
+> verified (Hall Staff Phase A). Hall Manager create/invite-new-operational-user
+> and BR-036 network-wide operational identity eligibility were implemented,
+> tested, manually verified, and committed on 2026-08-18 (commit `327ae2`).
+> `uninstall.php` remains planned — note that ADR-023 gives the audit trail an
+> independent retention lifecycle, so uninstall must not casually drop
+> `bc_audit_log`.
 >
-> Not yet implemented, locked as intended behavior by BR-035: Hall Manager
-> create/invite-new-operational-user, and the Platform Admin network-identity
-> lifecycle (Disable / Reactivate / Permanently Delete).
+> Not yet implemented, locked as intended behavior by BR-035: the Platform
+> Admin network-identity lifecycle (Disable / Reactivate / Permanently
+> Delete).
 
 
 
@@ -78,7 +88,12 @@ A feature that works on existing halls but fails on a newly created hall is inco
 ## 4. Migration Framework (core owns this)
 
 - Table creation/updates via `dbDelta()` only
-- Every plugin storing tables tracks `bc_<plugin>_db_version` option per site
+- Migration version state scope follows the artifact's own scope: per-site
+  schema/artifacts version state lives in site scope (e.g.
+  `bc_<plugin>_db_version` option per site); network-wide schema/artifacts
+  version state lives in network scope (e.g. `bc_core_network_db_version`,
+  per ADR-025 item 8). Do not assume every plugin/table schema version is
+  necessarily per-site.
 - Migrations run idempotently: safe to run twice, safe at network scale
 - Table naming per ADR-018: `$wpdb->prefix . '<name>'` per-site,
   `$wpdb->base_prefix . '<name>'` network-wide; names must not collide with

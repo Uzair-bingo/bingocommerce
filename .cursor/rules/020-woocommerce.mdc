@@ -17,22 +17,43 @@ alwaysApply: false
 
 ## Products
 
-- Use WooCommerce product types (simple, variable) for physical goods.
-- Digital bingo packages extend a WooCommerce product with a digital package
-  definition stored in custom tables (ADR-005) — never in raw postmeta blobs.
-- An immutable purchase snapshot is created at checkout: later product edits
-  must never alter what a customer already bought.
+- Use WooCommerce product types (simple, variable) for physical goods and for
+  Bingo Play Products (BR-039).
+- Game Type, Bingo Play Product metadata (Medium, Faces per unit, Game Type
+  reference), and Bingo Package definitions/components/add-on eligibility are
+  authoritative BingoCommerce-owned structured domain data (BR-037/BR-039/
+  BR-040, ADR-026). Runtime logic must never infer them from a WooCommerce
+  product title, SKU, tag, category, or naming convention. Exact persistence
+  (WooCommerce structured product metadata vs. custom indexed tables vs.
+  WP/network/site options) is decided in the upcoming technical/domain
+  persistence design.
+- An immutable purchase-time entitlement snapshot is created when online
+  payment is successfully confirmed (BR-043, BR-053): later product/package/
+  Game Type edits must never alter what a customer already bought. Do not
+  hardcode a particular WooCommerce order-status name as the business rule.
 
 ## Cart & Checkout
 
 - One cart and one order belong to exactly ONE hall (BR-003). Because each hall
   is its own Multisite site, this is native — never write code that merges or
   references another site's cart/products/orders.
-- Availability rules (session, day-of-week, sales window) are enforced
-  server-side at EVERY step: display, add-to-cart, cart update, checkout,
-  and payment completion. Front-end hiding alone is never authorization.
-- Session capacity (BR-025) is validated atomically at checkout via the custom
-  capacity table — see the database rule file.
+- Availability rules (calendar-dated Session, 5-day sales window, Available
+  for Sale ON/OFF) are enforced server-side at EVERY step: display,
+  add-to-cart, cart update, checkout, and payment completion. Front-end
+  hiding alone is never authorization. A Session appears for purchase only
+  when it is inside the 5-day window AND Available for Sale = ON (BR-051).
+  The customer selects the Session before the Bingo Package (BR-052). Do not
+  implement week/month future-Session browsing as a requirement, and do not
+  invent automatic open/close times from text in the Session name (BR-050).
+- At most one Bingo Package per checkout, plus its eligible add-ons and any
+  ordinary merchandise (BR-032, BR-040) — never more than one package.
+- The electronic-card limit is validated with authoritative server-side
+  checks at checkout, aggregated per Game Type against the current effective
+  hall limit (BR-038, BR-042) — see the database rule file. Checkout does not
+  increment or reserve a shared Session-wide counter, so it needs no
+  transactional locking for that purpose (that atomicity requirement applies
+  to Android redemption accumulation, BR-045, not checkout). There is no
+  session-wide order-capacity check.
 
 ## Payments
 
@@ -41,10 +62,17 @@ alwaysApply: false
 - Verify payment webhooks; protect against replay and duplicate delivery.
   Repeated webhook delivery must never duplicate charges, orders, stock
   changes, or emails.
+- For online Bingo Package purchases, entitlement/QR activation occurs only
+  after successful payment confirmation (BR-053). Failed, cancelled,
+  or unsuccessful payment must not create an active Bingo entitlement or QR.
+  Do not hardcode a particular WooCommerce status name as the business rule.
 
 ## Orders & Refunds
 
 - Order state, physical fulfillment state, and digital entitlement state are
   separate concepts — keep them separate in code and UI.
-- Refunding an order must void its digital entitlement (BR-011) and release
-  its session capacity slot (BR-025).
+- Refunding a Bingo Package voids its digital QR entitlement (BR-044) and is
+  refunded as a whole — no partial refund of a package or its package-scoped
+  add-ons (BR-046). Ordinary merchandise in the same order remains
+  independently refundable per hall policy. Refund handling is separate from
+  Android redemption-limit enforcement (BR-045).

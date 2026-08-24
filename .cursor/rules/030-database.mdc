@@ -6,49 +6,138 @@ alwaysApply: false
 
 # Database & Custom Tables (ADR-005, ADR-018)
 
+ADR-005 established the general principle that operational data lives in
+custom indexed tables, never postmeta — it did **not** define or retain the
+retired session-wide order-capacity mechanism (that was ADR-006, formally
+superseded by ADR-028/BR-041). See "Electronic Card Limit" below for the
+current model.
+
 ## Source of Truth Split
 
-- Commerce data (products, orders, customers, taxes, shipping): WooCommerce +
-  HPOS, per-site table sets (native Multisite isolation).
-- Identity: network-global `wp_users` / `wp_usermeta` (shared login across halls).
-- Bingo operational data: custom indexed `bc_*` tables — NEVER unindexed postmeta:
-  sessions, availability rules, digital tickets/entitlements, redemption events,
-  capacity counters (per-site); device registry, hall billing status, audit log,
-  reporting facts (network-wide).
+- Commerce data (products, orders, customers, taxes): WooCommerce + HPOS,
+  per-site table sets (native Multisite isolation). BingoCommerce v1 does not
+  support shipping (BR-048) — do not build shipping-rate, shipping-label, or
+  carrier-integration logic.
+- Identity: network-global via WordPress table abstractions — use
+  `$wpdb->users` / `$wpdb->usermeta` in application code (shared login across
+  halls). Do not hardcode literal `wp_users`/`wp_usermeta` table names; this
+  installation's configured prefix currently resolves them to
+  `bc_users`/`bc_usermeta` (ADR-018).
+- Bingo Catalog domain data — Game Types, Bingo Play Product metadata,
+  Package/Package-Component definitions, add-on eligibility (BR-037/BR-039/
+  BR-040, ADR-026): authoritative BingoCommerce-owned structured domain data.
+  Runtime logic must never infer them from WooCommerce titles, SKUs, tags,
+  categories, or naming conventions. Exact persistence (WooCommerce structured
+  product metadata vs. custom indexed tables vs. WP/network/site options) is
+  decided in the upcoming technical/domain persistence design — do not assume
+  custom tables here.
+- Calendar Sessions, 5-day sales-window / Available for Sale state,
+  Package-to-Session assignment, and the optional hall electronic-limit
+  override are BingoCommerce-owned structured domain/configuration data.
+  Their exact persistence is the subject of the upcoming persistence/domain
+  design and is **not** already required to be custom tables. Persistence may
+  be custom indexed tables, structured WooCommerce metadata, or site/network
+  options as appropriate to the approved design. Do not dump this data into
+  unindexed postmeta merely for convenience. Storage scope follows ADR-022:
+  the platform electronic maximum is network-level configuration; the
+  optional hall override is per-site configuration.
+- Bingo operational data already governed by existing ADRs (digital
+  tickets/entitlement snapshots, redemption events, hall billing status,
+  audit log per ADR-023, reporting facts) must not be dumped into unindexed
+  postmeta merely for convenience. Where those ADRs already require custom
+  indexed tables, follow them; do not treat Session/sales-window/Package-
+  assignment/hall-override storage as locked to custom tables ahead of the
+  persistence design.
+- A future Android/tablet device registry is not yet decided: its existence,
+  persistence, ownership scope, and schema are deferred to the upcoming
+  Android/API persistence design. Do not classify it as per-site or
+  network-wide ahead of that design, and do not introduce a device-table
+  name or schema here. The only currently locked concept is that
+  `caller_id` is the tablet identity for redemption purposes (BR-045).
+  Storage scope, when decided, follows ADR-022 ownership rules. Do not
+  require a device registry in the current implementation.
 
 ## Table Rules
 
 - Per-site tables: `$wpdb->prefix . '<name>'` (auto-scoped to the hall).
-- Network-wide tables: `$wpdb->base_prefix . '<name>'` and MUST include an
-  indexed `blog_id` column.
-- Every table has an indexed hall/site reference column. Common indexed columns:
-  `blog_id`, `session_id`, `order_id`, `status`, `created_at`, `expires_at`,
-  `token_hash`, `device_id`.
-- Create/update via `dbDelta()` + a `bc_<table>_version` option for migrations.
-  Migrations must be backward-aware and safe to run at network scale.
+- Network-wide tables: `$wpdb->base_prefix . '<name>'`. Tenant-attributed
+  network records require an indexed `blog_id`/`site_id` column (ADR-022);
+  truly network-global records/configuration (e.g. the platform electronic
+  maximum) must not invent a fake hall/site ID when no tenant attribution
+  exists.
+- Tables that do have a hall/site reference column must index it. Other
+  common indexed columns as applicable: `session_id`, `order_id`, `status`,
+  `created_at`, `expires_at`, `token_hash`. Redemption/device-identity column
+  naming is not locked here — BR-045's `caller_id` is the confirmed Android
+  tablet-identity concept, but exact schema belongs to the technical-design
+  pass.
+- Migration versioning is plugin-owned, not per-table (see
+  `docs/architecture/plugin-architecture.md` §4 Migration Framework) — do not
+  invent a separate per-table version option unless a later ADR explicitly
+  decides that. Version state scope follows the artifact's own scope:
+  per-site schema/artifacts use a per-site version option (e.g.
+  `bc_<plugin>_db_version`); network-wide schema/artifacts use a
+  network-scope version option (e.g. `bc_core_network_db_version`, per
+  ADR-025 item 8) — do not assume every plugin/table schema version is
+  necessarily per-site. Create/update via `dbDelta()`; migrations must be
+  idempotent, backward-aware, and safe to run at network scale, for both
+  existing sites and newly created Multisite sites.
 - Table names must be distinctive — never reuse WP core or WooCommerce table
-  names (ADR-019 guardrail).
+  names (ADR-018).
   
-## Digital Ticket Table (canonical schema from technical-architecture.md)
+## Digital Ticket Table (conceptual data requirements — exact final schema is
+a later technical-design decision per ADR-029/ADR-030)
 
-Fields: `ticket_token` (unique, unguessable — store a hash where practical),
-`order_id` (unique — ONE ticket per order, not per line item), `blog_id`,
-`status` (`issued` / `redeemed` / `void`), `redeemed_device_id`, `redeemed_at`,
-`reactivated_count`, `last_reactivated_at`, `last_reactivated_by_staff_id`.
+Needs to track: an unguessable ticket reference (store a hash where
+practical), the order it was issued from (ONE ticket per Digital/Hybrid
+order, not per line item — BR-044), `blog_id`, status (`issued` / `redeemed`
+/ `void`), the redeeming device/tablet identity (BR-045's `caller_id` is the
+confirmed Android tablet identity — do not lock a differently-named
+device-identity column ahead of the technical-design pass), redemption time,
+and reactivation history (count, last timestamp, last staff actor — BR-010).
 
-## Capacity Counter (BR-025 — read this before touching checkout)
+## Electronic Card Limit (BR-038/BR-042/BR-045 — read this before touching checkout or redemption)
 
-- Session capacity counts QUALIFYING PAID ORDERS, not packages. One order with
-  any digital package(s) for the session consumes exactly ONE slot.
-- An order containing packages for multiple sessions consumes one slot in EACH.
-- Refunded/cancelled orders release their slot; pending/failed never count.
-- Enforcement must be ATOMIC at checkout (e.g. conditional `UPDATE ... SET
-  used = used + 1 WHERE used < cap` and check affected rows, or row locking)
-  to prevent oversell under concurrent purchases. Read-then-write is a race
-  condition and is rejected.
-- Capacity value is configurable per session (default 300). NEVER hardcode 300.
+- There is NO session-wide qualifying-order capacity counter. That model
+  (formerly ADR-006/BR-025, now superseded by ADR-028/BR-041) is retired — do
+  not implement `used = used + 1 WHERE used < cap` for orders, and do not
+  build a per-Session order/customer cap.
+- The electronic-card limit is a configurable maximum digital FACES, evaluated
+  independently per Game Type — never cumulative across Game Types. Only
+  Digital Bingo Play Products contribute; Paper always contributes zero.
+- Effective limit = `min(hall_override, current_platform_maximum)` if a hall
+  override exists, else the current platform maximum — always evaluated
+  against the platform maximum's CURRENT value, even if a hall's saved
+  override predates a later platform-maximum decrease.
+- The platform electronic maximum is network-level configuration; the
+  optional hall override is per-site configuration. Do not describe the
+  platform maximum itself as per-site.
+- Checkout performs authoritative server-side validation against the current
+  effective limit (BR-042) — it does not increment or reserve a shared
+  counter, so no transactional locking is required at checkout merely
+  because the retired ADR-006 model once needed it.
+- Android redemption checks and mutates accumulated per-tablet/session/
+  Game-Type usage (BR-045, BR-055) and MUST be atomic/concurrency-safe —
+  read-then-write is a race condition and is rejected; each incoming
+  Package/receipt is accepted or rejected as a whole. Multiple valid Digital
+  Packages for the same Session may redeem onto the same tablet and
+  accumulate independently by Game Type. Do not introduce an All Game Types
+  Game Type or combined Game-Type bucket (BR-057). Do not design per-game
+  play-history storage as part of this feature (BR-058).
+- UI-side calculation alone is never sufficient at either boundary.
+- The platform electronic maximum is configurable (currently 300). NEVER
+  hardcode 300.
+- Exact table/column design for electronic-limit configuration and
+  per-Game-Type accumulation belongs to the next technical-design pass — do
+  not prematurely lock schema here.
 
 ## Reporting
 
 - NEVER loop across hall sites/tables per request for platform reports. Write
   normalized network reporting facts in the background when orders change.
+- Keep purchase/payment date separate from Session attribution (BR-054).
+  Example: $4,000 paid Monday for Tuesday's Session and $6,000 paid Tuesday
+  for Tuesday's Session means daily transaction reporting is Monday = $4,000
+  collected and Tuesday = $6,000 collected, while Session reporting is
+  Tuesday Session = $10,000 total Session sales. Do not move the Monday
+  transaction onto Tuesday's payment/accounting date.

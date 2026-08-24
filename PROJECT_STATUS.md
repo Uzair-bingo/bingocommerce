@@ -5,7 +5,7 @@
 ---
 
 ## Current Phase
-**Phase 0 — Local Environment & Project Foundation**
+**Phase 1 — Core Platform & Digital Bingo Domain Foundation**
 
 ---
 
@@ -119,15 +119,120 @@
 - **[2026-08-15]** Moved the Hall Staff CLI integration harness from
   `wp-content/plugins/bingocommerce-core/tests/` to the repository-root
   `tests/` directory so it cannot ship inside the deployable plugin tree.
+- **[2026-08-18]** Implemented, reviewed, manually verified, and committed
+  Hall Staff operational identity provisioning and invitation lifecycle
+  (`BR-035`, `BR-036`) - commit '327ae2':
+  - Hall Managers can create new operational Hall Manager / Game Operator
+    identities using a work email and display name.
+  - Hall Managers never choose or see staff passwords; new staff receive the
+    native WordPress account/password setup flow.
+  - Initial invitation and Resend Invitation verified end-to-end with working
+    local SMTP.
+  - Existing eligible network identities can be assigned without creating a
+    duplicate account.
+  - The same operational identity may hold protected roles on multiple halls;
+    hall memberships remain independent.
+  - `BR-036` network-wide operational identity eligibility implemented:
+    identities with non-protected, malformed, duplicated, mixed, or otherwise
+    non-canonical capability rows fail closed.
+  - `BR-036` enforced on fresh assignment, assignment retry, fresh role change,
+    and role-change retry; removal deliberately remains available as the cleanup
+    escape path for an invalid identity.
+  - Duplicate email / `user_login` identity resolution fails closed using
+    authoritative cache-bypassing database reads; no arbitrary identity may be
+    selected.
+  - Provisioning recovery is bound to the signed user ID, email, and login and
+    requires the authoritative creation audit witness.
+  - Assignment-stage ambiguous commit recovery verified end-to-end using
+    authentic Phase A + creation retry tokens and authoritative ADR-025 witness
+    reconciliation.
+  - Invitation issuance is marker-first and serialized with a per-user advisory
+    lock; automatic invitation and Resend concurrency are covered.
+  - Invitation-only failures no longer expose a misleading "Retry the same
+    operation" UI action; Hall Managers are directed to Resend Invitation.
+  - Game Operator admin restrictions manually verified: Hall Staff management,
+    products, WooCommerce admin, and cross-hall admin access denied.
+  - Hall Manager safeguards manually verified: self-role change denied,
+    self-removal denied, valid two-HM → one-HM transition succeeds.
+  - `BR-036` negative browser tests verified:
+    non-operational identity assignment rejected, GO → HM promotion rejected
+    without mutation, and removal of the invalid protected membership remains
+    allowed without disturbing the other-site role.
+  - Automated Create/Invite harness: **262/262 PASS**.
+  - Phase A regression harness: **67/67 PASS**.
+  - `git diff --check`: clean; no automated-test users, orphan usermeta,
+    triggers, advisory locks, or renamed audit tables remain.
+  Result: Hall Staff identity provisioning, invitation lifecycle, eligibility,
+  authorization, recovery, and manual browser verification **PASS**.
+- **[2026-08-21]** Documentation-only architecture pass: locked the Product →
+  Game Type → Package → Session → Digital Entitlement domain model.
+  - Added `BR-037`–`BR-047` (Game Type, Bingo Play Product, Bingo Package,
+    Configurable Electronic Card Limit, Session Domain, Checkout Enforcement,
+    Entitlement Snapshot Immutability, QR/Digital Ticket Scope, Android
+    Redemption, Package Refund Restriction, Starter Catalog).
+  - Added `ADR-026`–`ADR-030` (Bingo Catalog Domain Model, Starter Catalog
+    Provisioning, Electronic Limit and Session Scope, Immutable Purchase-Time
+    Entitlement, Digital Ticket/Redemption Boundary).
+  - `BR-041` formally supersedes `BR-002`, `BR-025`, and `BR-031`; `ADR-028`
+    formally supersedes `ADR-006`. All superseded entries remain in
+    `docs/decisions/DECISIONS.md` for history, unedited.
+  - Retired the session-wide "300 qualifying orders" capacity model everywhere
+    it was described as active guidance (`AGENTS.md`, `.cursor/rules/`,
+    `docs/architecture/technical-architecture.md`,
+    `docs/architecture/plugin-architecture.md`,
+    `docs/requirements/business-requirements.md`) in favor of the
+    configurable, per-Game-Type electronic-card limit.
+  - Added `bingocommerce-catalog` to the plugin suite (owns Game Type, Bingo
+    Play Product metadata, Package/Package-Component/add-on-eligibility,
+    starter-catalog logic) per `ADR-026`.
+  - Added `BR-048` (Local Fulfillment / No Shipping in v1), narrowing only
+    BR-005's shipping-specific wording (not its stocking/inventory
+    provisions, and not BR-003); clarified active `ADR-005` citations so they
+    cannot be mistaken for the retired session-capacity mechanism.
+  - No code, migrations, tables, or tests were touched — documentation and
+    guardrails only.
+- **[2026-08-24]** Documentation-only business-rule sync for confirmed
+  Jim/Sean decisions. No PHP, JavaScript, REST endpoints, migrations,
+  tables, admin/storefront UI, or tests were implemented. Hall Staff
+  architecture was not redesigned.
+  - Added `BR-050`–`BR-060`.
+  - Calendar-dated Sessions; 5-day sales window + Available for Sale;
+    customer Session-before-Package selection.
+  - Online entitlement activation resolved as successful online payment
+    confirmation (`BR-053`).
+  - Sales reporting dual attribution; multiple Digital Packages on one
+    tablet; late redemption; no All Game Types bucket; no per-game player
+    tracking; no extra-game/jackpot purchase flows; offline usability as a
+    business expectation only.
+  - Historical locked entries (`BR-002`/`BR-025`/`BR-031`, `ADR-006`, Hall
+    Staff `BR-033`–`BR-036` / `ADR-025`, and `BR-037`–`BR-049` /
+    `ADR-026`–`ADR-030`) were left unedited.
 ---
 
 ## In Progress
-- Phase A service/transaction integration verified; interactive wp-admin verification pending.
+- No Hall Staff Management work currently in progress.
+- Preparing persistence/domain design for the Bingo catalog and Session
+  model after this documentation sync.
 
 ## Next Up (Strict Execution Order)
-1. Review and commit the verified Phase A Hall Staff Management implementation.
-2. Begin session-domain design and migration planning only after staff management
-   authorization is complete.
+1. Next technical step: **persistence/domain design for Game Type → Bingo
+   Play Product → Bingo Package → Calendar Session.**
+2. The online entitlement-activation business rule is now resolved as
+   successful online payment confirmation (`BR-053`). Exact WooCommerce
+   successful-payment hook/status mapping belongs to later
+   entitlement/QR integration-design work. It does not block the current
+   Game Type → Bingo Play Product → Bingo Package → Calendar Session
+   persistence/domain-design pass.
+3. Pricing persistence (`BR-049`) remains a technical design item for the
+   upcoming persistence pass.
+4. None of the new Session/sales-window/entitlement-activation/reporting
+   feature areas are implemented. No PHP, migrations, tables, REST
+   endpoints, or admin/storefront UI exist yet for them.
+5. Implement only after that persistence/domain design is reviewed and
+   approved.
+6. Platform Admin network identity Disable/Reactivate/Permanent Delete
+   remains deferred under BR-035 §4 and requires a separate
+   architecture/decision pass before implementation.
 
 ---
 
@@ -137,7 +242,8 @@
   - Online payment gateway selection
   - Production parent domain name
   - Production hosting provider & Object storage selection (AWS S3 vs. Cloudflare R2)
-  - Offline QR redemption
+  - Offline QR/Package usability **technical implementation** (business
+    expectation locked by BR-060; architecture not invented in this pass)
   - Legal review (compliance clause + 90-day retention)
 ---
 
@@ -146,5 +252,6 @@
 - **WordPress:** 7.0.x Multisite subdomain; table prefix `bc_`
 - **Halls:** Sunrise (2), Tampa (3), Orlando test hall (4) (Local)
 - **Commerce:** WooCommerce network-active, HPOS on
+- **Local mail:** SMTP configured and verified for WordPress staff invitation/password setup testing
 - **Custom code:** `wp-content/plugins/bingocommerce-core/` only so far
 - **Rule for AI agents:** Read `AGENTS.md`, `docs/architecture/plugin-architecture.md`, and this file before coding. Do not re-scaffold Multisite, WooCommerce, or core bootstrap.

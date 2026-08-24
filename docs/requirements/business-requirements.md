@@ -18,8 +18,10 @@ shopping page. (BR-003)
 - Each hall receives customer payments directly into its own merchant account.
   Bingo Innovation invoices halls separately for platform use — no in-platform
   subscription or per-transaction commission engine. (BR-004)
-- Physical fulfillment is fully decentralized — each hall stocks/ships/reorders
-  independently. (BR-005)
+- Physical fulfillment is fully decentralized — each hall stocks and reorders
+  independently. BingoCommerce v1 does not support shipping; fulfillment is
+  local/on-site/pickup only. (BR-005, BR-048 — BR-048 supersedes only BR-005's
+  prior shipping wording, not its stocking/inventory provisions)
 - Product catalog is general-purpose, not bingo-only — halls can sell anything.
   New hall-added products go live immediately, no approval gate. (BR-006)
 - Custom domains (beyond the standard subdomain) are Phase 2, not launch. (BR-015)
@@ -47,20 +49,173 @@ Three roles — do not conflate or merge:
 - No phone/email verification required for guest purchases — email is only used
   to deliver the receipt/QR. (BR-008)
 
-## Digital Products
-- One QR code represents the entire order (not per line item). Order loads onto
-  exactly one Android device; a second device attempting redemption is blocked. (BR-009)
-- **Capacity rule (canonical definition — supersedes any looser phrasing
-  elsewhere)**: a qualifying order is a completed order containing at least one
-  digital package for that session. Multiple digital packages in one order still
-  count as ONE qualifying order. Session capacity = total qualifying orders,
-  configurable per session, never hardcoded. (BR-002, BR-025)
-- Ticket reactivation (device failure) is staff-gated only, never customer
-  self-service. Every reactivation logs staff actor, timestamp, and increments a
-  visible count. (BR-010)
-- Refunds/cancellations (including refund-after-redemption) are resolved directly
-  between hall and customer — platform not involved in that resolution. Refunding
-  an order automatically voids the associated ticket. (BR-011)
+## Bingo Catalog Domain — Game Type, Bingo Play Product, Package
+- **Game Type** is a first-class BingoCommerce domain entity (e.g. Regular, Winner
+  Take All, Red Hot), distinct from the WooCommerce product that sells it (e.g.
+  "3-on Regular" is a product; "Regular" is its Game Type). Game Type is never
+  inferred from product title, SKU, tags, or category at runtime. Bingo Innovation
+  provides starter Game Types copied into each hall at provisioning; Hall Managers
+  may add hall-local Game Types. Do not introduce an All Game Types Game Type or
+  special combined Game-Type bucket — Game Types remain individually identified.
+  (BR-037, BR-057)
+- **Bingo Play Product** is a reusable WooCommerce product used as a package-building
+  component — not independently customer-purchasable in this release. Structured
+  metadata: Medium (Paper/Digital), Faces per unit, and a Game Type reference where
+  required. A Digital Bingo Play Product must reference exactly one Game Type; a
+  Paper Bingo Play Product always contributes zero to the electronic-card limit and
+  is not required to carry a Game Type solely for that enforcement. Legacy vendor
+  catalog tags may be used for one-time migration/bootstrap only — never as an
+  authoritative runtime source. (BR-039)
+- **Bingo Package** is the customer-facing entity a Hall Manager builds from Bingo
+  Play Products and quantities (Paper, Digital, or Hybrid/Combo). Electronic-face
+  contribution is calculated structurally as `faces_per_unit × quantity` per
+  component — never by parsing a title. (Illustrative only: faces_per_unit = 3 and
+  quantity = 12 gives 36 faces; the real per-product value must come from the
+  authoritative source, never inferred from a title/naming pattern such as "3-on".)
+  Package-scoped add-ons are shown/selectable only within an eligible parent
+  package's selection context — never listed as independently purchasable normal
+  catalog items — cannot be purchased without their eligible package, and remain
+  rejected server-side even if UI controls are bypassed. They participate in the
+  same electronic calculation as the package when digital. WooCommerce Product
+  Bundles/Add-ons may be used as commerce/UI mechanisms where appropriate, but they
+  are not the authoritative Bingo Package domain model, and BingoCommerce is not
+  committed to those specific plugins ahead of the technical implementation design.
+  BingoCommerce owns package identity, components, quantities, Game Type mapping,
+  entitlement calculation, and add-on eligibility. (BR-040, amends BR-021)
+- **Bingo Package pricing** is separate from Package composition: every Package has
+  its own Hall-Manager-set fixed base price, never auto-summed from included
+  component product prices, and never automatically recalculated when components or
+  quantities change. Eligible add-ons carry a price set specifically for their
+  Package relationship (not the underlying reusable product's standalone price),
+  multiplied by selected quantity. Bingo commercial total = package base price +
+  Σ(add-on unit price × quantity); ordinary merchandise in the same order prices
+  separately per normal WooCommerce rules and is not part of that total. Persistence
+  of base price / add-on pricing is not yet decided. (BR-049)
+- Ordinary merchandise is never a Game Type, never participates in digital-
+  entitlement calculations, never generates a Bingo QR, and may coexist with one
+  Bingo Package in the same checkout — the 0/1-Bingo-Package-per-checkout rule is
+  unchanged. (BR-032, BR-040)
+
+## Electronic Card Limit
+- There is no maximum orders/customers per Session and no aggregate Session-wide
+  capacity counter — that model is retired. The **electronic card limit** applies
+  independently per Game Type. Platform Admin sets a network-level platform maximum
+  (currently 300, but configurable, never a hard-coded invariant); a hall may set one
+  optional per-site override, which can never effectively exceed the current
+  platform maximum. Effective limit = `min(hall_override, current_platform_maximum)`
+  if an override exists, else the current platform maximum — always evaluated
+  against the platform maximum's *current* value, even if a hall's saved override
+  predates a later platform-maximum decrease. Only Digital Bingo Play Products
+  contribute; Paper always contributes zero. (BR-038)
+- At checkout, BingoCommerce aggregates digital faces from the selected package's
+  components plus any selected eligible add-ons, by Game Type, and each Game Type's
+  total must independently satisfy `total <= effective_hall_limit`. Paper never
+  participates. Enforcement is authoritative server-side — UI-side calculation alone
+  is never sufficient. Checkout no longer consumes a Session capacity/order slot.
+  (BR-042)
+
+## Session Domain
+- A BingoCommerce Session is hall-owned/per-site; tenant context + Session ID is the
+  canonical Session identity, with no network-wide Session registry needed in v1. A
+  Session scopes exact structured calendar date, Session display name, hall, package
+  availability, purchase validity, digital-ticket validity, redemption, and
+  electronic accumulation for that play occurrence. A separately structured Session
+  time is not required. Bingo Packages must be assignable/available for a specific
+  Session. Sessions do not contain the retired session-wide capacity counter.
+  (BR-041, BR-050 — BR-041 formally supersedes BR-002, BR-025, BR-031; BR-050
+  supersedes only BR-041's earlier "scheduled date and time" wording regarding a
+  separately structured Session time)
+- **Calendar dating:** A Hall Manager schedules Sessions on specific calendar dates.
+  A Session has an exact structured calendar date. A separate structured Session
+  time is not required. Time may appear as part of the Session display name (for
+  example, "Evening – 7:00 PM"); no business logic may parse that display-name
+  time. Customers purchase against one specific dated Session. (BR-050)
+- **Sales availability:** A Session automatically enters its online sales window 5
+  calendar days before the Session date. A Hall Manager-controlled Available for
+  Sale ON/OFF setting also applies. The Session appears on the customer storefront
+  only when BOTH are true: inside the 5-day window AND Available for Sale = ON.
+  Turning Available for Sale ON does not bypass the 5-day window; turning it OFF
+  prevents the Session from appearing for purchase. Week- or month-ahead
+  future-Session browsing is not a current requirement. Do not invent an automatic
+  sales-window close from text in the Session name. (BR-051)
+- **Customer selection:** Customers see only Sessions currently eligible for sale.
+  Selection must clearly identify the exact date and Session name. The customer
+  selects the Session before selecting the Bingo Package. The order remains
+  associated with that exact Session. (BR-052)
+
+## Digital Entitlement & Redemption
+- **Online activation:** For online purchases, the Bingo entitlement becomes active
+  only after payment is successfully confirmed. Failed, cancelled, or unsuccessful
+  payment does not create an active Bingo entitlement or QR. Do not hardcode a
+  particular WooCommerce order-status name as the business rule — successful
+  online payment confirmation activates entitlement creation. (BR-053;
+  this resolves the previously open online entitlement-activation question)
+- Entitlement snapshot is immutable: once an order becomes entitled, its frozen
+  per-Game-Type digital entitlement is never recalculated from later, mutable
+  product/package/Game Type configuration changes. (BR-043)
+- QR scope: a Paper-only package produces no QR; a Digital package produces exactly
+  one QR; a Hybrid/Combo package produces exactly one QR covering the digital
+  entitlement only. Ordinary merchandise and paper components never enter the QR
+  entitlement. The QR is a reference to server-authoritative state — QR-carried
+  values are never themselves authoritative. Order loads onto exactly one Android
+  device; a second device attempting redemption is blocked. (BR-044, amends BR-009)
+- Manager ticket reactivation on device failure remains staff-gated only, logging
+  actor, reason, previous device, and timestamp. (BR-010)
+- Android redemption: `caller_id` is the tablet identity; accumulation is scoped by
+  hall + session_id + caller_id + Game Type. Multiple valid Digital Packages for the
+  same Session may be redeemed onto the same tablet. Electronic entitlement
+  accumulates independently by Game Type. For every incoming Package:
+  `existing tablet/session/Game-Type total + incoming Package contribution <=
+  effective limit`. If any affected Game Type would exceed its effective limit,
+  reject the entire incoming Package — no partial redemption. Example: Package 1
+  Regular = 3, Winner Take All = 5, Hot = 5; Package 2 Regular = 4, Winner Take All
+  = 4; accumulated Regular = 7, Winner Take All = 9, Hot = 5 — valid if each value
+  remains within its individual Game Type limit. Exact Android wire-contract details
+  (JSON fields, DTOs, game codes) are a separate, later, versionable integration
+  decision. (BR-045, BR-055)
+- **Late redemption:** A Session starting does not automatically make a valid QR
+  unusable. Late customers may still redeem during the Session. Do not introduce a
+  strict "must redeem before Session start" rule, and do not invent an automatic
+  closing time from text contained in the Session name. (BR-056)
+- Refunds: a Bingo Package cannot be partially refunded — it is refunded as a whole,
+  and its package-scoped add-ons are refunded with it rather than independently in a
+  way that would create entitlement inconsistency. A refund/cancellation of the Bingo
+  Package (the bingo commercial unit) voids its associated digital entitlement — this
+  entitlement-voiding is scoped to the Package, not to the WooCommerce order as a
+  whole. Ordinary merchandise in the same order remains independently refundable per
+  hall policy, and a merchandise-only refund in a mixed order must NOT void or alter
+  the Bingo Package's digital entitlement. Refund handling is separate from Android
+  redemption-limit enforcement. (BR-046, amends and narrows BR-011)
+
+## Starter Catalog
+- At hall provisioning, Bingo Innovation's starter WooCommerce products, starter
+  Bingo Play Products, and starter Game Types are copied into the hall as hall-owned
+  WooCommerce drafts / hall-local Game Types — a one-time copy, not ongoing
+  synchronization. After provisioning, halls may edit, delete, publish, or add to
+  their copies; future changes to Bingo Innovation's master starter catalog never
+  silently modify an already-provisioned hall's catalog. (BR-047)
+
+## Sales Reporting
+- Keep purchase/payment date separate from Session attribution. Example: $4,000
+  paid Monday for Tuesday's Session and $6,000 paid Tuesday for Tuesday's Session
+  means daily transaction reporting is Monday = $4,000 collected and Tuesday =
+  $6,000 collected, while Session reporting is Tuesday Session = $10,000 total
+  Session sales. Do not move the Monday transaction onto Tuesday's
+  payment/accounting date. (BR-054)
+
+## Current-Implementation Scope Limits
+- Detailed game-by-game player activity tracking is not required. Do not design
+  storage for per-game play history as part of this feature. (BR-058)
+- Do not expand the current implementation into separate jackpot or additional-game
+  purchase flows. Current focus is Digital Package purchase and Package redemption.
+  Additional separate purchase behavior can be considered later if required.
+  (BR-059)
+
+## Offline Usability (business expectation)
+- Previously synchronized QR/Package information should remain usable at the hall
+  if Internet connectivity is later lost. This is a business expectation only —
+  do not invent the final local-server, cache, or network architecture here. Exact
+  offline implementation remains a later technical design concern. (BR-060)
 
 ## POS
 - Halls may use their own existing POS system.
@@ -96,6 +251,13 @@ halls cannot self-export at any status. (BR-017)
 - **Predefined packages** (combining multiple separate products, required +
   optional items): WooCommerce Product Bundles.
 These are distinct tools for distinct use cases — do not conflate. (BR-021)
+- **Amended by BR-040**: for Bingo Packages specifically, these WooCommerce tools
+  may be used as commerce/UI mechanisms where appropriate, but BingoCommerce is not
+  committed to them ahead of the technical implementation design that determines
+  whether/how they should be used. BingoCommerce — not WooCommerce — owns package
+  identity, components, quantities, Game Type mapping, entitlement calculation,
+  and add-on eligibility. Do not describe WooCommerce Bundles/Add-ons as the
+  authoritative Bingo Package domain model.
 
 ## Compliance
 No gaming-license verification gate for halls to start selling. Terms & Conditions
@@ -113,7 +275,16 @@ the same standard regardless of this correction — nothing here is over-built
 for the smaller real starting scale. (BR-014)
 
 ## Still Open (do not build against an assumed answer)
-- Offline handling strategy for digital ticket redemption
+- Offline QR/Package usability **technical implementation** (local-server / cache /
+  network architecture). The **business expectation** is locked by BR-060:
+  previously synchronized QR/Package information should remain usable at the hall
+  if Internet connectivity is later lost. Do not invent that architecture now.
 - Final payment gateway / POS hardware provider
 - Legal review of whether 90-day retention satisfies any actual financial/tax
   record-keeping requirement
+- Bingo Package base price / package-specific add-on pricing persistence
+  (BR-049) — belongs to the upcoming technical persistence/domain-design pass
+
+  The previously open **online entitlement-activation** question is resolved by
+  BR-053: successful online payment confirmation activates entitlement
+  creation. That item is no longer open.

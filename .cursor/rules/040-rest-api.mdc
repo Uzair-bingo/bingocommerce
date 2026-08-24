@@ -8,13 +8,19 @@ alwaysApply: false
 
 ## Every Custom Endpoint
 
-- Register on `rest_api_init` with a versioned namespace:
-  `bingocommerce/v1`.
+- Register on `rest_api_init` with a versioned namespace. Custom BingoCommerce
+  APIs use a versioned namespace; the exact initial namespace/version is
+  selected during the API-contract design — not locked in this pass.
 - EVERY route has an explicit `permission_callback` performing a real check —
   `__return_true` on a mutating or data-exposing endpoint is rejected.
 - EVERY parameter has `sanitize_callback` (and `validate_callback` where
   applicable).
-- Any direct DB query inside an endpoint uses `$wpdb->prepare()`.
+- Normal endpoint-owned `$wpdb` queries use `$wpdb->prepare()`. REST
+  controllers should call canonical domain/services rather than reimplement
+  protected persistence logic. If a called canonical service is governed by
+  ADR-025, that service retains its approved direct-mysqli transaction
+  transport — a REST endpoint must never bypass or duplicate ADR-025 merely
+  to perform database work directly. Raw interpolation remains prohibited.
 - Errors return safe messages — never expose SQL, stack traces, payment
   details, or secret material.
 
@@ -29,18 +35,47 @@ alwaysApply: false
 
 ## Android Device API (QR redemption)
 
-- No permanent hall-wide API key. Every device has: unique ID, hall (blog_id)
-  assignment, its own revocable credential, status, last-seen timestamp
-  (network-wide registry table, ADR-018).
-- Device tokens are short-lived; a compromised device must be revocable
-  without affecting other devices in that hall.
-- Redemption endpoint must be: rate-limited, hall-scoped, and ATOMIC —
-  validate hall, order, payment, session, expiry, refund/cancellation status,
-  and device eligibility, then transition the ticket `issued` → `redeemed`
-  and bind the device in one atomic operation. Repeated or simultaneous scans
-  are rejected and logged.
-- A second device can never redeem the same order unless a staff-gated
-  reactivation cleared the binding first (BR-009, BR-010).
+- `caller_id` is unique per tablet and is BingoCommerce's confirmed tablet
+  identity concept for redemption purposes (BR-045). Exact device-
+  authentication credentials, device-registry persistence, table scope,
+  status fields, last-seen tracking, and lifecycle belong to the upcoming
+  Android/API technical design — not locked here. ADR-018 governs custom-
+  table naming/prefix conventions; it does not itself require a network-wide
+  device registry. ADR-011 remains authoritative for machine authentication
+  generally — do not invent a new custom token scheme or token lifetime in
+  this pass.
+- Redemption is server-authoritative and acts on the authoritative
+  entitlement/ticket state produced after successful online payment
+  confirmation (BR-043, BR-053). It conceptually validates: ticket/
+  entitlement validity; hall/tenant; Session; tablet/caller identity;
+  refund/cancellation/void state where applicable; BR-045/BR-055 Game-Type
+  accumulation limits; and authorization/security requirements. A valid QR
+  remains redeemable after Session start (BR-056) — do not invent a
+  must-redeem-before-start rule or an automatic close from Session-name
+  text. Do not re-check a specific WooCommerce payment-status name at
+  redemption. Do not lock a specific device-binding column, expiration
+  field, or `issued` -> `redeemed` implementation transition here — those
+  belong to the upcoming persistence design.
+- Redemption accumulation (BR-045, BR-055) MUST be atomic/concurrency-safe: existing
+  hall/session/caller/Game-Type accumulation + incoming Package entitlement <=
+  current effective limit, checked and mutated atomically. Multiple valid
+  Digital Packages for the same Session may redeem onto the same tablet and
+  accumulate independently by Game Type. If any affected Game Type would
+  exceed its effective limit, reject the ENTIRE incoming receipt — no
+  partial redemption. Do not reintroduce shared checkout/Session-capacity
+  accounting (retired per BR-041/ADR-028).
+- One digital ticket binds to one Android tablet/device (BR-009, BR-044). A
+  retry of the SAME logical redemption operation after a timeout or lost
+  response must be handled idempotently and must never apply the
+  entitlement twice. A genuinely NEW redemption attempt for an already-bound
+  ticket on another device is blocked unless an authorized BR-010
+  staff-gated reactivation makes the ticket eligible for recovery — the
+  exact reactivation mechanism belongs to the upcoming persistence design;
+  do not assume it works by "clearing" a stored binding. Final operation-ID
+  field, retry-token format, JSON payload, and endpoint response schema are
+  not defined in this pass.
+- Integration contracts (Android wire format, DTOs, game codes) must remain
+  versionable/extensible (BR-045) — not defined in this pass.
 
 ## Platform Hardening
 

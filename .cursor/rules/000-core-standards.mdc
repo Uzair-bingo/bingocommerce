@@ -17,7 +17,7 @@ conflicts with them, STOP and ask.
 3. Custom code lives ONLY in `wp-content/plugins/bingocommerce-*`,
    `wp-content/mu-plugins/bingocommerce-*`, or `wp-content/themes/bingocommerce-*`.
 4. No new third-party plugins without explicit architectural approval (AGENTS.md rule 3).
-5. Every direct SQL query uses `$wpdb->prepare()`. No interpolated SQL, ever.
+5. SQL values must never be interpolated unsafely. Normal `$wpdb` SQL must use `$wpdb->prepare()`. ADR-025 mandatory-audit critical DML uses the approved direct-mysqli parameterized/prepared transaction transport — that ADR-025 transport must not be rewritten to `$wpdb` merely to satisfy this generic rule. Raw SQL interpolation remains prohibited everywhere.
 6. Every output is escaped (`esc_html__`, `esc_attr`, `esc_url`, `wp_kses_post`).
    Every input is sanitized (`absint`, `sanitize_text_field`, etc.).
 7. Authorization uses named capabilities via `current_user_can()` — never
