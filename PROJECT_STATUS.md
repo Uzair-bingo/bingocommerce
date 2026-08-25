@@ -224,18 +224,34 @@
     and guardrails only.
   - No PHP, JavaScript, SQL migration, table, REST endpoint, admin/storefront
     UI, or test was created or modified.
+- **[2026-08-25]** Game Type Increment 1 implemented and locally verified in
+  `bingocommerce-catalog` (uncommitted, pending review).
+  - Added the hall-local `bingo_game_types` migration, per-site schema version,
+    existing/new-hall provisioning, and post-`dbDelta()` schema verification.
+  - Added capability-gated Game Type create, rename, archive, restore, get/list,
+    active-selection reads, ordinary administrative auditing, and the minimal
+    Hall Manager administration screen.
+  - Full real-database integration suite passed: 151 assertions, including
+    Unicode code generation, uniqueness/concurrency, lifecycle, authorization,
+    audit warnings, migration recovery/idempotency, and Sunrise/Tampa isolation.
+  - Cross-network existing-hall migration catch-up is restricted to the native
+    Super Admin network-administration path; hall requests retain current-site
+    migration/self-healing only.
+  - Hard delete, Bingo Play Products, Packages, Sessions, and coordinated
+    starter-catalog copy remain deferred and are not implemented.
 ---
 
 ## In Progress
 - No Hall Staff Management work currently in progress.
-- Catalog/Session persistence architecture is designed and documented but not
-  implemented. This documentation synchronization is awaiting review/commit.
+- Game Type Increment 1 is implemented and verified locally but remains
+  uncommitted pending review. The broader approved Catalog/Session persistence
+  architecture remains unimplemented.
 
 ## Next Up (Strict Execution Order)
-1. After review and commit of this documentation, perform a focused **Game Type
-   implementation-design slice**: finalize machine-code syntax/length/generation,
-   migration compatibility details, service contract, permissions, and tests
-   before writing the first Catalog migration or implementation code.
+1. Review and commit Game Type Increment 1 without expanding its approved scope.
+   The next Catalog increment requires its own focused Bingo Play Product
+   integration-design slice, including the approved shared concurrency boundary
+   needed before Game Type hard delete can be enabled.
 2. The online entitlement-activation business rule is now resolved as
    successful online payment confirmation (`BR-053`). Exact WooCommerce
    successful-payment hook/status mapping belongs to later
@@ -244,12 +260,10 @@
 3. Package pricing persistence is resolved by ADR-031: linked WooCommerce
    native price for Package base price; relational Package/add-on unit price
    and quantity ceiling.
-4. None of the Catalog/Session/sales-window/entitlement-activation/reporting
-   feature areas are implemented. No PHP, migrations, tables, REST
-   endpoints, or admin/storefront UI exist yet for them.
-5. Implement only after ADR-031 and the detailed persistence design are
-   reviewed/committed and the focused Game Type implementation-design slice is
-   approved.
+4. Except for Game Type Increment 1, the Catalog/Session/sales-window/
+   entitlement-activation/reporting feature areas are not implemented.
+5. Continue only through separately reviewed, focused implementation slices
+   that preserve ADR-031 and the detailed persistence design.
 6. Platform Admin network identity Disable/Reactivate/Permanent Delete
    remains deferred under BR-035 §4 and requires a separate
    architecture/decision pass before implementation.
