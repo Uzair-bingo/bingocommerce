@@ -236,6 +236,106 @@ Reliable redemption should require authoritative server confirmation and idempot
 
 *Rationale:* Extends the QR/device-binding principle already locked by BR-009/BR-010 into the confirmed Game-Type-scoped entitlement model, while keeping the Android wire contract's exact shape a separate, later, versionable integration decision.
 
+- **ADR-031 — [2026-08-25] — Catalog and Session Persistence Architecture:**
+
+BingoCommerce uses a hybrid persistence model: WooCommerce products are the
+commerce shells, while BingoCommerce owns the authoritative relational Bingo
+Catalog and Session domain.
+
+Hall-owned domain state is stored in these seven per-site custom tables:
+`$wpdb->prefix . 'bingo_game_types'`,
+`$wpdb->prefix . 'bingo_play_products'`,
+`$wpdb->prefix . 'bingo_packages'`,
+`$wpdb->prefix . 'bingo_package_components'`,
+`$wpdb->prefix . 'bingo_package_addons'`,
+`$wpdb->prefix . 'bingo_sessions'`, and
+`$wpdb->prefix . 'bingo_session_packages'`. The WordPress prefix supplies the
+installation/site namespace; no additional `bc_` table-name sub-prefix is
+added.
+
+Game Type, Bingo Play Product, Package, and Session use surrogate
+BingoCommerce domain IDs. Game Type also has a stable immutable machine code
+separate from its editable display name. Linked WooCommerce product IDs are
+unique mappings, not BingoCommerce domain identity. One WooCommerce product ID
+MUST NOT be linked simultaneously by `bingo_packages` and
+`bingo_play_products`; `PackageService` and `BingoPlayProductService` each
+enforce that exclusivity. Enforcement MUST be concurrency-safe: a standalone
+check-then-insert across the two authoritative tables is insufficient. The
+exact serialization/transaction mechanism is finalized in the Bingo Play
+Product/Package implementation-design slice before either writer is
+implemented. This clarification does not add another table and does not make
+ADR-025's Hall Staff transport automatically applicable.
+
+The linked WooCommerce Package product's native price is the authoritative
+Package base price. Package composition never sums component-product prices.
+The Package/add-on relationship owns its Package-specific unit price and
+maximum selectable quantity. `bingo_package_addons` is the only authority for
+which Package may use an add-on.
+
+Session stores a structured calendar `DATE` and display name. No separately
+structured Session time is required in the current implementation, and time
+text in the display name is never parsed for business logic.
+
+The platform electronic maximum is a network option controlled by Platform
+Admin; the optional hall override is a site option configurable by an
+authorized Hall Manager. The current-value effective-limit resolver belongs to
+`bingocommerce-catalog`.
+
+Catalog tables are authoritative under BR-065. BR-032's `bc_product_kind` and
+`bc_package_relation` WooCommerce metadata are derived compatibility/cart-
+enforcement projections, maintained only through supported Catalog services:
+
+- While an authoritative Package row exists,
+  `bc_product_kind = package`.
+- Permanently removing a Package REQUIRES the caller to choose exactly one
+  linked-product disposition: permanently delete the WooCommerce product, or
+  intentionally retain it as ordinary merchandise and set
+  `bc_product_kind = regular`. A request choosing neither is rejected; removal
+  never silently converts the product, and a retained product is never left
+  with missing/undefined `bc_product_kind`.
+- If a Bingo Play Product has one or more enabled Package/add-on relationships,
+  `bc_package_relation = package_only_addon`; otherwise
+  `bc_package_relation = none`. The count is recalculated from all current
+  authoritative relationships, so removing one relationship cannot clear the
+  projection while another enabled relationship remains.
+- Membership in `bingo_play_products` remains authoritative and makes that
+  product non-independently-purchasable in v1 even when compatibility metadata
+  says `bc_product_kind = regular` and `bc_package_relation = none`.
+
+BR-065 is the active business-rule authority clarification for BR-032. ADR-031
+preserves BR-032's explicit metadata values, one-Package cart limit, dependent-
+add-on behavior, and server-side enforcement, with the metadata maintained as
+projections of the relational Catalog model.
+
+`PackageService`, `PackageAddonService`, and `BingoPlayProductService` are the
+supported writers for their respective Catalog state and projections. Final
+cart/checkout enforcement reads authoritative Catalog state; projection
+metadata never grants identity or Package-specific eligibility by itself.
+Projection updates are deterministic, idempotent, verifiable, and safely
+reconcilable. A committed Catalog mutation followed by an unverifiable or
+failed projection update is surfaced as requiring reconciliation rather than
+reported as wholly healthy.
+
+No direct-SQL transaction spanning custom Catalog rows and WooCommerce
+metadata is introduced. ADR-025's Hall Staff direct-mysqli transaction
+transport does not automatically apply to this projection problem. The initial
+implementation uses indexed logical relationships and restrictive service-
+level reference validation; it does not rely on database cascades or physical
+foreign keys. Archive/inactivation preserves relationships while preventing
+new selection/sale, hard deletion is blocked while referenced, and lifecycle
+operations never silently detach relationships.
+
+ADR-026's plugin boundaries remain in force. Detailed conceptual columns,
+indexes, lifecycle behavior, projection reconciliation, and plugin/migration
+ownership are documented in
+`docs/architecture/catalog-session-persistence-design.md`.
+
+*Rationale:* The Catalog and Session model needs indexed hall-local identities
+and relationships without duplicating WooCommerce's commerce responsibilities.
+This split preserves native product/cart/order integration, provides an
+unambiguous relational authority for Bingo rules, and makes compatibility
+metadata repairable rather than a competing source of truth.
+
 ---
 
 ## Business Rules (BR)
@@ -1194,6 +1294,144 @@ delete_users.
   Relationship to prior rules: This entry is net-new. It does not change
   server-authoritative redemption (ADR-030) as the online/connected model.
 
+- **BR-061 — [2026-08-25] — Package Type Composition:**
+
+  A Paper Package has at least one base component, and every base component is
+  Paper.
+
+  A Digital Package has at least one Digital base component and has no Paper
+  base components.
+
+  A Hybrid/Combo Package has at least one Paper base component and at least one
+  Digital base component.
+
+  Package-scoped optional add-ons do not dynamically change the Package
+  definition's stored Package type. Package type is validated from base
+  composition only.
+
+  Relationship to prior rules: This entry is additive to BR-040's Package
+  domain model and BR-044's Package-type-specific QR scope. It does not alter
+  the rule that Paper content contributes no digital entitlement.
+
+- **BR-062 — [2026-08-25] — Package Add-on Quantity Ceiling:**
+
+  A Package-specific add-on relationship defaults to a maximum selectable
+  quantity of 1. Quantity greater than 1 is available only when that exact
+  Package/add-on relationship explicitly configures a larger maximum.
+
+  When an add-on is selected:
+
+  ```
+  1 <= selected_quantity <= max_quantity
+  ```
+
+  BR-049's Package-specific unit-price multiplication and structured
+  entitlement multiplication remain in force.
+
+  Relationship to prior rules: This entry is additive to BR-040 and BR-049. It
+  does not make the underlying Bingo Play Product's WooCommerce price
+  authoritative for add-on pricing.
+
+- **BR-063 — [2026-08-25] — Session Sales Window Inclusive Boundary:**
+
+  For Session calendar date `D`, storefront date eligibility is inclusive:
+
+  ```
+  D - 5 calendar days <= hall_local_today <= D
+  ```
+
+  and `Available for Sale = ON` is also required. `hall_local_today` is
+  calculated using the hall site's configured WordPress timezone. A Session is
+  no longer storefront-eligible beginning the calendar day after its Session
+  date.
+
+  No structured Session time is introduced, and no time may be parsed from the
+  Session display name. BR-056 remains independent: the end of online sales
+  after the Session calendar date does not make an otherwise-valid QR
+  automatically unusable when the Session starts.
+
+  Relationship to prior rules: This entry clarifies BR-051's five-calendar-day
+  sales window and is additive to BR-050 and BR-056. It does not introduce
+  Session capacity or a redemption cutoff.
+
+- **BR-064 — [2026-08-25] — Electronic Limit Configuration Authority:**
+
+  Platform Admin controls the network-level platform electronic maximum. An
+  authorized Hall Manager may configure the optional hall-level override for
+  that Hall Manager's hall.
+
+  Runtime resolution remains dynamically bounded by the current platform
+  maximum:
+
+  ```
+  if a hall override exists:
+      effective_limit = min(hall_override, current_platform_maximum)
+  else:
+      effective_limit = current_platform_maximum
+  ```
+
+  Relationship to prior rules: This entry clarifies BR-038's configuration
+  authority. It does not introduce a Session-wide capacity, order, customer,
+  or reservation counter.
+
+- **BR-065 — [2026-08-25] — Catalog Classification Authority and BR-032 Projection Clarification:**
+
+  `bingo_packages` is authoritative for Bingo Package identity.
+  `bingo_play_products` is authoritative for Bingo Play Product identity.
+  `bingo_package_addons` is authoritative for exact Package-specific add-on
+  eligibility.
+
+  BR-032's `bc_product_kind` and `bc_package_relation` WooCommerce metadata
+  remain required derived compatibility/cart-enforcement projections. They are
+  not independent authorities and cannot override the relational Catalog
+  model. Final cart and checkout classification and eligibility enforcement
+  MUST use authoritative Catalog state.
+
+  The Package projection is deterministic:
+
+  ```
+  if an authoritative bingo_packages row exists:
+      bc_product_kind = package
+  ```
+
+  Permanently removing a Package requires the caller to specify exactly one
+  explicit disposition for the linked WooCommerce product:
+
+  1. Permanently delete the linked WooCommerce product; or
+  2. Intentionally retain it as ordinary merchandise and set
+     `bc_product_kind = regular`.
+
+  The operation MUST reject any removal request that specifies neither. It
+  MUST NOT automatically convert a Package product to ordinary merchandise,
+  and a surviving WooCommerce product MUST NOT be left with a missing or
+  undefined `bc_product_kind`.
+
+  The Package-add-on projection is deterministic and is recalculated from all
+  current authoritative relationships:
+
+  ```
+  if enabled Package-add-on relationship count > 0:
+      bc_package_relation = package_only_addon
+  else:
+      bc_package_relation = none
+  ```
+
+  Removing one Package/add-on relationship MUST NOT set the projection to
+  `none` while another enabled relationship remains. Product-level projection
+  metadata never determines which Package is eligible; exact eligibility comes
+  only from `bingo_package_addons`.
+
+  Membership in `bingo_play_products` overrides compatibility metadata for
+  classification and keeps Bingo Play Products non-independently-purchasable
+  in v1, including when compatibility metadata says
+  `bc_product_kind = regular` and `bc_package_relation = none`.
+
+  Relationship to prior rules: This entry formally supersedes ONLY BR-032's
+  prior attribution of authoritative Package/add-on classification to
+  WooCommerce metadata. BR-032's one-Package-per-checkout rule, dependent
+  add-on enforcement, ordinary-merchandise coexistence, explicit metadata
+  values, and server-side cart/checkout enforcement remain in force.
+
 ---
 
 ## Still Open / TBD Items (Unresolved)
@@ -1210,10 +1448,6 @@ delete_users.
 - Production parent domain purchase.
 - Legal review of 90-day financial record retention safety.
 - Platform audit-log retention period and legal/compliance policy.
-- Bingo Package base price and package-specific add-on pricing persistence
-  (BR-049): where these are stored is not yet decided — belongs to the
-  upcoming technical persistence/domain-design pass.
-
-  The previously open **online entitlement-activation** question is resolved
-  by BR-053: successful online payment confirmation activates entitlement
-  creation. That item is no longer open.
+The previously open **online entitlement-activation** question is resolved by
+BR-053: successful online payment confirmation activates entitlement creation.
+That item is no longer open.

@@ -21,6 +21,11 @@ Each hall is one Multisite site with its own per-site table set
 - Hall-owned data (products, orders, customers, tickets, sessions)
   lives in per-site tables — native isolation. Do not add `blog_id` columns to
   per-site tables; the table prefix IS the isolation.
+- ADR-031's `bingo_game_types`, `bingo_play_products`, `bingo_packages`,
+  `bingo_package_components`, `bingo_package_addons`, `bingo_sessions`, and
+  `bingo_session_packages` are all hall-owned per-site tables. Append these
+  names to `$wpdb->prefix`; do not add another `bc_` sub-prefix or a redundant
+  `blog_id`.
 - A custom table's scope follows data ownership (ADR-022): hall-owned /
   tenant-owned operational data is per-site unless a documented decision
   requires network-wide storage. Genuinely network-wide records (e.g.

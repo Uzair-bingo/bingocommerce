@@ -207,28 +207,48 @@
   - Historical locked entries (`BR-002`/`BR-025`/`BR-031`, `ADR-006`, Hall
     Staff `BR-033`–`BR-036` / `ADR-025`, and `BR-037`–`BR-049` /
     `ADR-026`–`ADR-030`) were left unedited.
+- **[2026-08-25]** Documentation-only Catalog + Session persistence
+  architecture synchronization completed; no implementation was created.
+  - Added `BR-061`–`BR-065`: Package base-composition rules, Package/add-on
+    quantity ceiling, inclusive hall-local Session sales boundary, electronic-
+    limit configuration authority, and Catalog classification / BR-032
+    projection authority.
+  - Added `ADR-031`, locking the hybrid WooCommerce-commerce-shell /
+    BingoCommerce-relational-domain authority split and seven hall-local tables.
+  - Added `docs/architecture/catalog-session-persistence-design.md` with the
+    approved conceptual schema, indexes, lifecycle rules, BR-032 projection /
+    reconciliation contract, and plugin/migration ownership.
+  - Locked native WooCommerce Package price as base-price authority and the
+    Package/add-on relationship as unit-price/quantity authority.
+  - Preserved all historical ADR/BR entries unedited; synchronized active docs
+    and guardrails only.
+  - No PHP, JavaScript, SQL migration, table, REST endpoint, admin/storefront
+    UI, or test was created or modified.
 ---
 
 ## In Progress
 - No Hall Staff Management work currently in progress.
-- Preparing persistence/domain design for the Bingo catalog and Session
-  model after this documentation sync.
+- Catalog/Session persistence architecture is designed and documented but not
+  implemented. This documentation synchronization is awaiting review/commit.
 
 ## Next Up (Strict Execution Order)
-1. Next technical step: **persistence/domain design for Game Type → Bingo
-   Play Product → Bingo Package → Calendar Session.**
+1. After review and commit of this documentation, perform a focused **Game Type
+   implementation-design slice**: finalize machine-code syntax/length/generation,
+   migration compatibility details, service contract, permissions, and tests
+   before writing the first Catalog migration or implementation code.
 2. The online entitlement-activation business rule is now resolved as
    successful online payment confirmation (`BR-053`). Exact WooCommerce
    successful-payment hook/status mapping belongs to later
-   entitlement/QR integration-design work. It does not block the current
-   Game Type → Bingo Play Product → Bingo Package → Calendar Session
-   persistence/domain-design pass.
-3. Pricing persistence (`BR-049`) remains a technical design item for the
-   upcoming persistence pass.
-4. None of the new Session/sales-window/entitlement-activation/reporting
+   entitlement/QR integration-design work. It does not block the Game Type
+   implementation-design slice.
+3. Package pricing persistence is resolved by ADR-031: linked WooCommerce
+   native price for Package base price; relational Package/add-on unit price
+   and quantity ceiling.
+4. None of the Catalog/Session/sales-window/entitlement-activation/reporting
    feature areas are implemented. No PHP, migrations, tables, REST
    endpoints, or admin/storefront UI exist yet for them.
-5. Implement only after that persistence/domain design is reviewed and
+5. Implement only after ADR-031 and the detailed persistence design are
+   reviewed/committed and the focused Game Type implementation-design slice is
    approved.
 6. Platform Admin network identity Disable/Reactivate/Permanent Delete
    remains deferred under BR-035 §4 and requires a separate

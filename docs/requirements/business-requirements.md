@@ -57,7 +57,9 @@ Three roles — do not conflate or merge:
   provides starter Game Types copied into each hall at provisioning; Hall Managers
   may add hall-local Game Types. Do not introduce an All Game Types Game Type or
   special combined Game-Type bucket — Game Types remain individually identified.
-  (BR-037, BR-057)
+  Each hall-local Game Type has a surrogate domain ID and a stable immutable
+  machine code separate from its editable display name. (BR-037, BR-057,
+  ADR-031)
 - **Bingo Play Product** is a reusable WooCommerce product used as a package-building
   component — not independently customer-purchasable in this release. Structured
   metadata: Medium (Paper/Digital), Faces per unit, and a Game Type reference where
@@ -65,7 +67,9 @@ Three roles — do not conflate or merge:
   Paper Bingo Play Product always contributes zero to the electronic-card limit and
   is not required to carry a Game Type solely for that enforcement. Legacy vendor
   catalog tags may be used for one-time migration/bootstrap only — never as an
-  authoritative runtime source. (BR-039)
+  authoritative runtime source. Membership in the authoritative
+  `bingo_play_products` table overrides BR-032 compatibility metadata and keeps
+  the product non-independently-purchasable in v1. (BR-039, BR-065, ADR-031)
 - **Bingo Package** is the customer-facing entity a Hall Manager builds from Bingo
   Play Products and quantities (Paper, Digital, or Hybrid/Combo). Electronic-face
   contribution is calculated structurally as `faces_per_unit × quantity` per
@@ -81,7 +85,12 @@ Three roles — do not conflate or merge:
   are not the authoritative Bingo Package domain model, and BingoCommerce is not
   committed to those specific plugins ahead of the technical implementation design.
   BingoCommerce owns package identity, components, quantities, Game Type mapping,
-  entitlement calculation, and add-on eligibility. (BR-040, amends BR-021)
+  entitlement calculation, and add-on eligibility. Paper Packages contain at
+  least one base component and only Paper base components; Digital Packages
+  contain at least one Digital base component and no Paper base components;
+  Hybrid Packages contain at least one Paper and one Digital base component.
+  Optional add-ons never change the stored Package type. (BR-040, BR-061;
+  BR-040 amends BR-021)
 - **Bingo Package pricing** is separate from Package composition: every Package has
   its own Hall-Manager-set fixed base price, never auto-summed from included
   component product prices, and never automatically recalculated when components or
@@ -89,8 +98,26 @@ Three roles — do not conflate or merge:
   Package relationship (not the underlying reusable product's standalone price),
   multiplied by selected quantity. Bingo commercial total = package base price +
   Σ(add-on unit price × quantity); ordinary merchandise in the same order prices
-  separately per normal WooCommerce rules and is not part of that total. Persistence
-  of base price / add-on pricing is not yet decided. (BR-049)
+  separately per normal WooCommerce rules and is not part of that total. The
+  linked WooCommerce Package product's native price is the authoritative base
+  price; the authoritative Package/add-on relationship stores its own unit price
+  and maximum quantity. Add-ons default to maximum quantity 1 and permit larger
+  quantities only when that exact relationship explicitly configures a larger
+  maximum; selected quantity must satisfy
+  `1 <= selected_quantity <= max_quantity`. (BR-049, BR-062, ADR-031)
+- **Catalog authority and BR-032 compatibility projection:** under BR-065, the seven per-site
+  relational Catalog/Session tables selected by ADR-031 are authoritative.
+  `bc_product_kind` and `bc_package_relation` remain deterministic WooCommerce
+  compatibility/cart-enforcement projections maintained by Catalog services.
+  A Package row projects `bc_product_kind = package`. Permanent Package removal
+  requires exactly one caller-selected disposition: delete the linked WooCommerce
+  product, or retain/convert it to ordinary merchandise with
+  `bc_product_kind = regular`; choosing neither is rejected. An enabled Package-
+  add-on relationship count greater than zero projects
+  `bc_package_relation = package_only_addon`, otherwise it projects
+  `bc_package_relation = none`. Exact Package eligibility always comes from
+  `bingo_package_addons`, and final cart/checkout enforcement always uses
+  authoritative Catalog state. (BR-032, BR-065, ADR-031)
 - Ordinary merchandise is never a Game Type, never participates in digital-
   entitlement calculations, never generates a Bingo QR, and may coexist with one
   Bingo Package in the same checkout — the 0/1-Bingo-Package-per-checkout rule is
@@ -100,13 +127,14 @@ Three roles — do not conflate or merge:
 - There is no maximum orders/customers per Session and no aggregate Session-wide
   capacity counter — that model is retired. The **electronic card limit** applies
   independently per Game Type. Platform Admin sets a network-level platform maximum
-  (currently 300, but configurable, never a hard-coded invariant); a hall may set one
-  optional per-site override, which can never effectively exceed the current
+  (currently 300, but configurable, never a hard-coded invariant); an authorized
+  Hall Manager may set one optional per-site override for their hall, which can never effectively exceed the current
   platform maximum. Effective limit = `min(hall_override, current_platform_maximum)`
   if an override exists, else the current platform maximum — always evaluated
   against the platform maximum's *current* value, even if a hall's saved override
   predates a later platform-maximum decrease. Only Digital Bingo Play Products
-  contribute; Paper always contributes zero. (BR-038)
+  contribute; Paper always contributes zero. The current-value resolver belongs
+  to `bingocommerce-catalog`. (BR-038, BR-064, ADR-031)
 - At checkout, BingoCommerce aggregates digital faces from the selected package's
   components plus any selected eligible add-ons, by Game Type, and each Game Type's
   total must independently satisfy `total <= effective_hall_limit`. Paper never
@@ -130,14 +158,19 @@ Three roles — do not conflate or merge:
   time is not required. Time may appear as part of the Session display name (for
   example, "Evening – 7:00 PM"); no business logic may parse that display-name
   time. Customers purchase against one specific dated Session. (BR-050)
-- **Sales availability:** A Session automatically enters its online sales window 5
-  calendar days before the Session date. A Hall Manager-controlled Available for
-  Sale ON/OFF setting also applies. The Session appears on the customer storefront
-  only when BOTH are true: inside the 5-day window AND Available for Sale = ON.
+- **Sales availability:** For Session date `D`, storefront date eligibility is
+  inclusive: `D - 5 calendar days <= hall_local_today <= D`, using the hall
+  site's configured WordPress timezone. A Hall Manager-controlled Available for
+  Sale ON/OFF setting also applies. New Sessions default to OFF. The Session
+  appears on the customer storefront only when BOTH the inclusive date predicate
+  and Available for Sale = ON are true. Beginning the calendar day after `D`, the
+  Session is no longer storefront-eligible.
   Turning Available for Sale ON does not bypass the 5-day window; turning it OFF
   prevents the Session from appearing for purchase. Week- or month-ahead
   future-Session browsing is not a current requirement. Do not invent an automatic
-  sales-window close from text in the Session name. (BR-051)
+  sales-window close from text in the Session name. This sales boundary does not
+  make an otherwise-valid QR automatically unusable when the Session starts.
+  (BR-051, BR-056, BR-063)
 - **Customer selection:** Customers see only Sessions currently eligible for sale.
   Selection must clearly identify the exact date and Session name. The customer
   selects the Session before selecting the Bingo Package. The order remains
@@ -282,9 +315,6 @@ for the smaller real starting scale. (BR-014)
 - Final payment gateway / POS hardware provider
 - Legal review of whether 90-day retention satisfies any actual financial/tax
   record-keeping requirement
-- Bingo Package base price / package-specific add-on pricing persistence
-  (BR-049) — belongs to the upcoming technical persistence/domain-design pass
-
-  The previously open **online entitlement-activation** question is resolved by
-  BR-053: successful online payment confirmation activates entitlement
-  creation. That item is no longer open.
+The previously open **online entitlement-activation** question is resolved by
+BR-053: successful online payment confirmation activates entitlement creation.
+That item is no longer open.

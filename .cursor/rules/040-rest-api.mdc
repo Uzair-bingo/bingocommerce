@@ -55,7 +55,8 @@ alwaysApply: false
   text. Do not re-check a specific WooCommerce payment-status name at
   redemption. Do not lock a specific device-binding column, expiration
   field, or `issued` -> `redeemed` implementation transition here — those
-  belong to the upcoming persistence design.
+  belong to a later dedicated entitlement/redemption persistence design, not
+  ADR-031's Catalog/Session persistence design.
 - Redemption accumulation (BR-045, BR-055) MUST be atomic/concurrency-safe: existing
   hall/session/caller/Game-Type accumulation + incoming Package entitlement <=
   current effective limit, checked and mutated atomically. Multiple valid
@@ -70,7 +71,8 @@ alwaysApply: false
   entitlement twice. A genuinely NEW redemption attempt for an already-bound
   ticket on another device is blocked unless an authorized BR-010
   staff-gated reactivation makes the ticket eligible for recovery — the
-  exact reactivation mechanism belongs to the upcoming persistence design;
+  exact reactivation mechanism belongs to that later dedicated entitlement/
+  redemption persistence design;
   do not assume it works by "clearing" a stored binding. Final operation-ID
   field, retry-token format, JSON payload, and endpoint response schema are
   not defined in this pass.

@@ -4,7 +4,7 @@ globs: wp-content/**/*.php
 alwaysApply: false
 ---
 
-# Database & Custom Tables (ADR-005, ADR-018)
+# Database & Custom Tables (ADR-005, ADR-018, ADR-031)
 
 ADR-005 established the general principle that operational data lives in
 custom indexed tables, never postmeta — it did **not** define or retain the
@@ -25,29 +25,28 @@ current model.
   `bc_users`/`bc_usermeta` (ADR-018).
 - Bingo Catalog domain data — Game Types, Bingo Play Product metadata,
   Package/Package-Component definitions, add-on eligibility (BR-037/BR-039/
-  BR-040, ADR-026): authoritative BingoCommerce-owned structured domain data.
-  Runtime logic must never infer them from WooCommerce titles, SKUs, tags,
-  categories, or naming conventions. Exact persistence (WooCommerce structured
-  product metadata vs. custom indexed tables vs. WP/network/site options) is
-  decided in the upcoming technical/domain persistence design — do not assume
-  custom tables here.
+  BR-040/BR-061/BR-062, ADR-026/ADR-031): authoritative BingoCommerce-owned
+  structured domain data in the five approved per-site Catalog tables. Runtime
+  logic must never infer them from WooCommerce titles, SKUs, tags, categories,
+  naming conventions, or BR-032 projection metadata. Linked WooCommerce
+  products are commerce shells; their IDs are unique mappings, not domain IDs.
 - Calendar Sessions, 5-day sales-window / Available for Sale state,
   Package-to-Session assignment, and the optional hall electronic-limit
   override are BingoCommerce-owned structured domain/configuration data.
-  Their exact persistence is the subject of the upcoming persistence/domain
-  design and is **not** already required to be custom tables. Persistence may
-  be custom indexed tables, structured WooCommerce metadata, or site/network
-  options as appropriate to the approved design. Do not dump this data into
-  unindexed postmeta merely for convenience. Storage scope follows ADR-022:
-  the platform electronic maximum is network-level configuration; the
-  optional hall override is per-site configuration.
+  ADR-031 stores Session and assignment state in the two approved per-site
+  Session tables. The platform electronic maximum is a network option; the
+  optional hall override is a site option; `bingocommerce-catalog` resolves the
+  effective current value. Do not store these in unindexed postmeta.
 - Bingo operational data already governed by existing ADRs (digital
   tickets/entitlement snapshots, redemption events, hall billing status,
   audit log per ADR-023, reporting facts) must not be dumped into unindexed
-  postmeta merely for convenience. Where those ADRs already require custom
-  indexed tables, follow them; do not treat Session/sales-window/Package-
-  assignment/hall-override storage as locked to custom tables ahead of the
-  persistence design.
+  postmeta merely for convenience. ADR-031 Catalog/Session persistence follows
+  the approved seven-table plus network-option/site-option design above.
+  Operational domains still explicitly deferred — including final entitlement,
+  redemption accumulation, device, and offline persistence — MUST NOT have
+  storage invented ahead of their dedicated designs. Where an existing ADR
+  already requires an operational custom indexed table, follow that ADR without
+  inferring its undecided schema from ADR-031.
 - A future Android/tablet device registry is not yet decided: its existence,
   persistence, ownership scope, and schema are deferred to the upcoming
   Android/API persistence design. Do not classify it as per-site or
@@ -84,6 +83,42 @@ current model.
   existing sites and newly created Multisite sites.
 - Table names must be distinctive — never reuse WP core or WooCommerce table
   names (ADR-018).
+
+## Approved Catalog and Session Tables (ADR-031)
+
+The seven hall-local tables are:
+
+- `$wpdb->prefix . 'bingo_game_types'`
+- `$wpdb->prefix . 'bingo_play_products'`
+- `$wpdb->prefix . 'bingo_packages'`
+- `$wpdb->prefix . 'bingo_package_components'`
+- `$wpdb->prefix . 'bingo_package_addons'`
+- `$wpdb->prefix . 'bingo_sessions'`
+- `$wpdb->prefix . 'bingo_session_packages'`
+
+Do not add another `bc_` sub-prefix or a redundant `blog_id`. The per-site
+table prefix is the tenant boundary. Game Type, Bingo Play Product, Package,
+and Session use surrogate domain IDs. A linked WooCommerce product ID must be
+unique within its mapping and must not be registered simultaneously as both a
+Package and Bingo Play Product. Enforcement MUST be concurrency-safe; a
+standalone check-then-insert across the two authoritative tables is
+insufficient. The Package/Bingo Play Product implementation-design slice must
+finalize the serialization/transaction mechanism before either writer is
+implemented. Do not add another table or automatically reuse ADR-025.
+
+Use indexed logical relationships and restrictive canonical-service reference
+validation initially. Do not assume physical foreign keys or cascading deletes.
+Archive preserves relationships; hard delete is blocked while referenced; no
+lifecycle operation silently detaches relationships. The conceptual schema is
+in `docs/architecture/catalog-session-persistence-design.md`.
+
+Under BR-065, BR-032's `bc_product_kind` and `bc_package_relation` are required
+derived WooCommerce compatibility/cart-enforcement projections. Catalog tables
+are authoritative, and `bingo_package_addons` alone determines exact Package/
+add-on eligibility.
+Projection writes through WooCommerce CRUD are deterministic, idempotent,
+verifiable, and reconcilable. Do not create a direct-SQL transaction spanning
+Catalog rows and WooCommerce metadata or assume ADR-025 applies.
   
 ## Digital Ticket Table (conceptual data requirements — exact final schema is
 a later technical-design decision per ADR-029/ADR-030)
@@ -109,9 +144,10 @@ and reactivation history (count, last timestamp, last staff actor — BR-010).
   override exists, else the current platform maximum — always evaluated
   against the platform maximum's CURRENT value, even if a hall's saved
   override predates a later platform-maximum decrease.
-- The platform electronic maximum is network-level configuration; the
-  optional hall override is per-site configuration. Do not describe the
-  platform maximum itself as per-site.
+- The platform electronic maximum is a network option controlled by Platform
+  Admin; the optional hall override is a site option configurable by an
+  authorized Hall Manager. `bingocommerce-catalog` owns the resolver. Do not
+  describe the platform maximum itself as per-site (BR-064/ADR-031).
 - Checkout performs authoritative server-side validation against the current
   effective limit (BR-042) — it does not increment or reserve a shared
   counter, so no transactional locking is required at checkout merely
@@ -127,9 +163,9 @@ and reactivation history (count, last timestamp, last staff actor — BR-010).
 - UI-side calculation alone is never sufficient at either boundary.
 - The platform electronic maximum is configurable (currently 300). NEVER
   hardcode 300.
-- Exact table/column design for electronic-limit configuration and
-  per-Game-Type accumulation belongs to the next technical-design pass — do
-  not prematurely lock schema here.
+- Configuration persistence is locked by ADR-031. Exact table/column design for
+  later per-tablet/session/Game-Type redemption accumulation remains deferred
+  to its dedicated technical-design pass.
 
 ## Reporting
 

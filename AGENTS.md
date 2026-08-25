@@ -9,8 +9,8 @@ BingoCommerce is a hosted multi-tenant e-commerce platform for bingo halls, chur
 
 - **Not a Marketplace:** Each hall operates its own fully independent WooCommerce store on a subdomain (`hallname.parent-domain.com`).
 - **Cart & Order Isolation:** One order belongs to exactly ONE hall. Cross-hall shopping carts are strictly prohibited.
-- **Products:** Halls sell physical goods, food, merchandise, and Bingo Packages (Paper, Digital, or Hybrid/Combo) built from Bingo Play Products. Game Type (e.g. Regular, Winner Take All) is a first-class BingoCommerce domain entity, distinct from the WooCommerce product that sells it, and is never inferred from product title, SKU, tags, or category (BR-037, BR-039). Do not introduce an All Game Types Game Type or combined Game-Type bucket (BR-057).
-- **Sessions:** Hall Managers schedule calendar-dated Sessions. Customers see only Sessions inside the 5-day sales window with Available for Sale = ON, select the Session before the Bingo Package, and the order stays associated with that exact Session (BR-050–BR-052). Time in the Session name is a display label and does not drive automatic logic.
+- **Products:** Halls sell physical goods, food, merchandise, and Bingo Packages (Paper, Digital, or Hybrid/Combo) built from Bingo Play Products. Game Type (e.g. Regular, Winner Take All) is a first-class BingoCommerce domain entity, distinct from the WooCommerce product that sells it, and is never inferred from product title, SKU, tags, or category (BR-037, BR-039). Do not introduce an All Game Types Game Type or combined Game-Type bucket (BR-057). ADR-031's per-site Catalog tables are authoritative; linked WooCommerce products are commerce shells, and BR-032 product metadata is only a required derived compatibility/cart-enforcement projection under BR-065.
+- **Sessions:** Hall Managers schedule calendar-dated Sessions. For Session date `D`, customers see the Session only when `D - 5 calendar days <= hall-local today <= D` using the hall WordPress timezone and Available for Sale = ON; they select the Session before the Bingo Package, and the order stays associated with that exact Session (BR-050–BR-052, BR-063). Time in the Session name is a display label and does not drive automatic logic.
 - **Digital Entitlement:** A Paper-only Bingo Package produces no QR. A Digital or Hybrid/Combo Bingo Package produces exactly **ONE QR**, covering the digital entitlement only, redeemed onto **ONE Android device**. For online purchases, that entitlement/QR becomes active only after successful payment confirmation (BR-053). Multiple valid Digital Packages for the same Session may be redeemed onto the same tablet; electronic entitlement accumulates independently by Game Type (BR-045, BR-055). A Session starting does not automatically make a valid QR unusable (BR-056). Staff can perform a staff-gated ticket reactivation (Game Operator or Hall Manager) on device failure. (BR-044, BR-010)
 
 ---
@@ -23,6 +23,8 @@ BingoCommerce is a hosted multi-tenant e-commerce platform for bingo halls, chur
 - WooCommerce
 - Custom BingoCommerce plugins
 - Custom indexed tables where appropriate
+- ADR-031 hybrid Catalog/Session persistence: seven hall-local relational
+  domain tables plus linked WooCommerce commerce shells
 - Redis persistent object caching approach (ADR-007)
 - S3-compatible object storage approach (ADR-009)
 
@@ -48,7 +50,7 @@ Custom code lives ONLY in:
 
 ## 4. Roles & Permissions Model
 - **Game Operator:** Floor/session role only. Can scan and redeem digital QR receipts, lookup redemptions, and execute staff-gated ticket reactivations. Zero access to pricing, products, or billing settings.
-- **Hall Manager:** Runs one or more assigned hall stores. Manages products, pricing, inventory, sessions, orders, staff, refunds, and approved storefront customization. May edit the provided hall theme's fonts, styles, navigation, pages, and layouts, but cannot install/upload/switch themes, install plugins, or alter network configuration.
+- **Hall Manager:** Runs one or more assigned hall stores. Manages products, pricing, inventory, sessions, orders, staff, refunds, the optional hall electronic-limit override, and approved storefront customization. May edit the provided hall theme's fonts, styles, navigation, pages, and layouts, but cannot install/upload/switch themes, install plugins, alter network configuration, or set the platform electronic maximum (BR-064).
 - **Platform Admin:** Bingo Innovation network-wide administrator. Provision halls, edit any hall store, manage platform billing status, manage the starter Bingo Catalog (starter WooCommerce products, Bingo Play Products, and Game Types copied into new halls at provisioning — BR-047; starter Bingo Package templates are not a v1 requirement), set the platform electronic-card maximum (BR-038), and oversee data retention.
 
 ---
@@ -63,11 +65,21 @@ Custom code lives ONLY in:
 ### Database & Security
 4. **Safe SQL Parameterization:** SQL values must never be interpolated unsafely. Normal `$wpdb` SQL MUST use `$wpdb->prepare()`. ADR-025's approved mandatory-audit critical-DML transport uses direct mysqli via a parameterized/prepared mysqli transaction — that approved transport must not be rewritten to `$wpdb` merely to satisfy this rule. Raw string interpolation into SQL is prohibited in all cases.
 5. **REST API Hardening:** Every custom REST API endpoint MUST include an explicit `permission_callback` checking `current_user_can()` (or verifying valid Application Passwords) AND a `sanitize_callback` on every input parameter.
-6. **Hall Isolation:** Every hall-scoped query, cache key, database table row, and file path MUST include the `site_id` / `blog_id`. Cross-hall data leakage is the highest severity bug in this platform.
+6. **Hall Isolation:** Every hall-scoped query, cache key, and file path MUST
+   carry verified tenant context. Hall-owned per-site tables use the resolved
+   site's `$wpdb->prefix` as their isolation boundary and MUST NOT add a
+   redundant `blog_id`; tenant-attributed network-table rows require an indexed
+   `site_id` / `blog_id`. Cross-hall data leakage is the highest severity bug
+   in this platform.
 7. **No Raw Card Storage:** Credit card details must NEVER transit or touch our application server unencrypted. Gateway hosted fields / SDKs only.
 
 ### Architecture & Operations
 8. **Custom Tables over Postmeta:** Structured operational data (sessions, digital entitlements, audit events, billing logs) must not be stored in unindexed `postmeta`. Exact persistence may be custom indexed tables, structured WooCommerce metadata, or site/network options as appropriate to the approved design. Do not dump structured operational data into unindexed postmeta merely for convenience. A device registry is not currently required and is not an already-decided operational table.
+   ADR-031 specifically locks the Catalog/Session authority to the per-site
+   `bingo_game_types`, `bingo_play_products`, `bingo_packages`,
+   `bingo_package_components`, `bingo_package_addons`, `bingo_sessions`, and
+   `bingo_session_packages` tables. Per BR-065, do not treat
+   `bc_product_kind` or `bc_package_relation` as a competing Catalog authority.
 9. **Electronic-Limit Enforcement (Checkout vs. Redemption):** The electronic-card limit — a configurable maximum digital faces per Game Type (network-level platform maximum with an optional per-site hall override, never a hard-coded invariant; currently 300 at the platform level) — has two distinct enforcement boundaries. Checkout performs authoritative server-side validation against the current effective limit (BR-042); it does not increment or reserve a shared counter, so it requires no transactional locking merely because the retired ADR-006 model once needed that. Android redemption checks and mutates accumulated per-tablet/session/Game-Type usage (BR-045) and MUST be atomic/concurrency-safe, accepting or rejecting each incoming receipt as a whole. There is no session-wide qualifying-order capacity model.
 10. **Tenant-Safe Object Caching:** If persistent object caching is enabled, cache keys and invalidation behavior MUST remain tenant-safe in Multisite. A hall-scoped cache-clear operation must never invalidate unrelated halls. Exact Redis/plugin/provider configuration must be verified against the selected implementation before production use.
 11. **No Caching on Dynamic Pages:** Never full-page cache `/cart`, `/checkout`, `/my-account`, QR redemption endpoints, or admin dashboards.

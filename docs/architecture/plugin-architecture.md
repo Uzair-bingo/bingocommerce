@@ -6,8 +6,8 @@ independently activatable and testable.
 | Plugin | Responsibility | Depends on |
 |---|---|---|
 | `bingocommerce-core` | Roles & capabilities, tenant context helpers, audit log service, migration framework | WooCommerce (network) |
-| `bingocommerce-catalog` | Game Type, Bingo Play Product domain metadata/mapping, Bingo Package definitions/components/add-on eligibility, starter-catalog domain logic (ADR-026) | core |
-| `bingocommerce-sessions` | Calendar-dated Session entity, 5-day sales window, Available for Sale, Package-to-Session assignment, customer Session-before-Package selection (BR-050–BR-052) | core, catalog |
+| `bingocommerce-catalog` | Game Type, Bingo Play Product domain metadata/mapping, Bingo Package definitions/components/add-on eligibility, BR-032/BR-065 metadata projections, hall electronic-limit override/current-value resolver, starter-catalog domain logic (ADR-026/ADR-031) | core |
+| `bingocommerce-sessions` | Calendar-dated Session entity, inclusive hall-local 5-day sales window, Available for Sale, Package-to-Session assignment, customer Session-before-Package selection (BR-050–BR-052/BR-063) | core, catalog |
 | `bingocommerce-digital-tickets` | Purchase-time entitlement snapshot (activated on successful online payment confirmation — BR-053), QR issue/redeem, device binding, staff reactivation, Android REST API, redemption accumulation | core, catalog, sessions |
 | `bingocommerce-platform` | Hall provisioning pipeline (triggers `bingocommerce-catalog`'s starter-catalog copy mechanism), billing lifecycle (BR-016), retention/deletion (BR-017), network reporting | core |
 
@@ -19,6 +19,13 @@ foundational/shared infrastructure only — Catalog domain behavior must not be
 added there. `bingocommerce-sessions` owns Session, never Catalog entities.
 `bingocommerce-platform` does not own Catalog domain rules — it only triggers
 `bingocommerce-catalog`'s copy mechanism during provisioning.
+
+ADR-031 assigns the five per-site Catalog tables and their migrations to
+`bingocommerce-catalog`, and the two per-site Session tables and their
+migrations to `bingocommerce-sessions`. `bingocommerce-platform` owns Platform
+Admin mutation/initialization of the network electronic-maximum option;
+`bingocommerce-catalog` owns the optional hall site option and resolves the
+effective current value.
 
 ## 2. Internal Structure (every plugin)
 
@@ -100,6 +107,18 @@ A feature that works on existing halls but fails on a newly created hall is inco
   WordPress Core or WooCommerce tables.
 - Every table has an indexed site/session/order reference column as applicable
 
+For ADR-031 artifacts:
+
+- `bingocommerce-catalog` owns one per-site Catalog schema version (proposed
+  `bc_catalog_db_version`) for `bingo_game_types`, `bingo_play_products`,
+  `bingo_packages`, `bingo_package_components`, and `bingo_package_addons`.
+- `bingocommerce-sessions` owns one per-site Session schema version (proposed
+  `bc_sessions_db_version`) for `bingo_sessions` and
+  `bingo_session_packages`.
+- The seven tables use `$wpdb->prefix` and contain no redundant `blog_id`.
+- Initial relationships are indexed logical relationships with restrictive
+  service-level validation; do not assume physical foreign keys or cascades.
+
 ## 5. Capability Model (core owns this)
 
 - Custom roles: `bc_hall_manager`, `bc_game_operator`
@@ -123,6 +142,34 @@ A feature that works on existing halls but fails on a newly created hall is inco
 - Cross-plugin communication via documented hooks (`do_action`/`apply_filters`
   with `bingocommerce_` prefix), never by calling another plugin's internals
 - No business logic in themes; no presentation logic in core services
+
+### Catalog Services and WooCommerce Projections
+
+ADR-031 and BR-065 define these supported writers in
+`bingocommerce-catalog`:
+
+- `PackageService` owns authoritative Package mutations, linked WooCommerce
+  Package coordination/native base price, concurrency-safe linked-product
+  exclusivity enforcement,
+  and deterministic `bc_product_kind` projection maintenance.
+- `PackageAddonService` owns authoritative Package/add-on relationship
+  mutations, enabled-relationship recount, and deterministic
+  `bc_package_relation` projection maintenance.
+- `BingoPlayProductService` owns authoritative Bingo Play Product membership,
+  concurrency-safe linked-product exclusivity enforcement, and the v1 non-
+  independently-purchasable boundary.
+
+A standalone check-then-insert across `bingo_packages` and
+`bingo_play_products` is insufficient. The exact serialization/transaction
+mechanism must be finalized in the focused implementation-design slice before
+either writer exists; do not add another table or automatically reuse ADR-025.
+
+Catalog tables remain authoritative. Projection metadata is updated through
+WooCommerce CRUD after the authoritative Catalog mutation, then verified. A
+failed/unverifiable projection is surfaced as reconciliation-required and is
+safely retryable from current Catalog state; it is not reported as wholly
+healthy. Do not reuse ADR-025's Hall Staff direct-mysqli transport or invent a
+direct-SQL transaction spanning Catalog rows and WooCommerce metadata.
 
 ### Shared Audit Service
 

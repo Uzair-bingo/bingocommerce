@@ -22,11 +22,28 @@ alwaysApply: false
 - Game Type, Bingo Play Product metadata (Medium, Faces per unit, Game Type
   reference), and Bingo Package definitions/components/add-on eligibility are
   authoritative BingoCommerce-owned structured domain data (BR-037/BR-039/
-  BR-040, ADR-026). Runtime logic must never infer them from a WooCommerce
-  product title, SKU, tag, category, or naming convention. Exact persistence
-  (WooCommerce structured product metadata vs. custom indexed tables vs.
-  WP/network/site options) is decided in the upcoming technical/domain
-  persistence design.
+  BR-040/BR-061/BR-062, ADR-026/ADR-031). Runtime logic must never infer them
+  from a WooCommerce product title, SKU, tag, category, or naming convention.
+  ADR-031's per-site Catalog tables are authoritative; linked WooCommerce
+  products are commerce shells. A WooCommerce product ID must not be linked
+  simultaneously as a Package and Bingo Play Product. Enforcement must be
+  concurrency-safe; a standalone check-then-insert across the authoritative
+  tables is insufficient. Finalize the serialization/transaction mechanism in
+  the Package/Bingo Play Product implementation-design slice; do not add a
+  table or automatically reuse ADR-025.
+- The linked WooCommerce Package product's native price is the Package base-
+  price authority. `bingo_package_addons` owns Package-specific add-on price,
+  maximum quantity, and exact eligibility. Component-product prices are never
+  summed into Package price.
+- Under BR-065, BR-032's `bc_product_kind` and `bc_package_relation` are
+  required derived compatibility/cart-enforcement projections maintained by
+  Catalog services, not independent authorities. Projection updates must be deterministic,
+  idempotent, verifiable, and reconcilable through WooCommerce CRUD. Do not
+  invent a direct-SQL transaction spanning Catalog rows and product metadata,
+  and do not automatically reuse ADR-025's Hall Staff transaction transport.
+- Membership in `bingo_play_products` remains authoritative and keeps that
+  product non-independently-purchasable in v1 even if compatibility metadata
+  says `bc_product_kind = regular` and `bc_package_relation = none`.
 - An immutable purchase-time entitlement snapshot is created when online
   payment is successfully confirmed (BR-043, BR-053): later product/package/
   Game Type edits must never alter what a customer already bought. Do not
@@ -38,15 +55,25 @@ alwaysApply: false
   is its own Multisite site, this is native — never write code that merges or
   references another site's cart/products/orders.
 - Availability rules (calendar-dated Session, 5-day sales window, Available
-  for Sale ON/OFF) are enforced server-side at EVERY step: display,
-  add-to-cart, cart update, checkout, and payment completion. Front-end
-  hiding alone is never authorization. A Session appears for purchase only
-  when it is inside the 5-day window AND Available for Sale = ON (BR-051).
+  for Sale ON/OFF) are enforced authoritatively server-side at pre-payment
+  commerce boundaries: display, add-to-cart, cart update, checkout, and the
+  appropriate pre-payment/payment-initiation boundary. Front-end hiding alone
+  is never authorization. A Session appears for purchase only
+  when `session_date - 5 calendar days <= hall-local today <= session_date`,
+  using the hall site's WordPress timezone, AND Available for Sale = ON
+  (BR-051/BR-063). New Sessions default to Available for Sale OFF.
   The customer selects the Session before the Bingo Package (BR-052). Do not
   implement week/month future-Session browsing as a requirement, and do not
   invent automatic open/close times from text in the Session name (BR-050).
+  Do not decide here how to resolve a payment that was initiated while eligible
+  but confirmed after the calendar/availability boundary; that gateway race
+  belongs to the later checkout/payment integration design. BR-053 remains in
+  force: successful online payment confirmation activates entitlement.
 - At most one Bingo Package per checkout, plus its eligible add-ons and any
   ordinary merchandise (BR-032, BR-040) — never more than one package.
+- Final Package identity and Package/add-on eligibility checks use authoritative
+  Catalog services/tables. Metadata may assist compatibility routing but cannot
+  override Catalog state or identify which Package an add-on is eligible for.
 - The electronic-card limit is validated with authoritative server-side
   checks at checkout, aggregated per Game Type against the current effective
   hall limit (BR-038, BR-042) — see the database rule file. Checkout does not

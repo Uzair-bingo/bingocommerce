@@ -66,24 +66,55 @@ and other platform-specific operations.
   last staff actor — BR-010). A Paper-only Bingo Package never creates a
   ticket row; Digital and Hybrid/Combo packages create exactly one, covering
   the digital entitlement only (BR-044, ADR-030).
-- Bingo Catalog domain (BR-037/BR-039/BR-040, ADR-026): Game Type, Bingo Play
-  Product metadata, and Package/Package-Component/add-on-eligibility definitions
-  are BingoCommerce-owned domain entities, never inferred from a WooCommerce
-  product title, SKU, tag, or category at runtime.
-- Session domain (BR-041, ADR-028, BR-050–BR-052): Session is hall-owned/per-site; tenant
+- Catalog/Session persistence (ADR-031): WooCommerce products are commerce
+  shells, while BingoCommerce owns the authoritative relational domain in seven
+  per-site custom tables: `bingo_game_types`, `bingo_play_products`,
+  `bingo_packages`, `bingo_package_components`, `bingo_package_addons`,
+  `bingo_sessions`, and `bingo_session_packages`, each appended to
+  `$wpdb->prefix`. Game Type, Bingo Play Product, Package, and Session use
+  surrogate domain IDs; linked WooCommerce product IDs are unique mappings.
+  One WooCommerce product ID cannot be linked simultaneously as a Package and
+  Bingo Play Product. Enforcement must be concurrency-safe; standalone check-
+  then-insert is insufficient, and the exact mechanism remains for the focused
+  Package/Bingo Play Product implementation-design slice. Detailed conceptual
+  columns, indexes, logical relationships, and lifecycle rules are in
+  `docs/architecture/catalog-session-persistence-design.md`.
+- Bingo Catalog domain (BR-037/BR-039/BR-040/BR-061/BR-062, ADR-026/ADR-031):
+  Game Type, Bingo Play Product metadata, and Package/component/add-on
+  definitions are never inferred from a WooCommerce title, SKU, tag, or
+  category. Game Type has an immutable machine code separate from its editable
+  name. The linked Package product's native WooCommerce price is the Package
+  base-price authority; the Package/add-on relationship owns its unit price and
+  maximum quantity. Package type is validated from base components only;
+  optional add-ons do not change it.
+- BR-032 product metadata projection (BR-065/ADR-031): `bc_product_kind` and
+  `bc_package_relation` are derived compatibility/cart-enforcement projections,
+  not Catalog authorities. `PackageService`, `PackageAddonService`, and
+  `BingoPlayProductService` own supported projection writes. Package-specific
+  eligibility comes only from `bingo_package_addons`, and final cart/checkout
+  checks use Catalog state. Projection synchronization is deterministic,
+  idempotent, verifiable, and reconcilable; no direct-SQL transaction spans
+  Catalog rows and WooCommerce metadata, and ADR-025 does not automatically
+  apply. The initial model uses indexed logical relationships with restrictive
+  service validation, not database cascades/physical foreign keys.
+- Session domain (BR-041, ADR-028, BR-050–BR-052, BR-063): Session is hall-owned/per-site; tenant
   context + Session ID is the canonical identity. No network-wide Session
   registry is required in v1. Sessions no longer carry a capacity counter.
   A Session has an exact calendar date; display-name time is a label only and
-  does not drive automatic logic (BR-050). Storefront appearance requires the
-  automatic 5-day sales window AND Available for Sale = ON (BR-051). Customers
-  select the Session before the Bingo Package; the order stays associated with
-  that exact Session (BR-052). Week/month future-Session browsing is not a
-  current requirement.
-- Electronic card limit (BR-038/BR-042, ADR-028): a configurable, per-Game-Type
+  does not drive automatic logic (BR-050). For Session date `D`, storefront
+  date eligibility is inclusive:
+  `D - 5 calendar days <= hall_local_today <= D`, using the hall site's
+  configured WordPress timezone, and Available for Sale must also be ON
+  (BR-051/BR-063). New Sessions default to OFF. Customers select the Session
+  before the Bingo Package; the order stays associated with that exact Session
+  (BR-052). The sales boundary does not expire an otherwise-valid QR (BR-056).
+- Electronic card limit (BR-038/BR-042/BR-064, ADR-028/ADR-031): a configurable, per-Game-Type
   maximum — network-level platform maximum with an optional per-site hall
   override, evaluated dynamically (`effective_limit = min(hall_override,
   current_platform_maximum)` when an override exists, else the platform
-  maximum, always using the platform maximum's *current* value). Enforced
+  maximum, always using the platform maximum's *current* value). Platform Admin
+  controls the network option; an authorized Hall Manager may configure the
+  site option; `bingocommerce-catalog` owns the resolver. Enforced
   authoritatively server-side at checkout, aggregating digital faces by Game
   Type; Paper never participates. This replaces the retired session-wide
   qualifying-order capacity model (superseded ADR-006).
@@ -120,10 +151,11 @@ and other platform-specific operations.
   (ADR-008) — these stay dynamic. Page caching (e.g. WP Rocket) and object caching
   (Redis) are complementary layers, not substitutes for each other.
 - HPOS keeps order-heavy queries fast as volume grows per hall.
-- Every hall-owned / tenant-attributed custom table indexes its hall/site
-  reference column. Truly network-global tables/records must not invent a
-  fake hall/site reference merely to satisfy this rule (ADR-022). Tenant
-  isolation remains strict wherever tenant attribution exists.
+- Hall-owned per-site custom tables use `$wpdb->prefix` as their tenant
+  boundary and do not add a redundant `blog_id`. Tenant-attributed network
+  tables index their hall/site reference. Truly network-global tables/records
+  must not invent a fake hall/site reference merely to satisfy this rule
+  (ADR-022/ADR-031).
 - PHP-FPM + OPcache required.
 
 ## Image & Media Handling
@@ -149,9 +181,10 @@ and other platform-specific operations.
   no card field is ever logged or persisted.
 - **Config hardening**: `wp-config.php` above web root where possible,
   `DISALLOW_FILE_EDIT`, `FORCE_SSL_ADMIN`, DB credentials via environment variables.
-- **Hall isolation**: every hall-scoped query, cache key, table row, and file path
-  includes `site_id`/`blog_id`. Cross-hall data leakage is the highest-severity bug
-  class in this platform.
+- **Hall isolation**: every hall-scoped query, cache key, and file path carries
+  verified tenant context. Per-site tables use the resolved `$wpdb->prefix` as
+  the isolation boundary; tenant-attributed network rows include indexed
+  `site_id`/`blog_id`. Cross-hall data leakage is the highest-severity bug class.
 
 ## Hosting Requirements
 Must explicitly support (confirm before committing to a provider, don't assume):
