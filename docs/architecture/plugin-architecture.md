@@ -160,9 +160,10 @@ ADR-031 and BR-065 define these supported writers in
   independently-purchasable boundary.
 
 A standalone check-then-insert across `bingo_packages` and
-`bingo_play_products` is insufficient. The exact serialization/transaction
-mechanism must be finalized in the focused implementation-design slice before
-either writer exists; do not add another table or automatically reuse ADR-025.
+`bingo_play_products` is insufficient. ADR-032 authorizes only
+`bingocommerce-catalog`'s narrow captured-mysqli critical-serialization
+transport for the approved product-claim and Game-Type-reference boundaries;
+it adds no table and does not reuse or broaden ADR-025.
 
 Catalog tables remain authoritative. Projection metadata is updated through
 WooCommerce CRUD after the authoritative Catalog mutation, then verified. A

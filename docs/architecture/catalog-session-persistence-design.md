@@ -318,10 +318,18 @@ Package product and a Bingo Play Product. Both canonical link-creation services
 must enforce this invariant concurrency-safely. A standalone check-then-insert
 across `bingo_packages` and `bingo_play_products` is insufficient because two
 concurrent writers could each observe absence in the other table and commit
-conflicting links. The exact serialization/transaction mechanism must be
-finalized in the Bingo Play Product/Package implementation-design slice before
-either writer is implemented. This design does not add another table and does
-not automatically reuse ADR-025's Hall Staff direct-mysqli transport.
+conflicting links. ADR-032's narrow Catalog critical-serialization transport
+uses the current-site Woo product row as the shared lock anchor and the
+canonical Catalog lock order; it does not add another table or reuse ADR-025's
+Hall Staff transaction semantics. Operational verification must include
+concurrent product administration/REST/status changes because that anchor is a
+WordPress-owned row.
+
+Play Product Game Type reference creation/reassignment and future Game Type
+hard deletion also use ADR-032's shared Game Type row lock. Game Type hard
+delete remains deferred until the complete reference writer/delete contract
+and concurrency tests exist. WooCommerce CRUD and all BR-032/BR-065 projection
+writes remain outside the Catalog critical transaction.
 
 ### Package kind projection
 

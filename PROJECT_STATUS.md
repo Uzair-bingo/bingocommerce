@@ -224,8 +224,8 @@
     and guardrails only.
   - No PHP, JavaScript, SQL migration, table, REST endpoint, admin/storefront
     UI, or test was created or modified.
-- **[2026-08-25]** Game Type Increment 1 implemented and locally verified in
-  `bingocommerce-catalog` (uncommitted, pending review).
+- **[2026-08-25]** Game Type Increment 1 implemented, locally verified, and
+  committed in `bingocommerce-catalog` as `d1ce5d7`.
   - Added the hall-local `bingo_game_types` migration, per-site schema version,
     existing/new-hall provisioning, and post-`dbDelta()` schema verification.
   - Added capability-gated Game Type create, rename, archive, restore, get/list,
@@ -239,31 +239,41 @@
     migration/self-healing only.
   - Hard delete, Bingo Play Products, Packages, Sessions, and coordinated
     starter-catalog copy remain deferred and are not implemented.
+- **[2026-08-26]** Documentation-only Catalog critical-serialization decision
+  recorded as `ADR-032`; no implementation was created.
+  - Authorized one narrow captured-mysqli transaction boundary owned by
+    `bingocommerce-catalog` for approved Package/Play-Product claim exclusivity
+    and Play-Product/Game-Type reference serialization.
+  - Kept WooCommerce CRUD/projections, AuditLog writes, hooks, and other
+    WordPress side effects outside the transaction.
+  - Preserved ADR-025 as the separate mandatory-audit Hall Staff transport;
+    no operation identity, commit witness, or reconciliation protocol was
+    imported into Catalog.
 ---
 
 ## In Progress
 - No Hall Staff Management work currently in progress.
-- Game Type Increment 1 is implemented and verified locally but remains
-  uncommitted pending review. The broader approved Catalog/Session persistence
-  architecture remains unimplemented.
+- No Catalog implementation increment is currently in progress. Bingo Play
+  Product implementation is next, following its approved design and the
+  ADR-032 critical-serialization checkpoint.
 
 ## Next Up (Strict Execution Order)
-1. Review and commit Game Type Increment 1 without expanding its approved scope.
-   The next Catalog increment requires its own focused Bingo Play Product
-   integration-design slice, including the approved shared concurrency boundary
-   needed before Game Type hard delete can be enabled.
+1. Implement the focused Bingo Play Product increment using the approved design
+   and ADR-032 Catalog serialization boundary. Do not implement Packages or
+   enable Game Type hard delete in that increment.
 2. The online entitlement-activation business rule is now resolved as
    successful online payment confirmation (`BR-053`). Exact WooCommerce
    successful-payment hook/status mapping belongs to later
-   entitlement/QR integration-design work. It does not block the Game Type
-   implementation-design slice.
+   entitlement/QR integration-design work. It does not block the Bingo Play
+   Product implementation increment.
 3. Package pricing persistence is resolved by ADR-031: linked WooCommerce
    native price for Package base price; relational Package/add-on unit price
    and quantity ceiling.
-4. Except for Game Type Increment 1, the Catalog/Session/sales-window/
-   entitlement-activation/reporting feature areas are not implemented.
+4. Packages, Sessions/sales-window behavior, coordinated starter-catalog copy,
+   Game Type hard delete, entitlement activation, and reporting remain deferred
+   and are not implemented.
 5. Continue only through separately reviewed, focused implementation slices
-   that preserve ADR-031 and the detailed persistence design.
+   that preserve ADR-031, ADR-032, and the detailed persistence design.
 6. Platform Admin network identity Disable/Reactivate/Permanent Delete
    remains deferred under BR-035 §4 and requires a separate
    architecture/decision pass before implementation.
@@ -282,10 +292,11 @@
 ---
 
 ## Environment Notes
-- **Local:** macOS (arm64), PHP 8.4.14, MySQL 9.5, Apache
+- **Local:** macOS (arm64), PHP 8.4.24, MySQL 9.5, Apache
 - **WordPress:** 7.0.x Multisite subdomain; table prefix `bc_`
 - **Halls:** Sunrise (2), Tampa (3), Orlando test hall (4) (Local)
 - **Commerce:** WooCommerce network-active, HPOS on
 - **Local mail:** SMTP configured and verified for WordPress staff invitation/password setup testing
-- **Custom code:** `wp-content/plugins/bingocommerce-core/` only so far
+- **Custom code:** `wp-content/plugins/bingocommerce-core/` and
+  `wp-content/plugins/bingocommerce-catalog/`
 - **Rule for AI agents:** Read `AGENTS.md`, `docs/architecture/plugin-architecture.md`, and this file before coding. Do not re-scaffold Multisite, WooCommerce, or core bootstrap.

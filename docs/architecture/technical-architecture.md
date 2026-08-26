@@ -74,11 +74,14 @@ and other platform-specific operations.
   `$wpdb->prefix`. Game Type, Bingo Play Product, Package, and Session use
   surrogate domain IDs; linked WooCommerce product IDs are unique mappings.
   One WooCommerce product ID cannot be linked simultaneously as a Package and
-  Bingo Play Product. Enforcement must be concurrency-safe; standalone check-
-  then-insert is insufficient, and the exact mechanism remains for the focused
-  Package/Bingo Play Product implementation-design slice. Detailed conceptual
-  columns, indexes, logical relationships, and lifecycle rules are in
-  `docs/architecture/catalog-session-persistence-design.md`.
+  Bingo Play Product. ADR-032 serializes that exclusivity through the narrow
+  Catalog critical-serialization transport, using the current-site Woo product
+  row as the shared anchor; standalone cross-table check-then-insert remains
+  prohibited. Play Product/Game Type reference creation and future Game Type
+  hard delete serialize on the Game Type row, although hard delete remains
+  deferred. WooCommerce CRUD and projection writes remain outside the critical
+  transaction. Detailed conceptual columns, indexes, relationships, and rules
+  are in `docs/architecture/catalog-session-persistence-design.md`.
 - Bingo Catalog domain (BR-037/BR-039/BR-040/BR-061/BR-062, ADR-026/ADR-031):
   Game Type, Bingo Play Product metadata, and Package/component/add-on
   definitions are never inferred from a WooCommerce title, SKU, tag, or

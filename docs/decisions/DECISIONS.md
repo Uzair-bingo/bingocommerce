@@ -336,6 +336,121 @@ This split preserves native product/cart/order integration, provides an
 unambiguous relational authority for Bingo rules, and makes compatibility
 metadata repairable rather than a competing source of truth.
 
+- **ADR-032 — [2026-08-26] — Catalog Critical Serialization Transport:**
+
+`bingocommerce-catalog` may use a narrowly scoped captured-mysqli transaction
+transport only for approved concurrency-critical Catalog mutations that
+require shared row serialization. The initially approved uses are:
+
+1. WooCommerce-product exclusivity between `bingo_play_products` and
+   `bingo_packages`; and
+2. Bingo Play Product-to-Game Type reference integrity against future Game
+   Type hard deletion.
+
+The transport uses the existing `$wpdb->dbh` connection, requires that handle
+to be `mysqli`, and MUST NOT open a second database connection. Every value is
+bound through native prepared statements. The transaction operates only in a
+verified current hall/site context, follows the deterministic Catalog lock
+order below, and fails closed if the required transport or trustworthy
+connection state cannot be established.
+
+Only the following statements are permitted inside this critical transaction:
+
+- `BEGIN`;
+- `COMMIT`;
+- `ROLLBACK`;
+- `SELECT ... FOR UPDATE`; and
+- concurrency-critical authoritative DML against custom Catalog tables.
+
+The linked WordPress/WooCommerce product row may be locked and minimally read
+when it is the approved serialization anchor, but MUST NOT be mutated inside
+the Catalog critical transaction. WooCommerce CRUD validation and preflight
+occur before the transaction; only minimal row-level revalidation occurs while
+the lock is held. The transaction MUST NOT contain WooCommerce CRUD writes,
+WordPress or WooCommerce metadata writes (including `bc_product_kind` or
+`bc_package_relation` projections), AuditLog writes, hooks, callbacks, emails,
+cache mutations, UI effects, unrelated WordPress writes, or arbitrary
+application callbacks.
+
+This is not a generic `atomic(callable)`, a generic transaction helper for
+other plugins, `HallStaffService` transport, or ADR-025 mandatory-audit
+transport. It MUST NOT introduce or inherit an `operation_id`, commit witness,
+ADR-025 reconciliation protocol, mandatory-audit atomicity, Hall Staff class,
+or retry token.
+
+Commit results use this contract:
+
+- confirmed `COMMIT` acknowledgement means success;
+- definite failure or confirmed rollback means failure; and
+- ambiguous `COMMIT` acknowledgement returns
+  `catalog_commit_outcome_unknown`.
+
+For an ambiguous `COMMIT`, the caller MUST NOT report success, infer success
+from current Catalog state, automatically retry the mutation, or emit an
+ordinary audit event claiming that the mutation was confirmed. Current state
+may have been produced by a different operation and is not proof that this
+specific operation committed. Positive operation-specific reconciliation
+would require durable operation identity and is intentionally not justified
+for these ordinary, low-frequency Catalog administrative mutations.
+
+The current site's WooCommerce product row in the WordPress posts table is the
+approved serialization anchor for Package-versus-Play-Product claiming. This
+is a WordPress-owned row and may contend with WooCommerce or WordPress product
+administration. The transaction therefore holds that row lock for the shortest
+practical duration. Before Package/Play claiming is considered complete,
+operational tests MUST exercise concurrency with product administration, REST
+updates, and product-status changes.
+
+The canonical Catalog lock order is:
+
+- **Play Product creation:** Woo product row; target Game Type row when
+  required; authoritative Package/Play claim checks; insert.
+- **Existing Play Product mutation when Woo identity must be revalidated:**
+  Woo product row; existing Play Product row; target Game Type row when
+  required; any additional authoritative claimant/reference rows; write.
+- **Existing Play Product mutation that does not require Woo identity:**
+  existing Play Product row; target Game Type row when required; write.
+
+No Catalog writer may acquire an earlier-ranked lock after holding a
+later-ranked lock. If one mutation ever needs multiple Game Type rows, it locks
+them in ascending `game_type_id` order. Future `PackageService` product claims
+begin by locking the same Woo product row.
+
+Play Product Game Type reference creation/reassignment and future Game Type
+hard deletion serialize on the same Game Type row lock. Future hard deletion
+locks the Game Type row, performs an indexed existence check for every Play
+Product reference (including archived rows), and then deletes or rejects. It
+MUST NOT subsequently lock Play Product rows in reverse order. Game Type hard
+delete remains disabled until the complete reference-writer/delete contract
+and its concurrency tests are implemented.
+
+The Catalog transport owns its supported transaction boundary. Supported
+Catalog code MUST NOT nest entry into that boundary, and the transport/API
+must prevent its own nested use. PHP/mysqli is not assumed to reliably expose
+whether an arbitrary external transaction is already active on the captured
+connection. Before implementation, actual runtime/mysqli behavior must be
+inspected and only reliable transaction-state checks may be used; a fabricated
+PHP-side transaction-state detector is prohibited. If connection state is
+unsafe or cannot be trusted for the requested boundary, the operation fails
+closed.
+
+This decision is separate from ADR-025. ADR-025 provides security-sensitive
+mandatory-audit atomicity, durable operation identity, and reconciliation for
+Hall Staff mutations. ADR-032 provides only short relational concurrency
+serialization for the approved Catalog invariants. Ordinary Catalog audit
+events, when required under ADR-023, occur outside this transaction only after
+a confirmed commit and continue through the canonical AuditLog path protected
+by ADR-024. ADR-031's relational Catalog authority remains unchanged, and its
+prohibition on a direct-SQL transaction spanning Catalog rows and WooCommerce
+projection metadata remains in force.
+
+*Rationale:* ADR-031 requires cross-table Package/Play-Product exclusivity and
+restrictive reference integrity to be concurrency-safe. A short transaction on
+the existing WordPress database connection provides one deterministic
+serialization boundary without adding a competing authority table, extending
+ADR-025's security-sensitive semantics, or bringing WordPress/WooCommerce side
+effects into the critical transaction.
+
 ---
 
 ## Business Rules (BR)
