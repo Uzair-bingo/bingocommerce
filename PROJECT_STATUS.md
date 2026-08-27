@@ -249,18 +249,174 @@
   - Preserved ADR-025 as the separate mandatory-audit Hall Staff transport;
     no operation identity, commit witness, or reconciliation protocol was
     imported into Catalog.
+- **[2026-08-26]** Bingo Play Product Increment 1 implemented and locally
+  verified in `bingocommerce-catalog` (not committed).
+  - Catalog schema migrated v1 -> v2 (`bc_catalog_db_version`), adding the
+    hall-local `bingo_play_products` table. The version is persisted only after
+    BOTH the applied Game Type schema and the new Play Product schema verify.
+    The committed hook registration is reused unchanged: `network_admin_menu`
+    trusted Super Admin sweep, `admin_init` current-site self-heal, and
+    `wp_initialize_site` new-hall provisioning. No second v2 trigger was added.
+  - Added `CatalogTransactionTransport`, the narrow ADR-032 critical
+    serialization boundary. It takes no callable, exposes exactly four named
+    entry points, uses the captured `$wpdb->dbh` with native prepared
+    statements, and permits only BEGIN/COMMIT/ROLLBACK,
+    `SELECT ... FOR UPDATE NOWAIT`, and authoritative `bingo_play_products` DML.
+    No `operation_id`, commit witness, retry token, mandatory-audit atomicity,
+    or ADR-025 reuse.
+  - ADR-032 is entered ONLY for `create()`, `assignGameType()` when the
+    reference actually changes, `updateMedium()` Paper -> Digital (and a
+    Digital -> Digital reassignment), and `restore()` on an archived row.
+    `updateFacesPerUnit()`, `archive()`, Digital -> Paper, and
+    `clearGameType()` use ordinary `$wpdb->prepare()` conditional atomic
+    statements whose guard predicate lives inside the UPDATE.
+  - `FOR UPDATE NOWAIT` verified supported on the installed MySQL 9.5.0
+    (errno 3572 in ~0.3 ms versus a 50 s `innodb_lock_wait_timeout` wait). No
+    timeout fallback path was implemented.
+  - Commit contract: a clean acknowledgement is success; a pre-COMMIT rejection
+    with confirmed rollback is an ordinary failure; an unclean/interrupted
+    acknowledgement returns `catalog_commit_outcome_unknown` with no
+    post-COMMIT reconciliation, no state inference, no retry, and no audit.
+  - Ordinary ADR-023 auditing (`catalog.play_product.created` / `.updated` /
+    `.archived` / `.restored`) occurs only after a confirmed commit; no-ops emit
+    nothing and `operation_id` stays NULL. An audit failure leaves the committed
+    mutation in place and returns an `audit_write_failed` warning.
+  - Added the minimal Hall Manager Play Product administration screen. The
+    linked WooCommerce product is immutable after creation; there is no hard
+    delete, no relink, and no Package UI.
+  - Play Product integration suite: **404/404 PASS**. Game Type regression
+    suite: **151/151 PASS** (unchanged).
+  - Real local-MySQL concurrency verified: same-product create race resolves to
+    exactly one winner and one row; independent products proceed in parallel;
+    bounded retry resolves a 30 ms anchor lock (~0.08 s) while a 2 500 ms lock
+    returns `catalog_write_conflict` in ~0.07 s; the target Game Type row is
+    genuinely locked for reference creation/reassignment; concurrent
+    `clearGameType()` versus Paper -> Digital never produced
+    `medium = digital AND game_type_id IS NULL` in either interleaving.
+  - `wp_posts` contention exercised against real WooCommerce administration
+    (save, trash, permanent delete, untrash) in both orderings. A live Catalog
+    transaction artificially held the anchor for ~1 s; a concurrent product save
+    completed after waiting ~0.78 s.
+  - Ordinary `$wpdb` writers competing with a live ADR-032 transaction holding
+    the same Play Product row completed correctly after waiting for that
+    transaction (~0.76 s and ~1.77 s measured). These statements carry no
+    NOWAIT, so a stalled Catalog transaction would block them up to
+    `innodb_lock_wait_timeout`; no timeout architecture was added.
+  - Packages, Sessions, checkout/storefront behaviour, starter-catalog copy,
+    Game Type hard delete, Play Product hard delete, Woo relinking, variation
+    mappings, and the `bc_product_kind` / `bc_package_relation` projections
+    remain deferred and are not implemented.
+  - Source-review corrections applied before commit:
+    - **Fail-closed defect fixed:** a failed `ROLLBACK` after an in-transaction
+      lock conflict previously returned the retryable lock-conflict code, so the
+      bounded retry could issue `BEGIN` on a session whose transaction was still
+      open. It now marks the session untrusted and returns
+      `catalog_transaction_state_untrusted`, which carries no `db_errno` and is
+      therefore never retried; `run()` also re-checks the untrusted flag before
+      any further attempt.
+    - **ADR-032 callback prohibition honoured:** the transport's error builder no
+      longer calls `__()`. `translate()` fires the `gettext` /
+      `gettext_{$domain}` filters, and that ran on every in-transaction rejection
+      while `BEGIN` was open. Transport messages are now untranslated developer
+      strings; localization moved to `PlayProductAdmin::error_message()`, after
+      the boundary closes.
+    - **Package-table probe restored to the approved minimal signature**
+      (`package_id`, `wc_product_id`, `status`) and now additionally requires a
+      single-column UNIQUE index on `wc_product_id`, which is what actually
+      proves ADR-031's one-product/one-Package invariant. A non-unique or
+      composite index no longer qualifies. The probe carries an explicit comment
+      that this absent-table bridge is temporary and that PackageService's
+      migration/writer rollout must revisit it so a deployment-time
+      table-creation race cannot create a dual claim.
+    - **Derived Catalog table identifiers are validated fail-closed** against
+      `^[A-Za-z0-9_]+$` before interpolation, rejecting rather than sanitizing,
+      then quoted as before.
+    - **`settle()` removed.** Settlement is mutation-only via `settle_direct()`,
+      eliminating an unreachable branch that would have mislabelled a verified
+      no-op with a mutation status.
+  - New coverage added by those corrections, all passing: lock-conflict followed
+    by a failed ROLLBACK performs exactly one `BEGIN` and never retries; a
+    registered `gettext` callback is never invoked while a Catalog transaction is
+    active (proved against a positive control that does record one); a
+    committed-but-unacknowledged `COMMIT` leaves the row present while still
+    returning `catalog_commit_outcome_unknown` with no audit event and no retry;
+    and eight malformed Package-table shapes each fail closed.
+  - **Three further test-harness safety defects found and FIXED before commit:**
+    cleanup deleted network-wide `bc_audit_log` rows by `target_type` +
+    `target_id` only, so a hall-local Play Product ID colliding across halls
+    could delete another hall's audit trail — every audit read and delete is now
+    scoped by `blog_id`; a `PPI1` title/name was treated as ownership proof, so a
+    legitimate Hall Manager product named "PPI1 …" could be deleted — ownership
+    is now exact tracked IDs for the current run plus a durable
+    `_bc_ppi1_test_artifact` post-meta marker for prior runs, with name matching
+    demoted to detection that reports rather than deletes; and destructive
+    migration scenarios ran `DROP TABLE` against persistent halls with only
+    snapshot/restore as protection, which fails if the process dies mid-test —
+    they now run on a purpose-created disposable Multisite hall that is removed
+    afterwards, and the suite asserts Sunrise/Tampa/Orlando schemas are intact.
+  - **Test-harness destructive-cleanup defect found and FIXED before commit.**
+    An earlier revision of `tests/play-products-increment-1.php` ran an
+    unqualified `DELETE FROM bingo_play_products` plus a hall-wide delete of
+    every `bingo_play_product` audit row, and it destroyed manually created
+    Sunrise smoke-test rows during verification. Cleanup is now ownership-scoped:
+    a Play Product row is removed only when this run tracked its exact ID, or
+    when a prior run's artefact carries the durable `_bc_ppi1_test_artifact`
+    post meta; `PPI1` naming alone is detection/report-only and never authorizes
+    deletion. Package stub tables are dropped only when the run created them.
+    Destructive migration scenarios no longer touch a persistent hall at all:
+    they run on a disposable Multisite hall, so no backup/restore of real hall
+    rows is involved. Unownable residue is reported for deliberate cleanup
+    instead of being deleted. A new `Cleanup safety` group
+    plants an unowned sentinel, runs the real cleanup path, and requires the
+    sentinel's row, audit trail, product and Game Type to survive while
+    suite-owned residue is removed.
+  - Interactive Hall Manager wp-admin verification **completed**, covering
+    create/edit, Paper/Digital transition, archive/restore, restore rejection
+    while the linked WooCommerce product is trashed and recovery after untrash,
+    archived Game Type reference preservation, Hall Manager authority, Game
+    Operator denial, and Sunrise/Tampa tenant isolation.
+  - The recurring `wp-includes/class-wp-http.php` "Maximum execution time of 30
+    seconds exceeded" fatal was diagnosed as a **local PHP/Homebrew libcurl
+    `.test` hostname-resolution problem, unrelated to Catalog**. Every request
+    to a hall — admin, front end, `wp-login.php`, authenticated or anonymous —
+    reproduces it once the `doing_cron` transient goes stale, because
+    `spawn_cron()` and WooCommerce Action Scheduler both issue non-blocking
+    loopback POSTs to `*.bingocommerce.test` that take 30 s instead of 0.01 s.
+    Forcing IPv4 resolution makes them instant. `bingocommerce-catalog` and
+    `bingocommerce-core` contain no HTTP calls at all. This is a local-
+    environment follow-up; no repository workaround was added.
+  - **Test-harness follow-up (NOT fixed here):** `tests/game-types-increment-1.php`
+    leaks roughly 29 orphaned `catalog.game_type.*` audit rows per run, for Game
+    Types it then deletes. This is a harness cleanup gap, not a Game Type domain
+    regression; the Game Type suite still passes 151/151.
+  - **Second test-harness follow-up (NOT fixed here):**
+    `tests/game-types-increment-1.php` temporarily changes the authoritative
+    `bingo_game_types.name` collation to `utf8mb4_bin` and restores it later in
+    the same run. A run interrupted between those two steps leaves the hall's
+    table mis-collated, so case- and accent-insensitive Game Type name
+    uniqueness stays broken until the schema is re-migrated. This is a
+    test-harness hazard, not a Game Type domain regression, and it was
+    deliberately not changed in this increment.
+  - **Follow-up technical review item (NOT fixed here):**
+    `information_schema.innodb_trx` was measured returning a false negative on
+    MySQL 9.5 while a transaction was open holding a real `FOR UPDATE` row lock.
+    `bingocommerce-core`'s ADR-025 `HallStaffTransactionTransport` uses that
+    expression for its `transaction_already_open` guard, so that guard can
+    false-negative. Core was deliberately not modified. The Catalog transport
+    uses `performance_schema.events_transactions_current` instead, which was
+    verified to report ACTIVE for an externally opened transaction both before
+    and after row access.
 ---
 
 ## In Progress
 - No Hall Staff Management work currently in progress.
-- No Catalog implementation increment is currently in progress. Bingo Play
-  Product implementation is next, following its approved design and the
-  ADR-032 critical-serialization checkpoint.
+- Bingo Play Product Increment 1 is implemented, locally verified, and has
+  completed interactive Hall Manager wp-admin verification. It is
+  **not committed**.
 
 ## Next Up (Strict Execution Order)
-1. Implement the focused Bingo Play Product increment using the approved design
-   and ADR-032 Catalog serialization boundary. Do not implement Packages or
-   enable Game Type hard delete in that increment.
+1. Review and commit Bingo Play Product Increment 1. Implementation,
+   automated verification, and interactive wp-admin verification are complete.
 2. The online entitlement-activation business rule is now resolved as
    successful online payment confirmation (`BR-053`). Exact WooCommerce
    successful-payment hook/status mapping belongs to later
@@ -277,6 +433,13 @@
 6. Platform Admin network identity Disable/Reactivate/Permanent Delete
    remains deferred under BR-035 §4 and requires a separate
    architecture/decision pass before implementation.
+7. Separately review the ADR-025 `HallStaffTransactionTransport`
+   `information_schema.innodb_trx` false-negative recorded above. It does not
+   block Catalog work and must not be folded into a Catalog slice.
+8. Separately fix the tests/game-types-increment-1.php harness issues recorded above: the orphaned-audit-row leak and the interrupted-run collation-mutation hazard."
+9. Separately resolve the local PHP/Homebrew libcurl `.test` hostname-resolution
+   stall recorded above. It is an environment issue, not a platform defect, and
+   must not be worked around in repository code.
 
 ---
 
@@ -299,4 +462,6 @@
 - **Local mail:** SMTP configured and verified for WordPress staff invitation/password setup testing
 - **Custom code:** `wp-content/plugins/bingocommerce-core/` and
   `wp-content/plugins/bingocommerce-catalog/`
+- **Catalog schema:** per-site `bc_catalog_db_version` = 2
+  (`bingo_game_types`, `bingo_play_products`)
 - **Rule for AI agents:** Read `AGENTS.md`, `docs/architecture/plugin-architecture.md`, and this file before coding. Do not re-scaffold Multisite, WooCommerce, or core bootstrap.

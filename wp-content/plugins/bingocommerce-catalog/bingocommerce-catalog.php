@@ -16,9 +16,15 @@ define( 'BINGOCOMMERCE_CATALOG_VERSION', '0.1.0' );
 define( 'BINGOCOMMERCE_CATALOG_PATH', plugin_dir_path( __FILE__ ) );
 
 require_once BINGOCOMMERCE_CATALOG_PATH . 'src/GameTypeResult.php';
+require_once BINGOCOMMERCE_CATALOG_PATH . 'src/PlayProductResult.php';
+require_once BINGOCOMMERCE_CATALOG_PATH . 'src/CatalogPlayProductPlan.php';
+require_once BINGOCOMMERCE_CATALOG_PATH . 'src/CatalogWriteOutcome.php';
 require_once BINGOCOMMERCE_CATALOG_PATH . 'src/Migrations.php';
+require_once BINGOCOMMERCE_CATALOG_PATH . 'src/CatalogTransactionTransport.php';
 require_once BINGOCOMMERCE_CATALOG_PATH . 'src/GameTypeService.php';
+require_once BINGOCOMMERCE_CATALOG_PATH . 'src/BingoPlayProductService.php';
 require_once BINGOCOMMERCE_CATALOG_PATH . 'src/GameTypeAdmin.php';
+require_once BINGOCOMMERCE_CATALOG_PATH . 'src/PlayProductAdmin.php';
 require_once BINGOCOMMERCE_CATALOG_PATH . 'src/Plugin.php';
 
 BingoCommerce\Catalog\Plugin::boot();
