@@ -394,6 +394,7 @@ final class PlayProductAdmin {
 			'woo_product_missing'                               => __( 'The linked WooCommerce product no longer exists in this hall.', 'bingocommerce-catalog' ),
 			'woo_product_trashed'                               => __( 'The linked WooCommerce product is in the trash or is an unsaved draft.', 'bingocommerce-catalog' ),
 			'woo_product_unsupported'                           => __( 'Only top-level simple WooCommerce products are supported in this release.', 'bingocommerce-catalog' ),
+			CatalogTransactionTransport::PACKAGE_REFERENCED     => __( 'This Bingo Play Product is used by one or more Bingo Packages, so its medium cannot change. Remove it from those Packages first.', 'bingocommerce-catalog' ),
 			'catalog_identifier_rejected'                       => __( 'This hall\'s Catalog table naming is unsupported. Contact Platform Admin.', 'bingocommerce-catalog' ),
 			'persistence_failed'                                => __( 'The Bingo Play Product change could not be saved.', 'bingocommerce-catalog' ),
 		];

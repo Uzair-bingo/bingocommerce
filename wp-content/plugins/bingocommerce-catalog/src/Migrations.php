@@ -11,18 +11,21 @@ if ( ! defined( 'ABSPATH' ) ) {
 /** Owns the hall-local Catalog schema and its per-site version state. */
 final class Migrations {
 
-	public const DB_VERSION = 2;
+	public const DB_VERSION = 3;
 	public const VERSION_OPTION = 'bc_catalog_db_version';
 	public const NETWORK_SWEEP_OPTION = 'bc_catalog_network_migration_sweep_version';
 	public const GAME_TYPES_TABLE = 'bingo_game_types';
 	public const PLAY_PRODUCTS_TABLE = 'bingo_play_products';
 
 	/**
-	 * ADR-031 reserves this table for the future PackageService. This increment
-	 * never creates it; the name exists only so Play Product creation can probe
-	 * for a competing authoritative Package claim (ADR-032).
+	 * ADR-031 Package identity, created by Catalog v3. Play Product creation
+	 * probes it for a competing authoritative Package claim (ADR-032), and the
+	 * ADR-033 composition boundary locks its rows.
 	 */
 	public const PACKAGES_TABLE = 'bingo_packages';
+
+	/** ADR-031 Package base composition, created by Catalog v3. */
+	public const PACKAGE_COMPONENTS_TABLE = 'bingo_package_components';
 
 	/** @return true|\WP_Error */
 	public static function maybe_migrate_current_site() {
@@ -168,8 +171,42 @@ final class Migrations {
 ) ENGINE=InnoDB {$charset_collate};"
 		);
 
-		// The version is the hall's promise that BOTH Catalog schemas are usable,
-		// so it is persisted only after every required structure verifies.
+		$packages = self::packages_table();
+		dbDelta(
+			"CREATE TABLE {$packages} (
+	package_id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+	wc_product_id bigint(20) unsigned NOT NULL,
+	package_type varchar(16) NOT NULL,
+	status varchar(16) NOT NULL DEFAULT 'active',
+	created_at datetime NOT NULL,
+	updated_at datetime NOT NULL,
+	archived_at datetime DEFAULT NULL,
+	PRIMARY KEY  (package_id),
+	UNIQUE KEY wc_product_unique (wc_product_id),
+	KEY status_package_type (status,package_type)
+) ENGINE=InnoDB {$charset_collate};"
+		);
+
+		$package_components = self::package_components_table();
+		dbDelta(
+			"CREATE TABLE {$package_components} (
+	package_component_id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+	package_id bigint(20) unsigned NOT NULL,
+	bingo_play_product_id bigint(20) unsigned NOT NULL,
+	quantity int(10) unsigned NOT NULL,
+	sort_order int(10) unsigned NOT NULL DEFAULT 0,
+	created_at datetime NOT NULL,
+	updated_at datetime NOT NULL,
+	PRIMARY KEY  (package_component_id),
+	UNIQUE KEY package_play_product_unique (package_id,bingo_play_product_id),
+	KEY package_sort (package_id,sort_order),
+	KEY play_product (bingo_play_product_id)
+) ENGINE=InnoDB {$charset_collate};"
+		);
+
+		// The version is the hall's promise that EVERY Catalog schema through v3
+		// is usable, so it is persisted only after every required structure
+		// verifies.
 		$verified = self::verify_current_site_schema();
 		if ( is_wp_error( $verified ) ) {
 			return $verified;
@@ -208,6 +245,12 @@ final class Migrations {
 		return $wpdb->prefix . self::PACKAGES_TABLE;
 	}
 
+	public static function package_components_table(): string {
+		global $wpdb;
+
+		return $wpdb->prefix . self::PACKAGE_COMPONENTS_TABLE;
+	}
+
 	/** @return true|\WP_Error */
 	public static function verify_current_site_schema() {
 		$game_types = self::verify_game_types_schema();
@@ -215,7 +258,17 @@ final class Migrations {
 			return $game_types;
 		}
 
-		return self::verify_play_products_schema();
+		$play_products = self::verify_play_products_schema();
+		if ( is_wp_error( $play_products ) ) {
+			return $play_products;
+		}
+
+		$packages = self::verify_packages_schema();
+		if ( is_wp_error( $packages ) ) {
+			return $packages;
+		}
+
+		return self::verify_package_components_schema();
 	}
 
 	/** @return true|\WP_Error */
@@ -337,6 +390,105 @@ final class Migrations {
 		}
 
 		return self::assert_engine_and_charset( $table, 'Bingo Play Product' );
+	}
+
+	/** @return true|\WP_Error */
+	public static function verify_packages_schema() {
+		$table = self::packages_table();
+
+		if ( ! self::table_exists( $table ) ) {
+			return self::verification_error( 'The Bingo Package table is missing.' );
+		}
+
+		$by_name = self::columns_by_name( $table );
+		if ( ! is_array( $by_name ) ) {
+			return self::verification_error( 'The Bingo Package columns could not be inspected.' );
+		}
+
+		$columns = self::assert_columns(
+			$by_name,
+			[
+				'package_id'    => [ '/^bigint(?:\(20\))? unsigned$/', 'NO', null, 'auto_increment' ],
+				'wc_product_id' => [ '/^bigint(?:\(20\))? unsigned$/', 'NO', null, '' ],
+				'package_type'  => [ '/^varchar\(16\)$/', 'NO', null, '' ],
+				'status'        => [ '/^varchar\(16\)$/', 'NO', 'active', '' ],
+				'created_at'    => [ '/^datetime$/', 'NO', null, '' ],
+				'updated_at'    => [ '/^datetime$/', 'NO', null, '' ],
+				'archived_at'   => [ '/^datetime$/', 'YES', null, '' ],
+			],
+			'Bingo Package'
+		);
+		if ( is_wp_error( $columns ) ) {
+			return $columns;
+		}
+
+		// assert_indexes() compares the EXACT ordered column list, so a composite
+		// UNIQUE such as (wc_product_id,status) cannot satisfy the single-column
+		// wc_product_unique requirement ADR-031 depends on for one-Package-per-
+		// product. That is deliberate: a composite key would only constrain the
+		// combination and would not prove the invariant.
+		$indexes = self::assert_indexes(
+			$table,
+			[
+				'PRIMARY'             => [ true, [ 'package_id' ] ],
+				'wc_product_unique'   => [ true, [ 'wc_product_id' ] ],
+				'status_package_type' => [ false, [ 'status', 'package_type' ] ],
+			],
+			'Bingo Package'
+		);
+		if ( is_wp_error( $indexes ) ) {
+			return $indexes;
+		}
+
+		return self::assert_engine_and_charset( $table, 'Bingo Package' );
+	}
+
+	/** @return true|\WP_Error */
+	public static function verify_package_components_schema() {
+		$table = self::package_components_table();
+
+		if ( ! self::table_exists( $table ) ) {
+			return self::verification_error( 'The Bingo Package component table is missing.' );
+		}
+
+		$by_name = self::columns_by_name( $table );
+		if ( ! is_array( $by_name ) ) {
+			return self::verification_error( 'The Bingo Package component columns could not be inspected.' );
+		}
+
+		$columns = self::assert_columns(
+			$by_name,
+			[
+				'package_component_id'  => [ '/^bigint(?:\(20\))? unsigned$/', 'NO', null, 'auto_increment' ],
+				'package_id'            => [ '/^bigint(?:\(20\))? unsigned$/', 'NO', null, '' ],
+				'bingo_play_product_id' => [ '/^bigint(?:\(20\))? unsigned$/', 'NO', null, '' ],
+				'quantity'              => [ '/^int(?:\(10\))? unsigned$/', 'NO', null, '' ],
+				'sort_order'            => [ '/^int(?:\(10\))? unsigned$/', 'NO', '0', '' ],
+				'created_at'            => [ '/^datetime$/', 'NO', null, '' ],
+				'updated_at'            => [ '/^datetime$/', 'NO', null, '' ],
+			],
+			'Bingo Package component'
+		);
+		if ( is_wp_error( $columns ) ) {
+			return $columns;
+		}
+
+		$indexes = self::assert_indexes(
+			$table,
+			[
+				'PRIMARY'                     => [ true, [ 'package_component_id' ] ],
+				'package_play_product_unique' => [ true, [ 'package_id', 'bingo_play_product_id' ] ],
+				'package_sort'                => [ false, [ 'package_id', 'sort_order' ] ],
+				// ADR-034's Package-reference check is index-backed through this key.
+				'play_product'                => [ false, [ 'bingo_play_product_id' ] ],
+			],
+			'Bingo Package component'
+		);
+		if ( is_wp_error( $indexes ) ) {
+			return $indexes;
+		}
+
+		return self::assert_engine_and_charset( $table, 'Bingo Package component' );
 	}
 
 	private static function table_exists( string $table ): bool {

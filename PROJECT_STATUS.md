@@ -389,14 +389,10 @@
     leaks roughly 29 orphaned `catalog.game_type.*` audit rows per run, for Game
     Types it then deletes. This is a harness cleanup gap, not a Game Type domain
     regression; the Game Type suite still passes 151/151.
-  - **Second test-harness follow-up (NOT fixed here):**
-    `tests/game-types-increment-1.php` temporarily changes the authoritative
-    `bingo_game_types.name` collation to `utf8mb4_bin` and restores it later in
-    the same run. A run interrupted between those two steps leaves the hall's
-    table mis-collated, so case- and accent-insensitive Game Type name
-    uniqueness stays broken until the schema is re-migrated. This is a
-    test-harness hazard, not a Game Type domain regression, and it was
-    deliberately not changed in this increment.
+  - **Second test-harness follow-up — RESOLVED on 2026-08-28.** The collation
+    scenario no longer touches a persistent hall: it damages and repairs the
+    `name` collation on a disposable hall created for that run alone, so an
+    interrupted run can no longer leave Sunrise or Tampa mis-collated.
   - **Follow-up technical review item (NOT fixed here):**
     `information_schema.innodb_trx` was measured returning a false negative on
     MySQL 9.5 while a transaction was open holding a real `FOR UPDATE` row lock.
@@ -521,6 +517,161 @@
     Paper` is no longer listed as an ordinary `$wpdb` writer.
   - No Package production code, migration, table, or test was created in this
     pass; it was design and documentation only.
+- **[2026-08-28]** **Package Increment 1 — Stage A: Catalog v3 + transport
+  foundation implemented (NOT COMMITTED; awaiting review).** Infrastructure
+  only: no Package writer, no Package admin UI, no storefront, no add-ons, no
+  Session assignment, no REST, no `bc_product_kind` projection.
+  - Catalog schema raised to **v3**, creating the per-site `bingo_packages` and
+    `bingo_package_components` tables via `dbDelta()`. Before the version option
+    is persisted, each table is verified for every REQUIRED NAMED column being
+    present and type/null/default/extra-compatible, every REQUIRED NAMED index
+    having exactly the expected uniqueness and exact ordered column list, InnoDB
+    and utf8mb4. Verification does not demand an exact whole-table shape:
+    unrelated extra columns or extra indexes are tolerated, and only the named
+    requirements are enforced. Neither table carries a `blog_id`; hall isolation is
+    the resolved site's `$wpdb->prefix` (Rule 6). No physical foreign keys.
+  - `bingo_packages.wc_product_unique` is verified as a **single-column**
+    UNIQUE on `wc_product_id`. A composite UNIQUE cannot satisfy it, because a
+    composite key would constrain only the combination and would not prove
+    ADR-031's one-Package-per-product invariant.
+  - Retired the Play Product absent-`bingo_packages` rollout bridge. At v3 an
+    absent or malformed Package table is a schema fault
+    (`catalog_schema_inconsistent`), never a reason to skip the claim check.
+    The pre-v3 compatibility return is retained but is unreachable, because
+    `authorize()` requires `Migrations::is_current()`, which now means v3.
+  - **ADR-034 implemented in both directions.** `Digital -> Paper` moved out of
+    the ordinary single-statement `$wpdb` path into the Catalog transport as
+    `transitionToPaper()`; `Paper -> Digital` gained the same check. Both hold
+    the `bingo_play_products` row as the serialization anchor and then perform a
+    `SELECT ... FOR UPDATE NOWAIT` component-reference check, index-backed
+    through `bingo_package_components.play_product`. Any reference blocks,
+    including one owned by an ARCHIVED Package (BR-067). `game_type_id` is
+    absent from the `Digital -> Paper` SET list, preserving the reference per
+    BR-039.
+  - BR-069 is scoped to an **actual** transition. A row that is already Digital
+    and is merely being re-pointed at another Game Type is not reference-checked,
+    and a true no-op (`Paper -> Paper`) returns unchanged without entering the
+    ADR-034 transition boundary and emits no audit event.
+  - **ADR-033 transport machinery added** as `replacePackageComposition()` plus
+    `CatalogPackageCompositionPlan` and the public
+    `compositionFingerprint()` (sha256 over an ascending `id:quantity;`
+    canonicalization). It is a DISTINCT boundary from ADR-032 that shares only
+    the `$active` and `$untrusted` statics, so neither can nest inside the other
+    and a session poisoned by one is poisoned for both. **It has no caller:**
+    nothing in wp-admin or REST can reach it in Stage A.
+  - The ADR-033 composition engine implemented here is fully tested, not merely
+    guarded: `replacePackageComposition()` has first-class coverage for
+    lifecycle rejection, plan-shape rejection, the quantity storage bound,
+    stale-fingerprint detection including recomputation on every retry, BR-061
+    derivation in all three shapes, exact no-op semantics, archived-component
+    retention/removal/quantity rules, corrupt-state fail-closed, DML rollback
+    integrity, and its own ambiguous-COMMIT and failed-ROLLBACK behaviour.
+  - ADR-033 never locks `bingo_package_components` rows. The parent
+    `bingo_packages` row is the sole serialization anchor for conforming
+    composition writers; the current-composition read is a plain, callback-free
+    SELECT that is structurally guaranteed to be the transaction's FIRST
+    consistent read.
+    Because ADR-033 takes no component lock, no
+    `package_components -> play_products` rank exists and no ADR-033/ADR-034
+    lock-order inversion exists.
+  - A structurally malformed composition plan is rejected BEFORE `BEGIN` by
+    `assert_composition_plan_shape()`: hall context, Package identity, timestamp
+    shape, a plain component list, both required component fields present, and
+    both of them actual integers with `bingo_play_product_id >= 1`. This is plan
+    SHAPE only — Package lifecycle, the stale-composition fingerprint, duplicate
+    components, Play Product existence and the archived rules all stay inside
+    the transaction under their locks. It exists because a missing or
+    non-integer inner-array field would otherwise raise a PHP warning while the
+    transaction is open, invoking the error handler inside a boundary that must
+    stay callback-free. It accepts no callable and is not a generic validator.
+  - Base-component quantity is bounded at `1 <= quantity <= 4294967295` and
+    rejected as `invalid_component_quantity` before `BEGIN`, with the same check
+    repeated inside the sequence as defence in depth, so an out-of-range value
+    never reaches MySQL. The composition plan carries only Play Product
+    identity and quantity: `sort_order` is not caller-controlled, existing rows
+    keep their order, and new rows start at 0.
+  - An exact identical composition performs NO DML at all — no component
+    DELETE/INSERT/UPDATE, no `bingo_packages.updated_at` rewrite — and reports
+    `mutated = false`, so a future service can skip auditing a verified no-op.
+  - An unrecognised `medium` or `status` on any locked dependency row fails
+    closed as `catalog_schema_inconsistent` before component DML. A non-digital
+    medium is never coerced to Paper and a non-active status is never coerced to
+    archived.
+  - Automated coverage: `tests/package-increment-1-stage-a.php`, **298/298
+    assertions passing** — Setup 4, Migration 51, Rollout bridge 14, ADR-033
+    composition 96, ADR-033 concurrency 27, ADR-034 medium transitions 20,
+    Concurrency 35, Transport guards 19, Cleanup verification 32 — plus
+    `tests/package-reference-fixture-worker.php` and
+    `tests/package-composition-worker.php`, the isolated fixtures that reproduce
+    the Package writer's locking shape and run a second conforming composition
+    writer in its own process.
+  - **No test in any of the three suites creates, drops, renames, or alters a
+    persistent Sunrise/Tampa/Orlando schema object.** Two distinct protections
+    cover this, and they are not the same mechanism:
+    - every structural statement issued by a TEST SCENARIO —
+      `CREATE TRIGGER`, `DROP TRIGGER`, `ALTER TABLE`, `RENAME TABLE`,
+      `DROP TABLE` — goes through `disposable_ddl()` /
+      `assert_disposable_hall()`, which aborts the run rather than touch a hall
+      the suite did not create;
+    - TEARDOWN does not use that gate. It is protected separately, by
+      run-owned disposable-site identity (a site id present in this run's own
+      disposable registry) plus exact site-scoped identifier validation
+      (`^bc_<id>_bingo_(package_components|packages|play_products|game_types)$`),
+      so it can only ever drop a table belonging to a hall this run created.
+
+    Persistent halls receive ordinary domain DML against tracked fixture rows
+    and nothing else, so a process crash at any point leaves their schema
+    exactly as it was and no `finally` block is load-bearing for a persistent
+    hall.
+    Moved to disposable halls in this pass: the `bc_pp_kill_probe`,
+    `bc_pp_anchor_probe` and `bc_pp_slow_probe` SLEEP-trigger concurrency
+    scenarios; the shared-WooCommerce-product-ID scenario, which previously
+    raised Sunrise's and Tampa's `wp_posts` AUTO_INCREMENT; the Game Type
+    `bc_gti1_force_code` code-collision trigger; the Game Type
+    `status_name` index damage/repair scenario; and the Game Type
+    failed-provisioning collation scenario, which previously damaged Tampa's
+    `name` collation and relied on a `finally` block to restore it. The
+    scenarios were moved, not weakened: each still exercises the same real
+    MySQL sleep/lock interleaving. Verified by structural snapshot — every
+    persistent hall's `SHOW CREATE TABLE`, trigger list, and Catalog version
+    are byte-identical before and after a full run of all three suites.
+    The earlier `_pkga_bak` / `_ppi1_stash` RENAME pattern is gone entirely.
+  - Disposable-hall teardown removes all FOUR hall-local Catalog v3 tables —
+    `bingo_package_components`, `bingo_packages`, `bingo_play_products`,
+    `bingo_game_types` — plus every suite-created trigger and every audit row
+    for that `blog_id`, under an exact site-scoped identifier guard. All three
+    suites then assert against `information_schema` that no table, no trigger
+    and no audit row for any disposable hall survives, and that no persistent
+    hall was ever registered as disposable.
+  - Fixed two remaining unscoped `bc_audit_log` deletes in the Play Product
+    harness's sentinel cleanup, plus three unscoped audit READS. `bc_audit_log`
+    is network-wide while the target IDs are hall-local, so every audit read and
+    delete for a hall-local object now carries `blog_id`.
+  - Measured, not asserted: with a competing writer holding the anchor, the
+    medium change returns `catalog_write_conflict` in ~0.08-0.10s rather than
+    waiting out a 600-700ms hold, because the anchor is taken with `NOWAIT` and
+    the retry budget is bounded. It never returns a success built on a
+    reference read the other writer had not committed.
+  - Updated `tests/play-products-increment-1.php` for Catalog v3. It previously
+    **aborted** at the Package-claim group because `bingo_packages` now exists,
+    and its cleanup carried an unqualified
+    `DROP TABLE IF EXISTS {prefix}bingo_packages` that would have destroyed the
+    authoritative v3 table. That whole group now runs on a disposable hall,
+    version assertions follow `Migrations::DB_VERSION` instead of a hard-coded
+    2, and final verification asserts the real v3 table is present and verifies.
+  - **Test results at the end of this pass, stated separately:**
+    - Package Increment 1 Stage A — `tests/package-increment-1-stage-a.php`:
+      **298 / 298 PASS**.
+    - Game Type Increment 1 — `tests/game-types-increment-1.php`:
+      **164 / 164 PASS**.
+    - Bingo Play Product Increment 1 — `tests/play-products-increment-1.php`:
+      **457 functional/regression assertions PASS, 0 functional failures**, out
+      of 460 total. The remaining **3 are residue detections**, not functional
+      failures: unowned local test residue described under Next Up item 11
+      exists on Sunrise and Tampa, ownership is not proven, and the harness
+      reports it rather than deleting it because naming is not ownership proof.
+      **No residue was deleted.** Residue detection was not weakened to make the
+      suite green.
 ---
 
 ## In Progress
@@ -529,19 +680,29 @@
   `e0459a9 feat(catalog): implement bingo play product management`.
 - Package Increment 1 **architecture and design are complete**. Its authority is
   `ADR-033`, `ADR-034`, `BR-066`-`BR-069`, and the approved Package sections of
-  `docs/architecture/catalog-session-persistence-design.md`. **Package
-  production implementation has not started.**
+  `docs/architecture/catalog-session-persistence-design.md`.
+- Package Increment 1 **Stage A (Catalog v3 + transport foundation) is
+  implemented and passing, and is awaiting review before commit.** No Package
+  domain service, admin UI, storefront, or projection exists yet.
 
 ## Next Up (Strict Execution Order)
-1. Implement Package Increment 1, beginning with the separately reviewed
-   Catalog v3 persistence/migration slice plus the ADR-032/ADR-033 transport
-   extension. Follow the approved design in `ADR-033`, `ADR-034`,
-   `BR-066`-`BR-069`, and the Package sections of
-   `docs/architecture/catalog-session-persistence-design.md`.
-2. During that slice, move `Digital -> Paper` out of the ordinary `$wpdb` path
-   into the ADR-032 transport per `ADR-034`, and retire the Play Product
-   absent-`bingo_packages` bridge per the two-stage Catalog v3 rollout
-   contract.
+1. Review and commit Package Increment 1 Stage A, then implement Stage B: the
+   `PackageService` writer, the Package admin create/edit/archive/restore
+   screens, and the public `replaceComponents` domain entry. Follow the approved
+   design in `ADR-033`, `ADR-034`, `BR-066`-`BR-069`, and the Package sections
+   of `docs/architecture/catalog-session-persistence-design.md`. The BR-065
+   `bc_product_kind` Package projection belongs to whichever slice ships the
+   Package base writer; the `bc_package_relation` add-on projection is a
+   SEPARATE concern that belongs with `PackageAddonService` / add-on
+   relationship work and must not be pulled into the base-writer slice unless
+   that slice is separately approved to include add-ons.
+2. The frozen `docs/architecture/catalog-session-persistence-design.md`
+   §"Catalog lock-order review" needs no change. An earlier revision of this
+   file claimed the `replaceComponents` row was missing a
+   `bingo_package_components` rank; that was implementation drift, not a
+   documentation error, and the implementation has been corrected to the frozen
+   sequence. ADR-033 locks `bingo_packages` then `bingo_play_products`
+   ascending, and locks no component rows at all.
 3. The online entitlement-activation business rule is now resolved as
    successful online payment confirmation (`BR-053`). Exact WooCommerce
    successful-payment hook/status mapping belongs to later
@@ -561,10 +722,29 @@
 8. Separately review the ADR-025 `HallStaffTransactionTransport`
    `information_schema.innodb_trx` false-negative recorded above. It does not
    block Catalog work and must not be folded into a Catalog slice.
-9. Separately fix the tests/game-types-increment-1.php harness issues recorded above: the orphaned-audit-row leak and the interrupted-run collation-mutation hazard."
+9. Separately fix the remaining `tests/game-types-increment-1.php` harness
+   issue recorded above: the orphaned `catalog.game_type.*` audit rows left
+   behind for Game Types the suite deletes. The interrupted-run
+   collation-mutation hazard is resolved — that scenario now runs entirely on
+   disposable infrastructure.
 10. Separately resolve the local PHP/Homebrew libcurl `.test` hostname-resolution
    stall recorded above. It is an environment issue, not a platform defect, and
    must not be worked around in repository code.
+11. Deliberately remove the local test residue left on Sunrise and Tampa by an
+   aborted `tests/play-products-increment-1.php` run on 2026-08-28: orphaned
+   Bingo Play Product rows `#175`, `#191`, `#226`, `#233` on site 2, unmarked
+   Game Types `#833`-`#844` on site 2, and Game Type `#39` on site 3. The
+   harness reports them and refuses to delete them, because naming is not
+   ownership proof. Sunrise Game Type `#654 "Manual Test Regular"` is real
+   manual smoke-test data and must NOT be removed.
+12. Deliberately remove six orphaned Catalog tables left by disposable halls
+   that were destroyed BEFORE the teardown fix: `bc_9_bingo_packages`,
+   `bc_9_bingo_package_components`, `bc_10_bingo_packages`,
+   `bc_10_bingo_package_components`, `bc_12_bingo_packages` and
+   `bc_12_bingo_package_components`. Sites 9, 10 and 12 no longer exist in
+   `wp_blogs`. New disposable halls can no longer leave these behind, and the
+   suites do not delete them, because ownership is inferred rather than
+   proven.
 
 ---
 
@@ -587,6 +767,7 @@
 - **Local mail:** SMTP configured and verified for WordPress staff invitation/password setup testing
 - **Custom code:** `wp-content/plugins/bingocommerce-core/` and
   `wp-content/plugins/bingocommerce-catalog/`
-- **Catalog schema:** per-site `bc_catalog_db_version` = 2
-  (`bingo_game_types`, `bingo_play_products`)
+- **Catalog schema:** per-site `bc_catalog_db_version` = 3
+  (`bingo_game_types`, `bingo_play_products`, `bingo_packages`,
+  `bingo_package_components`)
 - **Rule for AI agents:** Read `AGENTS.md`, `docs/architecture/plugin-architecture.md`, and this file before coding. Do not re-scaffold Multisite, WooCommerce, or core bootstrap.

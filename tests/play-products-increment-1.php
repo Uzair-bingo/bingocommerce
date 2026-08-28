@@ -109,14 +109,35 @@ final class PlayProductIncrementOneTest {
 	/** @var array<int,array<int,int>> site => wc product ids */
 	private array $created_products = [];
 
+	/** Every trigger name this suite may create. All of them live on disposable halls only. */
+	private const SUITE_TRIGGERS = [ 'bc_pp_kill_probe', 'bc_pp_anchor_probe', 'bc_pp_slow_probe' ];
+
 	/** @var array<int,array<int,int>> site => game type ids */
 	private array $created_game_types = [];
 
-	/** @var array<int,int> site => original posts AUTO_INCREMENT */
-	private array $original_auto_increment = [];
-
 	/** @var array<int,array<int,int>> site => auto-draft product IDs that existed before this run */
 	private array $baseline_auto_drafts = [];
+
+	/** @var array<int,array<int,string>> disposable site => the Catalog tables it owned */
+	private array $disposable_catalog_tables = [];
+
+	/**
+	 * Every disposable hall this run created, by id.
+	 *
+	 * A disposable hall is the ONLY place this suite may perform structural SQL.
+	 * Persistent Sunrise/Tampa/Orlando take ordinary domain DML against tracked
+	 * fixture rows and nothing else, so a crash at any point leaves their schema
+	 * exactly as it was.
+	 *
+	 * @var array<int,bool>
+	 */
+	private array $disposable_sites = [];
+
+	/** Long-lived disposable hall for the trigger-driven concurrency scenarios. */
+	private int $concurrency_hall = 0;
+
+	/** @var array<int,int> the two disposable halls used for the shared-product-ID scenario */
+	private array $shared_id_halls = [];
 
 	/** @var array<int,bool> site => this run created the bingo_packages stub */
 	private array $package_stub_created = [];
@@ -297,9 +318,12 @@ final class PlayProductIncrementOneTest {
 			$this->assert_null( get_post( $owned_wc ), '  and its WooCommerce product was removed' );
 
 			// Remove the sentinel explicitly, as this test's own responsibility.
-			$wpdb->delete( $audit, [ 'target_type' => 'bingo_play_product', 'target_id' => (string) $sentinel_pp ], [ '%s', '%s' ] );
+			// bc_audit_log is network-wide and these target IDs are hall-local, so
+			// both deletes MUST carry blog_id or they would remove another hall's
+			// audit trail for the same numeric ID.
+			$this->delete_audit_for( self::SUNRISE, 'bingo_play_product', $sentinel_pp );
 			$wpdb->delete( $play_products, [ 'bingo_play_product_id' => $sentinel_pp ], [ '%d' ] );
-			$wpdb->delete( $audit, [ 'target_type' => 'game_type', 'target_id' => (string) $sentinel_gt ], [ '%s', '%s' ] );
+			$this->delete_audit_for( self::SUNRISE, 'game_type', $sentinel_gt );
 			$wpdb->delete( Migrations::game_types_table(), [ 'game_type_id' => $sentinel_gt ], [ '%d' ] );
 			wp_delete_post( $sentinel_wc, true );
 
@@ -393,17 +417,17 @@ final class PlayProductIncrementOneTest {
 			try {
 				$play_products = Migrations::play_products_table();
 
-				// Safe: this hall exists only for this run.
-				$wpdb->query( "DROP TABLE IF EXISTS `{$play_products}`" );
+				// Safe: this hall exists only for this run, and the gate proves it.
+				$this->disposable_ddl( $site_id, "DROP TABLE IF EXISTS `{$play_products}`" );
 				update_option( Migrations::VERSION_OPTION, 1, false );
 				$this->assert_false( Migrations::is_current(), "site {$site_id} at v1 reports stale schema" );
-				$this->assert_error( 'catalog_migration_verification_failed', Migrations::verify_current_site_schema(), "site {$site_id} v1 fails v2 verification" );
+				$this->assert_error( 'catalog_migration_verification_failed', Migrations::verify_current_site_schema(), "site {$site_id} v1 fails current-version verification" );
 
 				$result = Migrations::migrate_current_site();
-				$this->assert_true( true === $result, "site {$site_id} v1 -> v2 migration succeeds" );
-				$this->assert_same( 2, (int) get_option( Migrations::VERSION_OPTION ), "site {$site_id} records Catalog DB version 2" );
-				$this->assert_true( true === Migrations::verify_game_types_schema(), "site {$site_id} v2 still verifies the applied Game Type schema" );
-				$this->assert_true( true === Migrations::verify_play_products_schema(), "site {$site_id} v2 verifies the Play Product schema" );
+				$this->assert_true( true === $result, "site {$site_id} v1 -> current migration succeeds" );
+				$this->assert_same( Migrations::DB_VERSION, (int) get_option( Migrations::VERSION_OPTION ), "site {$site_id} records the current Catalog DB version" );
+				$this->assert_true( true === Migrations::verify_game_types_schema(), "site {$site_id} still verifies the applied Game Type schema" );
+				$this->assert_true( true === Migrations::verify_play_products_schema(), "site {$site_id} verifies the Play Product schema" );
 
 				// Exact schema.
 				$create = (string) ( $wpdb->get_row( "SHOW CREATE TABLE `{$play_products}`", ARRAY_N )[1] ?? '' );
@@ -412,40 +436,41 @@ final class PlayProductIncrementOneTest {
 				$this->assert_true( false === stripos( $create, 'blog_id' ), "site {$site_id} Play Product table carries no redundant blog_id" );
 				$this->assert_true( false === stripos( $create, 'FOREIGN KEY' ), "site {$site_id} Play Product table has no physical foreign key" );
 
-				$this->assert_true( true === Migrations::migrate_current_site(), "site {$site_id} v2 rerun is idempotent" );
+				$this->assert_true( true === Migrations::migrate_current_site(), "site {$site_id} current-version rerun is idempotent" );
 
 				// Missing index repair + stale-version recovery.
-				$wpdb->query( "ALTER TABLE `{$play_products}` DROP INDEX medium_status" );
+				$this->disposable_ddl( $site_id, "ALTER TABLE `{$play_products}` DROP INDEX medium_status" );
 				delete_option( Migrations::VERSION_OPTION );
 				$this->assert_error( 'catalog_migration_verification_failed', Migrations::verify_current_site_schema(), "site {$site_id} missing Play Product index detected" );
 				$this->assert_same( 0, (int) get_option( Migrations::VERSION_OPTION, 0 ), "site {$site_id} failed verification leaves version stale" );
 				$this->assert_true( true === Migrations::migrate_current_site(), "site {$site_id} dbDelta repairs the missing index" );
-				$this->assert_same( 2, (int) get_option( Migrations::VERSION_OPTION ), "site {$site_id} version persisted only after both schemas verified" );
+				$this->assert_same( Migrations::DB_VERSION, (int) get_option( Migrations::VERSION_OPTION ), "site {$site_id} version persisted only after every schema verified" );
 			} finally {
 				restore_current_blog();
 			}
 		}
 
-		// A verification failure must leave the version stale rather than claim v2.
+		// A verification failure must leave the version stale rather than claim
+		// the current version.
 		switch_to_blog( $disposable );
 		try {
 			$play_products = Migrations::play_products_table();
-			$wpdb->query( "ALTER TABLE `{$play_products}` CHANGE COLUMN medium medium varchar(8) NOT NULL" );
+			$this->disposable_ddl( $disposable, "ALTER TABLE `{$play_products}` CHANGE COLUMN medium medium varchar(8) NOT NULL" );
 			update_option( Migrations::VERSION_OPTION, 1, false );
 			$broken = Migrations::migrate_current_site();
 			// dbDelta widens the column back, so this asserts the repair path rather
 			// than a permanent failure; the point is that the version tracks truth.
 			$this->assert_true( true === $broken, 'incompatible column is repaired by dbDelta and then verified' );
-			$this->assert_same( 2, (int) get_option( Migrations::VERSION_OPTION ), 'version reaches 2 only with a verified schema' );
+			$this->assert_same( Migrations::DB_VERSION, (int) get_option( Migrations::VERSION_OPTION ), 'the version advances only with a verified schema' );
 
 			// A failure that leaves the version stale: the table is gone at
-			// verification time, so v2 must not be recorded.
+			// verification time, so the current version must not be recorded.
 			delete_option( Migrations::VERSION_OPTION );
-			$wpdb->query( "DROP TABLE IF EXISTS `{$play_products}`" );
+			$this->disposable_ddl( $disposable, "DROP TABLE IF EXISTS `{$play_products}`" );
 			$this->assert_error( 'catalog_migration_verification_failed', Migrations::verify_current_site_schema(), 'missing Play Product table is detected' );
 			$this->assert_same( 0, (int) get_option( Migrations::VERSION_OPTION, 0 ), 'schema failure leaves the Catalog version stale' );
 			$this->assert_true( true === Migrations::migrate_current_site(), 'dropped Play Product table is recreated' );
-			$this->assert_same( 2, (int) get_option( Migrations::VERSION_OPTION ), 'version restored after recreation' );
+			$this->assert_same( Migrations::DB_VERSION, (int) get_option( Migrations::VERSION_OPTION ), 'version restored after recreation' );
 		} finally {
 			restore_current_blog();
 		}
@@ -458,7 +483,7 @@ final class PlayProductIncrementOneTest {
 		$this->assert_true( false !== has_action( 'admin_init', [ Migrations::class, 'maybe_migrate_current_site' ] ), 'admin_init current-site self-heal registered' );
 		$this->assert_true( false !== has_action( 'network_admin_menu', [ Migrations::class, 'maybe_migrate_network' ] ), 'network_admin_menu sweep registered' );
 		$this->assert_false( has_action( 'admin_init', [ Migrations::class, 'maybe_migrate_network' ] ), 'network sweep is NOT registered on hall admin_init' );
-		$this->assert_same( 1, $this->count_migration_registrations(), 'exactly one v2 migration trigger path per lifecycle hook' );
+		$this->assert_same( 1, $this->count_migration_registrations(), 'exactly one migration trigger path per lifecycle hook' );
 
 		$this->network_sweep_boundary();
 		$this->current_site_self_heal( $disposable );
@@ -470,11 +495,11 @@ final class PlayProductIncrementOneTest {
 				Migrations::verify_current_site_schema() === true,
 				"persistent hall {$persistent} schema is intact after the destructive migration group"
 			);
-			$this->assert_same( 2, (int) get_option( Migrations::VERSION_OPTION, 0 ), "persistent hall {$persistent} still reports version 2" );
+			$this->assert_same( Migrations::DB_VERSION, (int) get_option( Migrations::VERSION_OPTION, 0 ), "persistent hall {$persistent} still reports the current version" );
 			restore_current_blog();
 		}
 
-		$this->destroy_disposable_site();
+		$this->destroy_disposable_site( $disposable );
 	}
 
 	private function count_migration_registrations(): int {
@@ -514,19 +539,19 @@ final class PlayProductIncrementOneTest {
 		wp_set_current_user( $this->super_admin_id );
 		set_current_screen( 'dashboard-network' );
 		$this->assert_true( true === Migrations::maybe_migrate_network(), 'trusted Super Admin network sweep succeeds' );
-		$this->assert_same( 2, (int) get_site_option( Migrations::NETWORK_SWEEP_OPTION, 0 ), 'network sweep version advances to 2' );
+		$this->assert_same( Migrations::DB_VERSION, (int) get_site_option( Migrations::NETWORK_SWEEP_OPTION, 0 ), 'network sweep version advances to the current version' );
 		set_current_screen( 'dashboard' );
 
 		foreach ( [ self::SUNRISE, self::TAMPA ] as $site_id ) {
 			switch_to_blog( $site_id );
-			$this->assert_same( 2, (int) get_option( Migrations::VERSION_OPTION, 0 ), "network sweep left site {$site_id} at v2" );
+			$this->assert_same( Migrations::DB_VERSION, (int) get_option( Migrations::VERSION_OPTION, 0 ), "network sweep left site {$site_id} at the current version" );
 			restore_current_blog();
 		}
 
 		if ( (int) $sweep_before > 0 ) {
 			update_site_option( Migrations::NETWORK_SWEEP_OPTION, (int) $sweep_before );
 		}
-		update_site_option( Migrations::NETWORK_SWEEP_OPTION, 2 );
+		update_site_option( Migrations::NETWORK_SWEEP_OPTION, Migrations::DB_VERSION );
 	}
 
 	private function current_site_self_heal( int $site_id ): void {
@@ -535,7 +560,7 @@ final class PlayProductIncrementOneTest {
 			wp_set_current_user( $this->super_admin_id );
 			update_option( Migrations::VERSION_OPTION, 1, false );
 			$this->assert_true( true === Migrations::maybe_migrate_current_site(), 'current-hall self-heal runs when the version is stale' );
-			$this->assert_same( 2, (int) get_option( Migrations::VERSION_OPTION ), 'current-hall self-heal reaches v2' );
+			$this->assert_same( Migrations::DB_VERSION, (int) get_option( Migrations::VERSION_OPTION ), 'current-hall self-heal reaches the current version' );
 			$this->assert_true( true === Migrations::maybe_migrate_current_site(), 'current-hall self-heal is a no-op when current' );
 		} finally {
 			restore_current_blog();
@@ -1000,7 +1025,7 @@ final class PlayProductIncrementOneTest {
 
 			$table = CoreMigrations::audit_log_table();
 			$row   = $wpdb->get_row(
-				$wpdb->prepare( "SELECT blog_id, actor_user_id, target_type, target_id, operation_id FROM {$table} WHERE target_type = %s AND target_id = %s ORDER BY id LIMIT 1", 'bingo_play_product', (string) $id ),
+				$wpdb->prepare( "SELECT blog_id, actor_user_id, target_type, target_id, operation_id FROM {$table} WHERE blog_id = %d AND target_type = %s AND target_id = %s ORDER BY id LIMIT 1", self::SUNRISE, 'bingo_play_product', (string) $id ),
 				ARRAY_A
 			);
 			$this->assert_same( self::SUNRISE, (int) $row['blog_id'], 'audit event carries the hall blog_id' );
@@ -1009,11 +1034,11 @@ final class PlayProductIncrementOneTest {
 			$this->assert_same( (string) $id, (string) $row['target_id'], 'audit target_id is the Play Product ID' );
 			$this->assert_null( $row['operation_id'], 'operation_id remains NULL for ordinary Catalog events' );
 
-			$with_op = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$table} WHERE target_type = %s AND operation_id IS NOT NULL", 'bingo_play_product' ) );
+			$with_op = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$table} WHERE blog_id = %d AND target_type = %s AND operation_id IS NOT NULL", self::SUNRISE, 'bingo_play_product' ) );
 			$this->assert_same( 0, $with_op, 'no Bingo Play Product audit event carries an operation_id' );
 
 			$update   = $wpdb->get_row(
-				$wpdb->prepare( "SELECT previous_value, new_value FROM {$table} WHERE target_type = %s AND target_id = %s AND action = %s ORDER BY id LIMIT 1", 'bingo_play_product', (string) $id, 'catalog.play_product.updated' ),
+				$wpdb->prepare( "SELECT previous_value, new_value FROM {$table} WHERE blog_id = %d AND target_type = %s AND target_id = %s AND action = %s ORDER BY id LIMIT 1", self::SUNRISE, 'bingo_play_product', (string) $id, 'catalog.play_product.updated' ),
 				ARRAY_A
 			);
 			$previous = json_decode( (string) $update['previous_value'], true );
@@ -1081,22 +1106,26 @@ final class PlayProductIncrementOneTest {
 		$this->assert_true( is_array( $sunrise_after ), 'the Sunrise row is still readable by its own hall' );
 		$this->assert_same( 3, is_array( $sunrise_after ) ? $sunrise_after['faces_per_unit'] : null, 'the Sunrise row is untouched by Tampa attempts' );
 
-		$shared_id = $this->reserve_shared_product_id();
+		[ $shared_id, $hall_a, $hall_b ] = $this->reserve_shared_product_id();
 		if ( $shared_id > 0 ) {
 			$rows = [];
-			foreach ( [ self::SUNRISE => $manager_sunrise, self::TAMPA => $manager_tampa ] as $site_id => $actor ) {
+			foreach ( [ $hall_a, $hall_b ] as $site_id ) {
 				switch_to_blog( $site_id );
-				wp_set_current_user( $actor );
+				wp_set_current_user( $this->super_admin_id );
 				$service = new BingoPlayProductService();
 				$created = $service->create( $shared_id, 'paper', 1 );
-				$this->assert_status( 'play_product_created', $created, "site {$site_id} independently maps Woo product #{$shared_id}" );
+				$this->assert_status( 'play_product_created', $created, "hall {$site_id} independently maps Woo product #{$shared_id}" );
 				$rows[ $site_id ] = $service->getByWooProductId( $shared_id );
 				restore_current_blog();
 			}
 
-			$this->assert_true( is_array( $rows[ self::SUNRISE ] ) && is_array( $rows[ self::TAMPA ] ), 'both halls resolve their own row for the shared product ID' );
-			$this->assert_same( $shared_id, (int) $rows[ self::SUNRISE ]['wc_product_id'], 'Sunrise row points at the shared numeric ID' );
-			$this->assert_same( $shared_id, (int) $rows[ self::TAMPA ]['wc_product_id'], 'Tampa row points at the same numeric ID independently' );
+			$this->assert_true( is_array( $rows[ $hall_a ] ) && is_array( $rows[ $hall_b ] ), 'both halls resolve their own row for the shared product ID' );
+			$this->assert_same( $shared_id, (int) $rows[ $hall_a ]['wc_product_id'], 'the first hall points at the shared numeric ID' );
+			$this->assert_same( $shared_id, (int) $rows[ $hall_b ]['wc_product_id'], 'the second hall points at the same numeric ID independently' );
+			$this->assert_true(
+				(int) $rows[ $hall_a ]['bingo_play_product_id'] > 0 && (int) $rows[ $hall_b ]['bingo_play_product_id'] > 0,
+				'  and each hall holds its own authoritative row for it'
+			);
 		} else {
 			$this->note( 'shared Woo product ID scenario skipped: a matching ID could not be reserved in both halls' );
 		}
@@ -1106,45 +1135,68 @@ final class PlayProductIncrementOneTest {
 	 * 10. Package claim exclusivity
 	 * ==================================================================== */
 
+	/**
+	 * Every case here needs bingo_packages absent, malformed, or otherwise wrong,
+	 * so the WHOLE group runs on a hall created for this run alone. A persistent
+	 * hall's authoritative Package table is never renamed aside, dropped, or
+	 * replaced with a stub: a crash mid-group would otherwise leave a real hall
+	 * without it, and no finally/cleanup block can be relied on for that.
+	 */
 	private function package_claim_behavior(): void {
 		global $wpdb;
-		$this->group( 'Package claim exclusivity' );
+		$this->group( 'Package claim exclusivity (disposable hall only)' );
 
-		switch_to_blog( self::SUNRISE );
+		$disposable = $this->create_disposable_site();
+		if ( $disposable < 1 ) {
+			return;
+		}
+		$this->assert_true( $disposable > 4, "disposable Package-claim hall created (site {$disposable})" );
+		$this->assert_true(
+			! in_array( $disposable, [ 1, self::SUNRISE, self::TAMPA, 4 ], true ),
+			'  and it is not a persistent hall'
+		);
+
+		switch_to_blog( $disposable );
 		try {
-			wp_set_current_user( $this->first_user_with_role( Roles::HALL_MANAGER, self::SUNRISE ) );
+			wp_set_current_user( $this->super_admin_id );
 			$service  = new BingoPlayProductService();
 			$packages = Migrations::packages_table();
 
-			// A. Absent — the future Package claim path is currently impossible.
-			$this->assert_no_real_package_table( self::SUNRISE );
-			$absent_product = $this->make_product( self::SUNRISE, 'pkg absent' );
-			$this->assert_status( 'play_product_created', $service->create( $absent_product, 'paper', 1 ), 'creation proceeds while bingo_packages does not exist' );
+			$this->assert_true( true === Migrations::verify_packages_schema(), 'the disposable hall starts from a verified v3 Package table' );
+
+			// A. Absent — RETIRED BRIDGE. Before Catalog v3 an absent table meant
+			// no Package claim was possible and creation proceeded. At v3 the
+			// table is part of the verified schema contract, so its absence is a
+			// schema fault and creation fails closed.
+			$this->drop_disposable_package_table( $disposable );
+			$absent_product = $this->make_product( $disposable, 'pkg absent' );
+			$this->assert_error( 'catalog_schema_inconsistent', $service->create( $absent_product, 'paper', 1 ), 'an absent bingo_packages table fails closed at Catalog v3' );
+			$this->assert_error( 'play_product_not_found', $service->getByWooProductId( $absent_product ), '  and nothing was written' );
 
 			// B. Present, well formed, and already claiming the product.
 			$this->create_package_stub(
-				self::SUNRISE,
+				$disposable,
 				"package_id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
 				 wc_product_id bigint(20) unsigned NOT NULL,
 				 status varchar(16) NOT NULL DEFAULT 'active',
 				 PRIMARY KEY (package_id),
 				 UNIQUE KEY wc_product_unique (wc_product_id)"
 			);
-			$claimed_product = $this->make_product( self::SUNRISE, 'pkg claimed' );
+			$claimed_product = $this->make_product( $disposable, 'pkg claimed' );
 			$wpdb->insert( $packages, [ 'wc_product_id' => $claimed_product, 'status' => 'active' ], [ '%d', '%s' ] );
 			$this->assert_error( 'package_claim_exists', $service->create( $claimed_product, 'paper', 1 ), 'an existing Package claim rejects Play Product creation' );
 			$this->assert_error( 'play_product_not_found', $service->getByWooProductId( $claimed_product ), '  and no Play Product row was written' );
 
-			$unclaimed_product = $this->make_product( self::SUNRISE, 'pkg unclaimed' );
+			$unclaimed_product = $this->make_product( $disposable, 'pkg unclaimed' );
 			$this->assert_status( 'play_product_created', $service->create( $unclaimed_product, 'paper', 1 ), 'an unclaimed product is still creatable while bingo_packages exists' );
 
 			// An archived Package row still claims its product.
-			$archived_claim = $this->make_product( self::SUNRISE, 'pkg archived claim' );
+			$archived_claim = $this->make_product( $disposable, 'pkg archived claim' );
 			$wpdb->insert( $packages, [ 'wc_product_id' => $archived_claim, 'status' => 'archived' ], [ '%d', '%s' ] );
 			$this->assert_error( 'package_claim_exists', $service->create( $archived_claim, 'paper', 1 ), 'an archived Package row still claims its product' );
 
 			// C. Malformed — every unusable shape must fail closed.
-			$malformed_product = $this->make_product( self::SUNRISE, 'pkg malformed' );
+			$malformed_product = $this->make_product( $disposable, 'pkg malformed' );
 
 			$shapes = [
 				'missing wc_product_id column' =>
@@ -1166,16 +1218,16 @@ final class PlayProductIncrementOneTest {
 			];
 
 			foreach ( $shapes as $label => $ddl ) {
-				$this->drop_owned_package_stub( self::SUNRISE );
-				$this->create_package_stub( self::SUNRISE, $ddl );
+				$this->drop_owned_package_stub( $disposable );
+				$this->create_package_stub( $disposable, $ddl );
 				$this->assert_error( 'catalog_schema_inconsistent', $service->create( $malformed_product, 'paper', 1 ), "a Package table with {$label} fails closed" );
 				$this->assert_error( 'play_product_not_found', $service->getByWooProductId( $malformed_product ), "  and nothing was written ({$label})" );
 			}
 
 			// D. The exact approved signature is accepted.
-			$this->drop_owned_package_stub( self::SUNRISE );
+			$this->drop_owned_package_stub( $disposable );
 			$this->create_package_stub(
-				self::SUNRISE,
+				$disposable,
 				"package_id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
 				 wc_product_id bigint(20) unsigned NOT NULL,
 				 package_type varchar(16) NOT NULL DEFAULT 'paper',
@@ -1185,15 +1237,27 @@ final class PlayProductIncrementOneTest {
 			);
 			$this->assert_status( 'play_product_created', $service->create( $malformed_product, 'paper', 1 ), 'the approved minimal Package signature is accepted and the unclaimed product is creatable' );
 
-			$still_claimed = $this->make_product( self::SUNRISE, 'pkg still claimed' );
+			$still_claimed = $this->make_product( $disposable, 'pkg still claimed' );
 			$wpdb->insert( $packages, [ 'wc_product_id' => $still_claimed, 'status' => 'active' ], [ '%d', '%s' ] );
 			$this->assert_error( 'package_claim_exists', $service->create( $still_claimed, 'paper', 1 ), 'the accepted signature still rejects an existing claim' );
 
-			$this->drop_owned_package_stub( self::SUNRISE );
-			$this->assert_status( 'play_product_created', $service->create( $this->make_product( self::SUNRISE, 'pkg after stub' ), 'paper', 1 ), 'creation resumes once the Package stub is removed' );
+			// E. The ordinary migration restores the authoritative shape.
+			$this->drop_owned_package_stub( $disposable );
+			$this->assert_true( true === Migrations::migrate_current_site(), 'migrate_current_site recreates the authoritative Package table' );
+			$this->assert_true( true === Migrations::verify_packages_schema(), '  and it verifies against the v3 contract' );
+			$this->assert_status( 'play_product_created', $service->create( $this->make_product( $disposable, 'pkg after stub' ), 'paper', 1 ), 'creation resumes against the real Package table' );
 		} finally {
 			restore_current_blog();
 		}
+
+		// Persistent halls were never involved.
+		foreach ( [ self::SUNRISE, self::TAMPA, 4 ] as $persistent ) {
+			switch_to_blog( $persistent );
+			$this->assert_true( true === Migrations::verify_packages_schema(), "persistent hall {$persistent} Package table untouched by the claim group" );
+			restore_current_blog();
+		}
+
+		$this->destroy_disposable_site( $disposable );
 	}
 
 	/* ==================================================================== *
@@ -1551,11 +1615,26 @@ final class PlayProductIncrementOneTest {
 	private function kill_during_transaction( BingoPlayProductService $service ): string {
 		global $wpdb;
 
-		$product = $this->make_product( self::SUNRISE, 'killed' );
+		$hall = $this->concurrency_hall();
+		if ( $hall < 1 ) {
+			return 'skipped (no disposable hall)';
+		}
+
+		// The whole scenario runs on a disposable hall, because it attaches a
+		// SLEEP trigger to bingo_play_products and then KILLs the session
+		// mid-transaction. A crash in that window must not be able to leave a
+		// trigger on a persistent hall's authoritative table.
+		switch_to_blog( $hall );
+		wp_set_current_user( $this->super_admin_id );
+
+		$product = $this->make_product( $hall, 'killed' );
 		$table   = Migrations::play_products_table();
 
-		$wpdb->query( 'DROP TRIGGER IF EXISTS bc_pp_kill_probe' );
-		$wpdb->query( "CREATE TRIGGER bc_pp_kill_probe BEFORE INSERT ON `{$table}` FOR EACH ROW BEGIN IF NEW.faces_per_unit = 4241 THEN SET @x = (SELECT SLEEP(3)); END IF; END" );
+		$this->drop_disposable_trigger( $hall, 'bc_pp_kill_probe' );
+		$this->create_disposable_trigger(
+			$hall,
+			"CREATE TRIGGER bc_pp_kill_probe BEFORE INSERT ON `{$table}` FOR EACH ROW BEGIN IF NEW.faces_per_unit = 4241 THEN SET @x = (SELECT SLEEP(3)); END IF; END"
+		);
 
 		$connection_id = (int) $wpdb->get_var( 'SELECT CONNECTION_ID()' );
 
@@ -1585,7 +1664,7 @@ final class PlayProductIncrementOneTest {
 
 		$wpdb->dbh = null;
 		$wpdb->check_connection( false );
-		$wpdb->query( 'DROP TRIGGER IF EXISTS bc_pp_kill_probe' );
+		$this->drop_disposable_trigger( $hall, 'bc_pp_kill_probe' );
 
 		$outcome = is_wp_error( $result ) ? $result->get_error_code() : $result->status;
 		$this->assert_true(
@@ -1598,6 +1677,7 @@ final class PlayProductIncrementOneTest {
 
 		$this->set_transport_flag( 'untrusted', false );
 		$this->set_transport_flag( 'active', false );
+		restore_current_blog();
 
 		return $outcome . ( is_array( $row ) ? ' (ROW PRESENT)' : ' (no row)' );
 	}
@@ -1815,24 +1895,35 @@ final class PlayProductIncrementOneTest {
 	private function woo_admin_blocked_by_catalog_transaction(): void {
 		global $wpdb;
 
-		$manager = $this->first_user_with_role( Roles::HALL_MANAGER, self::SUNRISE );
+		// Disposable hall: this scenario attaches a SLEEP trigger to
+		// bingo_play_products so a live ADR-032 transaction genuinely holds the
+		// wp_posts anchor. The measured behaviour is identical on any hall, and
+		// a crash here cannot leave a trigger on a persistent hall.
+		$hall = $this->concurrency_hall();
+		if ( $hall < 1 ) {
+			return;
+		}
+		$manager = $this->super_admin_id;
 
-		switch_to_blog( self::SUNRISE );
+		switch_to_blog( $hall );
 		wp_set_current_user( $manager );
-		$product = $this->make_product( self::SUNRISE, 'anchor hold' );
+		$product = $this->make_product( $hall, 'anchor hold' );
 		$table   = Migrations::play_products_table();
-		$wpdb->query( 'DROP TRIGGER IF EXISTS bc_pp_anchor_probe' );
-		$wpdb->query( "CREATE TRIGGER bc_pp_anchor_probe BEFORE INSERT ON `{$table}` FOR EACH ROW BEGIN IF NEW.faces_per_unit = 4240 THEN SET @x = (SELECT SLEEP(1)); END IF; END" );
+		$this->drop_disposable_trigger( $hall, 'bc_pp_anchor_probe' );
+		$this->create_disposable_trigger(
+			$hall,
+			"CREATE TRIGGER bc_pp_anchor_probe BEFORE INSERT ON `{$table}` FOR EACH ROW BEGIN IF NEW.faces_per_unit = 4240 THEN SET @x = (SELECT SLEEP(1)); END IF; END"
+		);
 		restore_current_blog();
 
 		$start   = microtime( true ) + 0.4;
 		$creator = proc_open(
-			[ PHP_BINARY, __DIR__ . '/play-product-create-worker.php', (string) self::SUNRISE, (string) $manager, (string) $product, 'paper', '4240', '0', sprintf( '%.6f', $start ) ],
+			[ PHP_BINARY, __DIR__ . '/play-product-create-worker.php', (string) $hall, (string) $manager, (string) $product, 'paper', '4240', '0', sprintf( '%.6f', $start ) ],
 			[ 1 => [ 'pipe', 'w' ], 2 => [ 'pipe', 'w' ] ],
 			$pipes
 		);
 
-		switch_to_blog( self::SUNRISE );
+		switch_to_blog( $hall );
 		wp_set_current_user( $manager );
 		while ( microtime( true ) < $start + 0.25 ) {
 			usleep( 500 );
@@ -1856,9 +1947,9 @@ final class PlayProductIncrementOneTest {
 		$lines   = array_values( array_filter( array_map( 'trim', explode( "\n", $raw ) ) ) );
 		$created = json_decode( (string) end( $lines ), true );
 
-		switch_to_blog( self::SUNRISE );
+		switch_to_blog( $hall );
 		wp_set_current_user( $manager );
-		$wpdb->query( 'DROP TRIGGER IF EXISTS bc_pp_anchor_probe' );
+		$this->drop_disposable_trigger( $hall, 'bc_pp_anchor_probe' );
 		$rows = $this->row_count_for_product( $product );
 		restore_current_blog();
 
@@ -2025,30 +2116,37 @@ final class PlayProductIncrementOneTest {
 		global $wpdb;
 		$this->group( 'Ordinary $wpdb writer vs a live ADR-032 Play Product row lock' );
 
-		$manager = $this->first_user_with_role( Roles::HALL_MANAGER, self::SUNRISE );
+		// Disposable hall: a temporary SLEEP trigger on bingo_play_products is the
+		// only way to make a real ADR-032 transaction hold the row lock long
+		// enough to measure. A persistent hall must never carry that trigger.
+		$hall = $this->concurrency_hall();
+		if ( $hall < 1 ) {
+			return;
+		}
+		$manager = $this->super_admin_id;
 
-		switch_to_blog( self::SUNRISE );
+		switch_to_blog( $hall );
 		wp_set_current_user( $manager );
 		$service = new BingoPlayProductService();
-		$type    = $this->make_game_type( self::SUNRISE, 'Writer Contention' );
+		$type    = $this->make_game_type( $hall, 'Writer Contention' );
 		$id      = $this->new_play_product( $service, 'writer contention', 'paper', 4242 );
 		$table   = Migrations::play_products_table();
 
-		// A real ADR-032 transaction is made slow by a temporary trigger, so it
-		// genuinely holds the bingo_play_products row lock while the ordinary
-		// writer competes for the same row.
-		$wpdb->query( 'DROP TRIGGER IF EXISTS bc_pp_slow_probe' );
-		$wpdb->query( "CREATE TRIGGER bc_pp_slow_probe BEFORE UPDATE ON `{$table}` FOR EACH ROW BEGIN IF OLD.faces_per_unit = 4242 AND NEW.faces_per_unit = 4242 THEN SET @x = (SELECT SLEEP(1)); END IF; END" );
+		$this->drop_disposable_trigger( $hall, 'bc_pp_slow_probe' );
+		$this->create_disposable_trigger(
+			$hall,
+			"CREATE TRIGGER bc_pp_slow_probe BEFORE UPDATE ON `{$table}` FOR EACH ROW BEGIN IF OLD.faces_per_unit = 4242 AND NEW.faces_per_unit = 4242 THEN SET @x = (SELECT SLEEP(1)); END IF; END"
+		);
 		restore_current_blog();
 
 		$start  = microtime( true ) + 0.4;
 		$worker = proc_open(
-			[ PHP_BINARY, __DIR__ . '/play-product-slow-mutation-worker.php', (string) self::SUNRISE, (string) $manager, (string) $id, (string) $type, sprintf( '%.6f', $start ) ],
+			[ PHP_BINARY, __DIR__ . '/play-product-slow-mutation-worker.php', (string) $hall, (string) $manager, (string) $id, (string) $type, sprintf( '%.6f', $start ) ],
 			[ 1 => [ 'pipe', 'w' ] ],
 			$pipes
 		);
 
-		switch_to_blog( self::SUNRISE );
+		switch_to_blog( $hall );
 		wp_set_current_user( $manager );
 		// Enter shortly AFTER the transaction has taken the row lock.
 		while ( microtime( true ) < $start + 0.25 ) {
@@ -2064,9 +2162,9 @@ final class PlayProductIncrementOneTest {
 		proc_close( $worker );
 		$transport = json_decode( $raw, true );
 
-		switch_to_blog( self::SUNRISE );
+		switch_to_blog( $hall );
 		wp_set_current_user( $manager );
-		$wpdb->query( 'DROP TRIGGER IF EXISTS bc_pp_slow_probe' );
+		$this->drop_disposable_trigger( $hall, 'bc_pp_slow_probe' );
 		$final = ( new BingoPlayProductService() )->getById( $id );
 		restore_current_blog();
 
@@ -2097,21 +2195,24 @@ final class PlayProductIncrementOneTest {
 		) );
 
 		// Archive competing with the same live transport lock.
-		switch_to_blog( self::SUNRISE );
+		switch_to_blog( $hall );
 		wp_set_current_user( $manager );
 		$service2 = new BingoPlayProductService();
 		$id2      = $this->new_play_product( $service2, 'writer contention archive', 'paper', 4242 );
-		$wpdb->query( "CREATE TRIGGER bc_pp_slow_probe BEFORE UPDATE ON `{$table}` FOR EACH ROW BEGIN IF OLD.faces_per_unit = 4242 AND NEW.faces_per_unit = 4242 THEN SET @x = (SELECT SLEEP(1)); END IF; END" );
+		$this->create_disposable_trigger(
+			$hall,
+			"CREATE TRIGGER bc_pp_slow_probe BEFORE UPDATE ON `{$table}` FOR EACH ROW BEGIN IF OLD.faces_per_unit = 4242 AND NEW.faces_per_unit = 4242 THEN SET @x = (SELECT SLEEP(1)); END IF; END"
+		);
 		restore_current_blog();
 
 		$start  = microtime( true ) + 0.4;
 		$worker = proc_open(
-			[ PHP_BINARY, __DIR__ . '/play-product-slow-mutation-worker.php', (string) self::SUNRISE, (string) $manager, (string) $id2, (string) $type, sprintf( '%.6f', $start ) ],
+			[ PHP_BINARY, __DIR__ . '/play-product-slow-mutation-worker.php', (string) $hall, (string) $manager, (string) $id2, (string) $type, sprintf( '%.6f', $start ) ],
 			[ 1 => [ 'pipe', 'w' ] ],
 			$pipes
 		);
 
-		switch_to_blog( self::SUNRISE );
+		switch_to_blog( $hall );
 		wp_set_current_user( $manager );
 		while ( microtime( true ) < $start + 0.25 ) {
 			usleep( 500 );
@@ -2124,9 +2225,9 @@ final class PlayProductIncrementOneTest {
 		fclose( $pipes[1] );
 		proc_close( $worker );
 
-		switch_to_blog( self::SUNRISE );
+		switch_to_blog( $hall );
 		wp_set_current_user( $manager );
-		$wpdb->query( 'DROP TRIGGER IF EXISTS bc_pp_slow_probe' );
+		$this->drop_disposable_trigger( $hall, 'bc_pp_slow_probe' );
 		$final2 = ( new BingoPlayProductService() )->getById( $id2 );
 		restore_current_blog();
 
@@ -2384,27 +2485,43 @@ final class PlayProductIncrementOneTest {
 	}
 
 	/**
-	 * Reserve one numeric ID that can exist as a product in BOTH halls, by
-	 * temporarily raising each hall's posts AUTO_INCREMENT. The counters are
-	 * restored during cleanup.
+	 * Reserve one numeric ID that exists as a product in TWO halls at once, by
+	 * raising each hall's posts AUTO_INCREMENT.
+	 *
+	 * Both halls are created for this run alone. An earlier revision did this on
+	 * Sunrise and Tampa and relied on cleanup to restore their counters, which is
+	 * a structural change to a persistent hall's posts table that a crash would
+	 * leave behind. The scenario is unchanged: two independent halls, the same
+	 * numeric WooCommerce product ID, proving Play Product rows never leak
+	 * between them.
+	 *
+	 * @return array{0:int,1:int,2:int} shared product id (0 on failure), hall A, hall B
 	 */
-	private function reserve_shared_product_id(): int {
+	private function reserve_shared_product_id(): array {
 		global $wpdb;
 
-		$ceiling = 0;
-		foreach ( [ self::SUNRISE, self::TAMPA ] as $site_id ) {
-			switch_to_blog( $site_id );
-			$status = $wpdb->get_row( $wpdb->prepare( 'SHOW TABLE STATUS LIKE %s', $wpdb->esc_like( $wpdb->posts ) ), ARRAY_A );
-			$next   = max( (int) ( $status['Auto_increment'] ?? 0 ), 1 + (int) $wpdb->get_var( "SELECT COALESCE(MAX(ID), 0) FROM `{$wpdb->posts}`" ) );
-			if ( ! isset( $this->original_auto_increment[ $site_id ] ) ) {
-				$this->original_auto_increment[ $site_id ] = $next;
+		if ( [] === $this->shared_id_halls ) {
+			$first  = $this->create_disposable_site();
+			$second = $this->create_disposable_site();
+			if ( $first < 1 || $second < 1 ) {
+				return [ 0, 0, 0 ];
 			}
+			$this->shared_id_halls = [ $first, $second ];
+		}
+
+		[ $hall_a, $hall_b ] = $this->shared_id_halls;
+
+		$ceiling = 0;
+		foreach ( $this->shared_id_halls as $site_id ) {
+			switch_to_blog( $site_id );
+			$status  = $wpdb->get_row( $wpdb->prepare( 'SHOW TABLE STATUS LIKE %s', $wpdb->esc_like( $wpdb->posts ) ), ARRAY_A );
+			$next    = max( (int) ( $status['Auto_increment'] ?? 0 ), 1 + (int) $wpdb->get_var( "SELECT COALESCE(MAX(ID), 0) FROM `{$wpdb->posts}`" ) );
 			$ceiling = max( $ceiling, $next );
 			restore_current_blog();
 		}
 
 		if ( $ceiling < 1 ) {
-			return 0;
+			return [ 0, $hall_a, $hall_b ];
 		}
 
 		/*
@@ -2415,25 +2532,28 @@ final class PlayProductIncrementOneTest {
 		for ( $attempt = 0; $attempt < 3; ++$attempt ) {
 			$target = $ceiling + 5000 + ( $attempt * 1000 );
 
-			foreach ( [ self::SUNRISE, self::TAMPA ] as $site_id ) {
+			foreach ( $this->shared_id_halls as $site_id ) {
 				switch_to_blog( $site_id );
+				// Disposable halls only. The gate aborts the run rather than
+				// touching a persistent hall's posts table.
+				$this->assert_disposable_hall( $site_id );
 				$wpdb->query( "ALTER TABLE `{$wpdb->posts}` AUTO_INCREMENT = {$target}" );
 				restore_current_blog();
 			}
 
 			$minted = [];
-			foreach ( [ self::SUNRISE, self::TAMPA ] as $site_id ) {
+			foreach ( $this->shared_id_halls as $site_id ) {
 				$minted[ $site_id ] = $this->make_product( $site_id, 'shared id' );
 			}
 
-			if ( $minted[ self::SUNRISE ] === $minted[ self::TAMPA ] ) {
-				return $minted[ self::SUNRISE ];
+			if ( $minted[ $hall_a ] === $minted[ $hall_b ] ) {
+				return [ $minted[ $hall_a ], $hall_a, $hall_b ];
 			}
 
-			$ceiling = max( $minted[ self::SUNRISE ], $minted[ self::TAMPA ] );
+			$ceiling = max( $minted[ $hall_a ], $minted[ $hall_b ] );
 		}
 
-		return 0;
+		return [ 0, $hall_a, $hall_b ];
 	}
 
 	/**
@@ -2602,10 +2722,12 @@ final class PlayProductIncrementOneTest {
 		foreach ( [ self::SUNRISE, self::TAMPA ] as $site_id ) {
 			switch_to_blog( $site_id );
 
-			$wpdb->query( 'DROP TRIGGER IF EXISTS bc_pp_slow_probe' );
-			$wpdb->query( 'DROP TRIGGER IF EXISTS bc_pp_kill_probe' );
-			$wpdb->query( 'DROP TRIGGER IF EXISTS bc_pp_anchor_probe' );
-			$wpdb->query( 'DROP TABLE IF EXISTS `' . Migrations::packages_table() . '`' );
+			// No DROP TRIGGER here. This suite never attaches a trigger to a
+			// persistent hall's tables, so there is nothing on Sunrise or Tampa to
+			// drop, and issuing one as routine cleanup would imply otherwise. The
+			// same applies to bingo_packages: at Catalog v3 that name belongs to
+			// the authoritative hall table, and every stub lives on a disposable
+			// hall.
 
 			$play_products = Migrations::play_products_table();
 			$products      = $this->created_products[ $site_id ] ?? [];
@@ -2627,16 +2749,14 @@ final class PlayProductIncrementOneTest {
 				$wpdb->delete( Migrations::game_types_table(), [ 'game_type_id' => (int) $game_type_id ], [ '%d' ] );
 			}
 
-			if ( isset( $this->original_auto_increment[ $site_id ] ) && $this->original_auto_increment[ $site_id ] > 0 ) {
-				$max  = (int) $wpdb->get_var( "SELECT COALESCE(MAX(ID), 0) FROM `{$wpdb->posts}`" );
-				$next = (int) $this->original_auto_increment[ $site_id ];
-				if ( $max < $next ) {
-					$wpdb->query( "ALTER TABLE `{$wpdb->posts}` AUTO_INCREMENT = {$next}" );
-				}
-			}
-
 			restore_current_blog();
 		}
+
+		// Every disposable hall this run created — the migration hall, the
+		// Package-claim hall, the concurrency hall, and the two shared-product-ID
+		// halls — together with all four of its Catalog tables and any trigger it
+		// carried.
+		$this->destroy_all_disposable_sites();
 
 		// Ownership-scoped sweep for anything the tracked-ID pass missed, plus any
 		// auto-draft product WordPress minted as a side effect of this run.
@@ -2644,6 +2764,16 @@ final class PlayProductIncrementOneTest {
 		$this->purge_new_auto_drafts();
 
 		$this->verify_clean_state();
+	}
+
+	/** Destroy every disposable hall this run created, in creation order. */
+	private function destroy_all_disposable_sites(): void {
+		foreach ( array_keys( $this->disposable_sites ) as $site_id ) {
+			$this->destroy_disposable_site( (int) $site_id );
+		}
+
+		$this->concurrency_hall = 0;
+		$this->shared_id_halls  = [];
 	}
 
 	/**
@@ -2748,11 +2878,6 @@ final class PlayProductIncrementOneTest {
 		foreach ( [ self::SUNRISE, self::TAMPA ] as $site_id ) {
 			switch_to_blog( $site_id );
 
-			$wpdb->query( 'DROP TRIGGER IF EXISTS bc_pp_slow_probe' );
-			$wpdb->query( 'DROP TRIGGER IF EXISTS bc_pp_kill_probe' );
-			$wpdb->query( 'DROP TRIGGER IF EXISTS bc_pp_anchor_probe' );
-			$this->drop_owned_package_stub( $site_id );
-
 			$play_products       = Migrations::play_products_table();
 			$game_types          = Migrations::game_types_table();
 			$foreign[ $site_id ] = [];
@@ -2856,7 +2981,16 @@ final class PlayProductIncrementOneTest {
 			return 0;
 		}
 
-		$this->disposable_site_id = (int) $site;
+		$this->disposable_site_id                    = (int) $site;
+		$this->disposable_sites[ (int) $site ]       = true;
+
+		// WooCommerce does not install its own tables on a site created this way,
+		// and several disposable-hall groups create real products.
+		if ( class_exists( 'WC_Install' ) ) {
+			switch_to_blog( (int) $site );
+			WC_Install::create_tables();
+			restore_current_blog();
+		}
 
 		return (int) $site;
 	}
@@ -2866,37 +3000,54 @@ final class PlayProductIncrementOneTest {
 	 * tables for the disposed hall are removed explicitly. Both belong to a site
 	 * this run created, so this is provably safe.
 	 */
-	private function destroy_disposable_site(): void {
+	private function destroy_disposable_site( int $site_id = 0 ): void {
 		global $wpdb;
 
-		if ( $this->disposable_site_id < 1 ) {
+		$site_id = $site_id > 0 ? $site_id : $this->disposable_site_id;
+		if ( $site_id < 1 || empty( $this->disposable_sites[ $site_id ] ) ) {
 			return;
 		}
 
-		$site_id = $this->disposable_site_id;
-
 		switch_to_blog( $site_id );
-		$catalog_tables = [ Migrations::play_products_table(), Migrations::game_types_table() ];
+
+		// Suite-created triggers live on this hall's own Catalog tables, so they
+		// disappear with the tables below. Dropping them explicitly first keeps
+		// SHOW TRIGGERS clean even if a DROP TABLE is refused for any reason.
+		foreach ( self::SUITE_TRIGGERS as $trigger ) {
+			$wpdb->query( "DROP TRIGGER IF EXISTS {$trigger}" );
+		}
+
+		// ALL FOUR hall-local Catalog v3 tables. WordPress does not know these
+		// custom tables, so wp_delete_site() leaves every one of them behind.
+		$catalog_tables = [
+			Migrations::package_components_table(),
+			Migrations::packages_table(),
+			Migrations::play_products_table(),
+			Migrations::game_types_table(),
+		];
 		$wpdb->query( $wpdb->prepare( "DELETE FROM " . CoreMigrations::audit_log_table() . " WHERE blog_id = %d", $site_id ) );
 		restore_current_blog();
 
 		wp_delete_site( $site_id );
 
 		foreach ( $catalog_tables as $table ) {
-			if ( 1 === preg_match( '/^bc_' . $site_id . '_bingo_(play_products|game_types)$/', $table ) ) {
+			// Exact, site-scoped identifier. Anything else is refused rather than
+			// guessed at.
+			if ( 1 === preg_match( '/^bc_' . $site_id . '_bingo_(package_components|packages|play_products|game_types)$/', $table ) ) {
 				$wpdb->query( "DROP TABLE IF EXISTS `{$table}`" );
 			}
 		}
 
-		$this->disposable_site_id = 0;
+		$this->disposable_catalog_tables[ $site_id ] = $catalog_tables;
+		unset( $this->disposable_sites[ $site_id ] );
+		if ( $this->disposable_site_id === $site_id ) {
+			$this->disposable_site_id = 0;
+		}
 	}
 
 	/**
-	 * Drop the Package stub ONLY when this run created it.
-	 *
-	 * bingo_packages is a real ADR-031 table once PackageService ships. An
-	 * unguarded `DROP TABLE IF EXISTS` here would destroy the authoritative
-	 * Package table on a test hall the moment that table becomes real.
+	 * Drop the Package stub ONLY when this run created it, and ONLY on a
+	 * disposable hall.
 	 */
 	private function drop_owned_package_stub( int $site_id ): void {
 		global $wpdb;
@@ -2905,6 +3056,7 @@ final class PlayProductIncrementOneTest {
 			return;
 		}
 
+		$this->assert_disposable_hall( $site_id );
 		$wpdb->query( 'DROP TABLE IF EXISTS `' . Migrations::packages_table() . '`' );
 		$this->package_stub_created[ $site_id ] = false;
 	}
@@ -2913,16 +3065,95 @@ final class PlayProductIncrementOneTest {
 	private function create_package_stub( int $site_id, string $columns ): void {
 		global $wpdb;
 
+		$this->assert_disposable_hall( $site_id );
 		$this->assert_no_real_package_table( $site_id );
 		$table = Migrations::packages_table();
 		$wpdb->query( "CREATE TABLE `{$table}` ( {$columns} ) ENGINE=InnoDB" );
 		$this->package_stub_created[ $site_id ] = true;
 	}
 
+	/** Drop the disposable hall's own authoritative Package table for the absent-table case. */
+	private function drop_disposable_package_table( int $site_id ): void {
+		global $wpdb;
+
+		$this->assert_disposable_hall( $site_id );
+		$wpdb->query( 'DROP TABLE IF EXISTS `' . Migrations::packages_table() . '`' );
+		$this->package_stub_created[ $site_id ] = false;
+	}
+
 	/**
-	 * Refuse to touch a bingo_packages table this suite did not create.
-	 * Once PackageService exists, that table is authoritative hall data.
+	 * The single gate that keeps every schema mutation in this suite off a
+	 * persistent hall. Nothing may drop, create, rename or alter a Catalog table
+	 * on any hall except the one created for this run.
 	 */
+	private function assert_disposable_hall( int $site_id ): void {
+		if ( $site_id > 4 && ! empty( $this->disposable_sites[ $site_id ] ) ) {
+			return;
+		}
+
+		fwrite(
+			STDERR,
+			"ABORT: refusing a structural schema mutation on site {$site_id}.\n"
+			. "Only a disposable hall created by this run may be structurally modified.\n"
+		);
+		exit( 1 );
+	}
+
+	/** Structural DDL, permitted on a disposable hall only. */
+	private function disposable_ddl( int $site_id, string $sql ): void {
+		global $wpdb;
+
+		$this->assert_disposable_hall( $site_id );
+		$wpdb->query( $sql );
+	}
+
+	/**
+	 * A disposable hall kept alive for every trigger-driven concurrency scenario.
+	 *
+	 * These scenarios need a real MySQL trigger to hold a genuine row lock for a
+	 * measurable time. A trigger attached to a PERSISTENT hall's authoritative
+	 * table would survive a crash and silently affect that hall afterwards, so
+	 * the whole scenario runs here instead.
+	 */
+	private function concurrency_hall(): int {
+		if ( $this->concurrency_hall > 0 ) {
+			return $this->concurrency_hall;
+		}
+
+		$site_id = $this->create_disposable_site();
+		if ( $site_id < 1 ) {
+			return 0;
+		}
+
+		$this->concurrency_hall = $site_id;
+
+		return $site_id;
+	}
+
+	/**
+	 * Create a trigger, on a disposable hall only, and record it so teardown can
+	 * prove it is gone.
+	 */
+	private function create_disposable_trigger( int $site_id, string $sql ): void {
+		global $wpdb;
+
+		$this->assert_disposable_hall( $site_id );
+		$wpdb->query( $sql );
+	}
+
+	private function drop_disposable_trigger( int $site_id, string $trigger ): void {
+		global $wpdb;
+
+		$this->assert_disposable_hall( $site_id );
+		if ( ! in_array( $trigger, self::SUITE_TRIGGERS, true ) ) {
+			fwrite( STDERR, "ABORT: unknown trigger name {$trigger}.\n" );
+			exit( 1 );
+		}
+
+		$wpdb->query( "DROP TRIGGER IF EXISTS {$trigger}" );
+	}
+
+	/** Refuse to stub over a bingo_packages table this suite did not create. */
 	private function assert_no_real_package_table( int $site_id ): void {
 		global $wpdb;
 
@@ -2935,8 +3166,7 @@ final class PlayProductIncrementOneTest {
 			fwrite(
 				STDERR,
 				"ABORT: {$table} already exists on site {$site_id} and was not created by this run.\n"
-				. "This suite will not drop or modify an authoritative Bingo Package table.\n"
-				. "Remove it deliberately, or run this suite on a hall without it.\n"
+				. "This suite will not drop or modify a Bingo Package table it does not own.\n"
 			);
 			exit( 1 );
 		}
@@ -2975,11 +3205,17 @@ final class PlayProductIncrementOneTest {
 
 			$packages = Migrations::packages_table();
 			$this->assert_true(
-				$wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $wpdb->esc_like( $packages ) ) ) !== $packages,
-				"site {$site_id}: no Package stub table remains"
+				$wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $wpdb->esc_like( $packages ) ) ) === $packages,
+				"site {$site_id}: the authoritative Catalog v3 Package table is present"
+			);
+			$this->assert_true( true === Migrations::verify_packages_schema(), "site {$site_id}: the Package table verifies against the v3 contract" );
+			$this->assert_same(
+				0,
+				(int) $wpdb->get_var( $wpdb->prepare( 'SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = %s AND table_name LIKE %s', DB_NAME, 'bc\_%\_bingo\_%\_ppi1\_stash' ) ),
+				"site {$site_id}: no renamed/stashed Catalog table pattern exists anywhere"
 			);
 
-			$this->assert_same( 2, (int) get_option( Migrations::VERSION_OPTION, 0 ), "site {$site_id}: Catalog schema version is 2" );
+			$this->assert_same( Migrations::DB_VERSION, (int) get_option( Migrations::VERSION_OPTION, 0 ), "site {$site_id}: Catalog schema is at the current version" );
 			$this->assert_true( true === Migrations::verify_current_site_schema(), "site {$site_id}: final Catalog schema verifies" );
 
 			restore_current_blog();
@@ -2990,6 +3226,43 @@ final class PlayProductIncrementOneTest {
 			(int) $wpdb->get_var( $wpdb->prepare( 'SELECT COUNT(*) FROM information_schema.triggers WHERE trigger_schema = %s AND trigger_name LIKE %s', DB_NAME, 'bc_pp_%' ) ),
 			'no BingoCommerce Play Product test triggers remain anywhere'
 		);
+
+		$this->assert_same( [], $this->disposable_sites, 'every disposable hall this run created was destroyed' );
+		$this->assert_same(
+			[],
+			array_intersect( array_keys( $this->disposable_catalog_tables ), [ 1, self::SUNRISE, self::TAMPA, 4 ] ),
+			'no persistent hall was ever registered as disposable'
+		);
+
+		foreach ( $this->disposable_catalog_tables as $site_id => $tables ) {
+			$this->assert_same(
+				0,
+				(int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->blogs} WHERE blog_id = %d", $site_id ) ),
+				"disposable hall {$site_id}: the site record was removed"
+			);
+			foreach ( $tables as $table ) {
+				$this->assert_same(
+					0,
+					(int) $wpdb->get_var( $wpdb->prepare( 'SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = %s AND table_name = %s', DB_NAME, $table ) ),
+					"disposable hall {$site_id}: {$table} was removed"
+				);
+			}
+			$this->assert_same(
+				0,
+				(int) $wpdb->get_var( $wpdb->prepare( 'SELECT COUNT(*) FROM information_schema.triggers WHERE trigger_schema = %s AND event_object_table LIKE %s', DB_NAME, $wpdb->esc_like( 'bc_' . (int) $site_id . '_' ) . '%' ) ),
+				"disposable hall {$site_id}: no trigger remains attached to any of its tables"
+			);
+			$this->assert_same(
+				0,
+				(int) $wpdb->get_var( $wpdb->prepare( 'SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = %s AND table_name LIKE %s', DB_NAME, $wpdb->esc_like( 'bc_' . (int) $site_id . '_bingo_' ) . '%' ) ),
+				"disposable hall {$site_id}: no hall-local Catalog table of any name survives"
+			);
+			$this->assert_same(
+				0,
+				(int) $wpdb->get_var( $wpdb->prepare( 'SELECT COUNT(*) FROM ' . CoreMigrations::audit_log_table() . ' WHERE blog_id = %d', $site_id ) ),
+				"disposable hall {$site_id}: no audit rows remain"
+			);
+		}
 
 		$this->assert_same(
 			0,

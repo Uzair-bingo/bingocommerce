@@ -18,6 +18,7 @@ define( 'BINGOCOMMERCE_CATALOG_PATH', plugin_dir_path( __FILE__ ) );
 require_once BINGOCOMMERCE_CATALOG_PATH . 'src/GameTypeResult.php';
 require_once BINGOCOMMERCE_CATALOG_PATH . 'src/PlayProductResult.php';
 require_once BINGOCOMMERCE_CATALOG_PATH . 'src/CatalogPlayProductPlan.php';
+require_once BINGOCOMMERCE_CATALOG_PATH . 'src/CatalogPackageCompositionPlan.php';
 require_once BINGOCOMMERCE_CATALOG_PATH . 'src/CatalogWriteOutcome.php';
 require_once BINGOCOMMERCE_CATALOG_PATH . 'src/Migrations.php';
 require_once BINGOCOMMERCE_CATALOG_PATH . 'src/CatalogTransactionTransport.php';

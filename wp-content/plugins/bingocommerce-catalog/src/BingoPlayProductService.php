@@ -12,12 +12,15 @@ if ( ! defined( 'ABSPATH' ) ) {
 /**
  * Authoritative current-hall Bingo Play Product domain service (BR-039/ADR-031).
  *
- * ADR-032's critical transport is entered only for the four mutations that need
- * its serialization: create (Woo Package/Play claim exclusivity) and the three
- * paths that create or revalidate a Game Type reference. Archive, faces-per-unit,
- * Digital -> Paper, and clearing a Game Type are each one conditional statement
- * through ordinary $wpdb, which keeps their final invariants under concurrency
- * without broadening the mysqli exception.
+ * The Catalog critical transport is entered only for the mutations that need its
+ * serialization: create (Woo Package/Play claim exclusivity), the paths that
+ * create or revalidate a Game Type reference, and — since ADR-034 — BOTH medium
+ * transitions, because BR-069 requires the Package-component reference check and
+ * the medium write to happen under one held bingo_play_products row lock.
+ *
+ * Archive, faces-per-unit, and clearing a Game Type remain one conditional
+ * statement each through ordinary $wpdb, which keeps their final invariants
+ * under concurrency without broadening the mysqli exception.
  */
 final class BingoPlayProductService {
 
@@ -176,8 +179,13 @@ final class BingoPlayProductService {
 	}
 
 	/**
-	 * Digital -> Paper. One conditional statement, no ADR-032 boundary: it
-	 * creates no Game Type reference and claims no WooCommerce product.
+	 * Digital -> Paper.
+	 *
+	 * ADR-034 moved this out of the ordinary single-statement $wpdb path. BR-069
+	 * requires the Package-reference check and the medium write to happen under
+	 * one held bingo_play_products row lock, which a lone conditional UPDATE
+	 * cannot provide. The Game Type reference is preserved by the transport,
+	 * which omits game_type_id from its SET list (BR-039).
 	 *
 	 * @param array<string,mixed>    $before
 	 * @param array<string,int|bool> $context
@@ -187,33 +195,32 @@ final class BingoPlayProductService {
 		$id = (int) $before['bingo_play_product_id'];
 
 		if ( self::MEDIUM_PAPER === $before['medium'] ) {
+			// True no-op. BR-069 blocks an ACTUAL transition only, so this is not
+			// rejected even when the Play Product is Package-referenced, and it
+			// emits no audit event.
 			return new PlayProductResult( 'play_product_medium_unchanged', $before );
 		}
 
-		$table = Migrations::play_products_table();
-		// game_type_id is deliberately absent from SET. BR-039 preserves the
-		// existing reference; a Hall Manager clears it later, explicitly.
-		$affected = $this->conditional_update(
-			"UPDATE {$table} SET medium = 'paper', updated_at = %s"
-			. " WHERE bingo_play_product_id = %d AND medium = 'digital'",
-			[ current_time( 'mysql', true ), $id ]
+		$outcome = CatalogTransactionTransport::transitionToPaper(
+			CatalogPlayProductPlan::forDigitalToPaper(
+				$context['blog_id'],
+				$id,
+				current_time( 'mysql', true )
+			)
 		);
-		if ( is_wp_error( $affected ) ) {
-			return $affected;
+		if ( is_wp_error( $outcome ) ) {
+			return $outcome;
 		}
 
-		if ( 0 === $affected ) {
+		if ( ! $outcome->mutated ) {
 			$current = $this->read_by_id( $id );
-			if ( is_wp_error( $current ) ) {
-				return $current;
-			}
 
-			return self::MEDIUM_PAPER === $current['medium']
-				? new PlayProductResult( 'play_product_medium_unchanged', $current )
-				: $this->error( CatalogTransactionTransport::STATE_CHANGED, 'The Bingo Play Product changed while its medium was being updated. Reload and try again.' );
+			return is_wp_error( $current )
+				? $current
+				: new PlayProductResult( 'play_product_medium_unchanged', $current );
 		}
 
-		return $this->settle_direct( $id, 'play_product_medium_changed', 'catalog.play_product.updated', $context, $before );
+		return $this->settle_direct( $id, 'play_product_medium_changed', 'catalog.play_product.updated', $context, $outcome->before_row ?? $before );
 	}
 
 	/** @return PlayProductResult|\WP_Error */
@@ -687,22 +694,31 @@ final class BingoPlayProductService {
 	/**
 	 * Decide whether a Package claim check can run inside the transaction.
 	 *
-	 * TEMPORARY PRE-PACKAGE BRIDGE. ADR-031 reserves bingo_packages for a future
-	 * PackageService that this increment does not build. Until that table exists,
-	 * no Package claim is possible, so creation proceeds on the Woo product-row
-	 * lock alone. The probe runs here, before BEGIN, because SHOW TABLES and
-	 * SHOW COLUMNS are not permitted statements inside the ADR-032 boundary.
+	 * ROLLOUT BRIDGE — RETIRED AT CATALOG v3.
 	 *
-	 * WHEN PackageService IS IMPLEMENTED, THIS BRIDGE MUST BE REVISITED. Its
-	 * migration and writer rollout have to close the deployment-time window in
-	 * which this probe observes an absent table while another request has already
-	 * created it, which would otherwise allow a dual claim on one product.
+	 * Play Product Increment 1 shipped a temporary compatibility path: when
+	 * bingo_packages did not exist, no Package claim was possible, so creation
+	 * proceeded on the Woo product-row lock alone. Catalog v3 creates that table
+	 * and verifies it before persisting the version, so from v3 onward an absent
+	 * or malformed table is a schema fault, never a reason to skip the claim.
 	 *
-	 * A table that exists but cannot support the authoritative claim check fails
-	 * closed rather than being guessed at.
+	 * The absent-table compatibility path is therefore allowed under exactly ONE
+	 * condition: the hall has NOT yet reached Catalog v3. Because authorize()
+	 * requires Migrations::is_current() before any mutation runs, and
+	 * is_current() now means v3, no supported Play Product writer can actually
+	 * reach that path any more. It is retained only so a pre-v3 hall degrades to
+	 * a refusal rather than a fatal, and it is unreachable in normal operation.
 	 *
-	 * @return bool|\WP_Error True to run the claim check, false when no Package
-	 *                        claim is possible, WP_Error when the table is unusable.
+	 * This closes the deployment-time race the previous revision warned about: a
+	 * request that observed an absent table can no longer create a Play Product
+	 * link, because it cannot pass authorize() at v3, and it cannot be at v3
+	 * while the table is missing.
+	 *
+	 * The probe runs here, before BEGIN, because SHOW TABLES and SHOW COLUMNS are
+	 * not permitted statements inside the ADR-032 boundary.
+	 *
+	 * @return bool|\WP_Error True to run the claim check, false only for a
+	 *                        pre-v3 hall, WP_Error when the table is unusable.
 	 */
 	private function package_claim_is_checkable() {
 		global $wpdb;
@@ -710,6 +726,11 @@ final class BingoPlayProductService {
 		$table = Migrations::packages_table();
 		$found = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $wpdb->esc_like( $table ) ) );
 		if ( $found !== $table ) {
+			if ( Migrations::is_current() ) {
+				// Fail closed: at v3 the table is part of the verified contract.
+				return $this->error( CatalogTransactionTransport::SCHEMA_INCONSISTENT, 'The Bingo Package table is missing from this hall\'s Catalog schema.' );
+			}
+
 			return false;
 		}
 

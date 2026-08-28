@@ -20,6 +20,7 @@ final class CatalogPlayProductPlan {
 	public const CREATE          = 'create';
 	public const ASSIGN_GAME_TYPE = 'assign_game_type';
 	public const PAPER_TO_DIGITAL = 'paper_to_digital';
+	public const DIGITAL_TO_PAPER = 'digital_to_paper';
 	public const RESTORE          = 'restore';
 
 	private function __construct(
@@ -52,6 +53,16 @@ final class CatalogPlayProductPlan {
 
 	public static function forPaperToDigital( int $blog_id, int $bingo_play_product_id, int $game_type_id, string $now ): self {
 		return new self( self::PAPER_TO_DIGITAL, $blog_id, 0, $bingo_play_product_id, $game_type_id, 'digital', null, false, $now );
+	}
+
+	/**
+	 * ADR-034 moved Digital -> Paper out of the ordinary $wpdb path, because the
+	 * BR-069 Package-reference check and the medium write must happen under one
+	 * held bingo_play_products row lock. No Game Type is supplied: BR-039
+	 * preserves the existing reference when a Digital product becomes Paper.
+	 */
+	public static function forDigitalToPaper( int $blog_id, int $bingo_play_product_id, string $now ): self {
+		return new self( self::DIGITAL_TO_PAPER, $blog_id, 0, $bingo_play_product_id, null, 'paper', null, false, $now );
 	}
 
 	public static function forRestore( int $blog_id, int $bingo_play_product_id, int $wc_product_id, string $now ): self {

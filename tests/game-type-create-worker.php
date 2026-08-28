@@ -1,6 +1,16 @@
 <?php
 
-/** Concurrent Game Type creation worker; invoked by game-types-increment-1.php. */
+/**
+ * Concurrent Game Type creation worker; invoked by game-types-increment-1.php.
+ *
+ * Prints exactly one line:
+ *   <status>:<game_type_id>:<code>   when THIS process created the row
+ *   ERROR:<code>                     when it did not
+ *
+ * Arguments are destructured AFTER wp-load on purpose: ms-settings.php assigns
+ * WordPress globals including $site_id, so parsing earlier at file scope would
+ * silently overwrite the target hall.
+ */
 
 if ( 'cli' !== PHP_SAPI ) {
 	fwrite( STDERR, "This worker is CLI-only.\n" );
@@ -27,9 +37,14 @@ try {
 
 	$result = ( new \BingoCommerce\Catalog\GameTypeService() )->create( $name );
 	if ( is_wp_error( $result ) ) {
+		// A worker that did not create a row contributes NO owned id. The parent
+		// must never infer ownership of a pre-existing row from the name it lost
+		// the race on.
 		echo 'ERROR:' . $result->get_error_code();
 	} else {
-		echo $result->status . ':' . $result->game_type['code'];
+		// status:<game_type_id>:<code> — the id is the ONLY ownership proof the
+		// parent accepts, and it exists only because THIS process created it.
+		echo $result->status . ':' . (int) $result->game_type['game_type_id'] . ':' . $result->game_type['code'];
 	}
 } finally {
 	restore_current_blog();

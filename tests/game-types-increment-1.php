@@ -41,8 +41,27 @@ final class GameTypeIncrementOneTest {
 	private int $assertions = 0;
 	private int $super_admin_id = 0;
 
+	/** Every trigger name this suite may create. All of them live on a disposable hall only. */
+	private const SUITE_TRIGGERS = [ 'bc_gti1_force_code' ];
+
 	/** @var array<int,array<int,int>> */
 	private array $created_ids = [];
+
+	/**
+	 * Disposable halls created by this run, by id.
+	 *
+	 * The ONLY place this suite may perform structural SQL. Persistent Sunrise
+	 * and Tampa take ordinary domain DML against tracked fixture rows and nothing
+	 * else, so a crash at any point leaves their schema exactly as it was.
+	 *
+	 * @var array<int,bool>
+	 */
+	private array $disposable_sites = [];
+
+	/** @var array<int,array<int,string>> disposable site => the Catalog tables it owned */
+	private array $disposable_catalog_tables = [];
+
+	private int $schema_hall = 0;
 
 	public function run(): void {
 		$this->verify_runtime();
@@ -93,16 +112,15 @@ final class GameTypeIncrementOneTest {
 				$this->assert_same( '1', (string) $wpdb->get_var( $wpdb->prepare( "SELECT CONVERT(%s USING utf8mb4) COLLATE {$name['Collation']} = CONVERT(%s USING utf8mb4) COLLATE {$name['Collation']}", 'Cafe', 'Café' ) ), "site {$site_id} accent-insensitive collation" );
 
 				$this->assert_true( true === Migrations::migrate_current_site(), "site {$site_id} migration rerun is idempotent" );
-
-				$wpdb->query( "ALTER TABLE `{$table}` DROP INDEX status_name" );
-				delete_option( Migrations::VERSION_OPTION );
-				$this->assert_error( 'catalog_migration_verification_failed', Migrations::verify_current_site_schema(), "site {$site_id} missing index detected" );
-				$this->assert_same( 0, (int) get_option( Migrations::VERSION_OPTION, 0 ), "site {$site_id} failed verification leaves version stale" );
-				$this->assert_true( true === Migrations::migrate_current_site(), "site {$site_id} dbDelta repairs missing index" );
 			} finally {
 				restore_current_blog();
 			}
 		}
+
+		// The index-damage/repair scenario structurally alters bingo_game_types,
+		// so it runs on a hall created for this run alone. A crash mid-scenario
+		// must never leave a persistent hall missing an index.
+		$this->assert_missing_index_is_repaired();
 
 		$before = get_current_blog_id();
 		$result = Migrations::provision_new_site( get_site( self::TAMPA ) );
@@ -347,6 +365,7 @@ final class GameTypeIncrementOneTest {
 
 	private function concurrency(): void {
 		$this->actor( self::SUNRISE, $this->super_admin_id );
+		$this->assert_race_capture_is_id_only();
 		$same = $this->run_create_race( [ self::PREFIX . ' Concurrent Same', self::PREFIX . ' Concurrent Same' ] );
 		sort( $same );
 		$this->assert_true( 1 === count( array_filter( $same, fn( string $v ) => str_starts_with( $v, 'game_type_created:' ) ) ), 'concurrent same-name has one winner' );
@@ -354,23 +373,95 @@ final class GameTypeIncrementOneTest {
 
 		$codes = $this->run_create_race( [ self::PREFIX . ' Concurrent/Code', self::PREFIX . ' Concurrent Code' ] );
 		$this->assert_true( 2 === count( array_filter( $codes, fn( string $v ) => str_starts_with( $v, 'game_type_created:' ) ) ), 'concurrent code collision creates both distinct names' );
-		$actual_codes = array_map( fn( string $v ) => substr( $v, strpos( $v, ':' ) + 1 ), $codes );
+		$actual_codes = array_map( fn( string $v ) => (string) ( explode( ':', $v )[2] ?? '' ), $codes );
 		$this->assert_same( 2, count( array_unique( $actual_codes ) ), 'concurrent code collision resolves to unique codes' );
 
+		// The forced code-collision scenario attaches a trigger to
+		// bingo_game_types, so it runs on a disposable hall. The behaviour under
+		// test — bounded code-allocation retries exhausting deterministically —
+		// is identical on any hall.
 		global $wpdb;
-		$table = Migrations::game_types_table();
-		$forced = $this->create( self::SUNRISE, self::PREFIX . ' Forced Code' );
+		$hall = $this->schema_hall();
+		if ( $hall < 1 ) {
+			return;
+		}
+
+		$forced = $this->create( $hall, self::PREFIX . ' Forced Code' );
 		$this->assert_result( 'game_type_created', $forced, 'forced-collision fixture' );
-		$wpdb->query( 'DROP TRIGGER IF EXISTS bc_gti1_force_code' );
-		$wpdb->query( "CREATE TRIGGER bc_gti1_force_code BEFORE INSERT ON `{$table}` FOR EACH ROW SET NEW.code = '" . esc_sql( $forced->game_type['code'] ) . "'" );
+
+		$this->actor( $hall, $this->super_admin_id );
+		$table = Migrations::game_types_table();
+		$this->disposable_ddl( $hall, 'DROP TRIGGER IF EXISTS bc_gti1_force_code' );
+		$this->disposable_ddl( $hall, "CREATE TRIGGER bc_gti1_force_code BEFORE INSERT ON `{$table}` FOR EACH ROW SET NEW.code = '" . esc_sql( $forced->game_type['code'] ) . "'" );
 		try {
 			$this->assert_error( 'code_allocation_conflict', $this->service()->create( self::PREFIX . ' Retry Budget' ), 'bounded code-collision retries exhaust deterministically' );
 		} finally {
-			$wpdb->query( 'DROP TRIGGER IF EXISTS bc_gti1_force_code' );
+			$this->disposable_ddl( $hall, 'DROP TRIGGER IF EXISTS bc_gti1_force_code' );
+			while ( ms_is_switched() ) {
+				restore_current_blog();
+			}
 		}
 	}
 
 	/** @return array<int,string> */
+	/**
+	 * Cleanup-safety regression for the concurrency ownership protocol.
+	 *
+	 * A previous revision captured ownership by querying the fixture NAME after
+	 * the race, so a legitimate pre-existing Sunrise Game Type sharing that name
+	 * would have been registered and deleted by cleanup once the worker returned
+	 * duplicate_name. This plants exactly that row, runs the real race path
+	 * against it, and requires the planted row to be neither captured nor
+	 * touched. The row is removed afterwards by this test, as its own
+	 * responsibility.
+	 */
+	private function assert_race_capture_is_id_only(): void {
+		global $wpdb;
+
+		$name = self::PREFIX . ' Ownership Sentinel ' . wp_generate_password( 6, false );
+
+		// Planted directly through the service and DELIBERATELY NOT tracked, so
+		// it stands in for a legitimate hall row this run does not own.
+		$this->actor( self::SUNRISE, $this->super_admin_id );
+		$planted = $this->service()->create( $name );
+		$this->assert_result( 'game_type_created', $planted, 'unowned ownership-sentinel Game Type planted' );
+		if ( ! $planted instanceof GameTypeResult ) {
+			return;
+		}
+		$sentinel_id = (int) $planted->game_type['game_type_id'];
+
+		$tracked_before = $this->created_ids[ self::SUNRISE ] ?? [];
+
+		// The real race path, against a name that already exists. The worker must
+		// lose and therefore contribute no owned id.
+		$results = $this->run_create_race( [ $name ] );
+		$this->assert_same( [ 'ERROR:duplicate_name' ], $results, 'a worker racing an existing name loses with duplicate_name' );
+
+		$tracked_after = $this->created_ids[ self::SUNRISE ] ?? [];
+		$this->assert_same( $tracked_before, $tracked_after, 'a losing worker registers NO id for cleanup' );
+		$this->assert_true( ! in_array( $sentinel_id, $tracked_after, true ), 'the pre-existing row sharing the fixture name was never captured' );
+
+		$this->actor( self::SUNRISE, $this->super_admin_id );
+		$this->assert_same(
+			1,
+			(int) $wpdb->get_var( $wpdb->prepare( 'SELECT COUNT(*) FROM ' . Migrations::game_types_table() . ' WHERE game_type_id = %d', $sentinel_id ) ),
+			'the unowned row survived the race path intact'
+		);
+
+		// Removed explicitly by this test, never by name-based cleanup.
+		$wpdb->delete( Migrations::game_types_table(), [ 'game_type_id' => $sentinel_id ], [ '%d' ] );
+		$wpdb->delete(
+			CoreMigrations::audit_log_table(),
+			[ 'blog_id' => self::SUNRISE, 'target_type' => 'game_type', 'target_id' => (string) $sentinel_id ],
+			[ '%d', '%s', '%s' ]
+		);
+		$this->assert_same(
+			0,
+			(int) $wpdb->get_var( $wpdb->prepare( 'SELECT COUNT(*) FROM ' . Migrations::game_types_table() . ' WHERE game_type_id = %d', $sentinel_id ) ),
+			'the sentinel was removed explicitly by its own test'
+		);
+	}
+
 	private function run_create_race( array $names ): array {
 		$start = microtime( true ) + 0.7;
 		$root = dirname( __DIR__ );
@@ -398,45 +489,255 @@ final class GameTypeIncrementOneTest {
 			$results[] = trim( $output );
 		}
 
-		$this->capture_fixture_ids( self::SUNRISE, $names );
+		// OWNERSHIP PROTOCOL: the only ids this run registers for cleanup are the
+		// ones a worker reported after IT successfully created the row. A worker
+		// that lost the race (duplicate_name, or any other error) contributes
+		// nothing, so a legitimate pre-existing Game Type that merely shares the
+		// fixture name is never captured and never deleted. Name, code, prefix
+		// and timestamp are NOT ownership proof and are not consulted.
+		foreach ( $results as $line ) {
+			if ( 1 === preg_match( '/^game_type_created:(\d+):/', $line, $matches ) ) {
+				$this->created_ids[ self::SUNRISE ][] = (int) $matches[1];
+			}
+		}
 
 		return $results;
 	}
 
+	/**
+	 * Damage the Game Type name collation so provisioning verification fails,
+	 * and prove the blog context is restored anyway.
+	 *
+	 * Runs on a disposable hall. An earlier revision damaged TAMPA's collation
+	 * and relied on a finally block to put it back, which a crash would leave
+	 * broken on a persistent hall.
+	 */
 	private function assert_failed_provisioning_restores_context(): void {
 		global $wpdb;
-		$this->actor( self::TAMPA, $this->super_admin_id );
+
+		$hall = $this->schema_hall();
+		if ( $hall < 1 ) {
+			return;
+		}
+
+		$this->actor( $hall, $this->super_admin_id );
 		$table          = Migrations::game_types_table();
 		$table_status   = $wpdb->get_row( $wpdb->prepare( 'SHOW TABLE STATUS LIKE %s', $wpdb->esc_like( $table ) ), ARRAY_A );
-		$good_collation = (string) $table_status['Collation'];
-		$wpdb->query( "ALTER TABLE `{$table}` MODIFY name varchar(160) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL" );
+		$good_collation = (string) ( $table_status['Collation'] ?? '' );
+		if ( 1 !== preg_match( '/^[a-z0-9_]+$/i', $good_collation ) ) {
+			$this->assert_true( false, 'could not read the disposable hall Game Type collation' );
+
+			return;
+		}
+		$this->disposable_ddl( $hall, "ALTER TABLE `{$table}` MODIFY name varchar(160) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL" );
 		delete_option( Migrations::VERSION_OPTION );
 
 		while ( ms_is_switched() ) {
 			restore_current_blog();
 		}
+
+		switch_to_blog( self::SUNRISE );
+		$before = get_current_blog_id();
 		try {
-			switch_to_blog( self::SUNRISE );
-			$before = get_current_blog_id();
-			try {
-				$result = Migrations::provision_new_site( get_site( self::TAMPA ) );
-				$this->assert_error( 'catalog_migration_verification_failed', $result, 'incompatible collation fails provisioning verification' );
-				$this->assert_same( $before, get_current_blog_id(), 'failed provisioning restores blog context' );
-			} finally {
-				restore_current_blog();
-			}
+			$result = Migrations::provision_new_site( get_site( $hall ) );
+			$this->assert_error( 'catalog_migration_verification_failed', $result, 'incompatible collation fails provisioning verification' );
+			$this->assert_same( $before, get_current_blog_id(), 'failed provisioning restores blog context' );
 		} finally {
-			switch_to_blog( self::TAMPA );
-			try {
-				if ( ! preg_match( '/^[a-z0-9_]+$/i', $good_collation ) ) {
-					throw new RuntimeException( 'Unsafe fixture collation.' );
-				}
-				$wpdb->query( "ALTER TABLE `{$table}` MODIFY name varchar(160) CHARACTER SET utf8mb4 COLLATE {$good_collation} NOT NULL" );
-				$this->assert_true( true === Migrations::migrate_current_site(), 'failed-provisioning fixture recovers idempotently' );
-			} finally {
-				restore_current_blog();
+			restore_current_blog();
+		}
+
+		// Repair the disposable hall so the later structural scenarios still have
+		// a usable table. Its schema is disposable either way.
+		switch_to_blog( $hall );
+		try {
+			$this->disposable_ddl( $hall, "ALTER TABLE `{$table}` MODIFY name varchar(160) CHARACTER SET utf8mb4 COLLATE {$good_collation} NOT NULL" );
+			$this->assert_true( true === Migrations::migrate_current_site(), 'failed-provisioning fixture recovers idempotently' );
+		} finally {
+			restore_current_blog();
+		}
+	}
+
+	/**
+	 * Damage and repair the Game Type index on a disposable hall.
+	 *
+	 * Identical behaviour to the previous persistent-hall version: drop the
+	 * status_name index, prove verification fails and leaves the version stale,
+	 * then prove dbDelta repairs it.
+	 */
+	private function assert_missing_index_is_repaired(): void {
+		global $wpdb;
+
+		$hall = $this->schema_hall();
+		if ( $hall < 1 ) {
+			return;
+		}
+
+		switch_to_blog( $hall );
+		try {
+			$table = Migrations::game_types_table();
+			$this->disposable_ddl( $hall, "ALTER TABLE `{$table}` DROP INDEX status_name" );
+			delete_option( Migrations::VERSION_OPTION );
+			$this->assert_error( 'catalog_migration_verification_failed', Migrations::verify_current_site_schema(), "disposable hall {$hall} missing index detected" );
+			$this->assert_same( 0, (int) get_option( Migrations::VERSION_OPTION, 0 ), "disposable hall {$hall} failed verification leaves version stale" );
+			$this->assert_true( true === Migrations::migrate_current_site(), "disposable hall {$hall} dbDelta repairs missing index" );
+			$this->assert_true( true === Migrations::verify_current_site_schema(), "disposable hall {$hall} verifies after repair" );
+		} finally {
+			restore_current_blog();
+		}
+	}
+
+	/**
+	 * A disposable hall kept alive for every structural Game Type scenario.
+	 */
+	/** Structural DDL, permitted on a disposable hall only. */
+	private function disposable_ddl( int $site_id, string $sql ): void {
+		global $wpdb;
+
+		$this->assert_disposable_hall( $site_id );
+		$wpdb->query( $sql );
+	}
+
+	private function schema_hall(): int {
+		if ( $this->schema_hall > 0 ) {
+			return $this->schema_hall;
+		}
+
+		$site_id = $this->create_disposable_site();
+		if ( $site_id > 0 ) {
+			$this->schema_hall = $site_id;
+		}
+
+		return $site_id;
+	}
+
+	private function create_disposable_site(): int {
+		add_filter( 'pre_wp_mail', '__return_true' );
+
+		$site = wp_insert_site(
+			[
+				'domain'     => strtolower( 'gti1disposable' . wp_generate_password( 6, false ) . '.bingocommerce.test' ),
+				'path'       => '/',
+				'network_id' => get_current_network_id(),
+				'title'      => 'GTI1 Disposable Schema Hall',
+				'user_id'    => $this->super_admin_id,
+			]
+		);
+
+		if ( is_wp_error( $site ) ) {
+			$this->assert_true( false, 'disposable schema hall could not be created: ' . $site->get_error_message() );
+
+			return 0;
+		}
+
+		$this->disposable_sites[ (int) $site ] = true;
+
+		return (int) $site;
+	}
+
+	/**
+	 * The single gate that keeps every structural mutation in this suite off a
+	 * persistent hall.
+	 */
+	private function assert_disposable_hall( int $site_id ): void {
+		if ( $site_id > 4 && ! empty( $this->disposable_sites[ $site_id ] ) ) {
+			return;
+		}
+
+		fwrite(
+			STDERR,
+			"ABORT: refusing a structural schema mutation on site {$site_id}.\n"
+			. "Only a disposable hall created by this run may be structurally modified.\n"
+		);
+		exit( 1 );
+	}
+
+	private function destroy_disposable_site( int $site_id ): void {
+		global $wpdb;
+
+		if ( $site_id < 1 || empty( $this->disposable_sites[ $site_id ] ) ) {
+			return;
+		}
+
+		switch_to_blog( $site_id );
+		foreach ( self::SUITE_TRIGGERS as $trigger ) {
+			$wpdb->query( "DROP TRIGGER IF EXISTS {$trigger}" );
+		}
+		// ALL FOUR hall-local Catalog v3 tables. WordPress does not know these
+		// custom tables, so wp_delete_site() leaves every one of them behind.
+		$catalog_tables = [
+			Migrations::package_components_table(),
+			Migrations::packages_table(),
+			Migrations::play_products_table(),
+			Migrations::game_types_table(),
+		];
+		$wpdb->query( $wpdb->prepare( 'DELETE FROM ' . CoreMigrations::audit_log_table() . ' WHERE blog_id = %d', $site_id ) );
+		restore_current_blog();
+
+		wp_delete_site( $site_id );
+
+		foreach ( $catalog_tables as $table ) {
+			// Exact, site-scoped identifier. Anything else is refused.
+			if ( 1 === preg_match( '/^bc_' . $site_id . '_bingo_(package_components|packages|play_products|game_types)$/', $table ) ) {
+				$wpdb->query( "DROP TABLE IF EXISTS `{$table}`" );
 			}
 		}
+
+		$this->disposable_catalog_tables[ $site_id ] = $catalog_tables;
+		unset( $this->disposable_sites[ $site_id ] );
+		unset( $this->created_ids[ $site_id ] );
+	}
+
+	private function destroy_all_disposable_sites(): void {
+		foreach ( array_keys( $this->disposable_sites ) as $site_id ) {
+			$this->destroy_disposable_site( (int) $site_id );
+		}
+
+		$this->schema_hall = 0;
+	}
+
+	private function verify_disposable_teardown(): void {
+		global $wpdb;
+
+		$this->assert_same( [], $this->disposable_sites, 'every disposable hall this run created was destroyed' );
+		$this->assert_same(
+			[],
+			array_intersect( array_keys( $this->disposable_catalog_tables ), [ 1, self::SUNRISE, self::TAMPA, 4 ] ),
+			'no persistent hall was ever registered as disposable'
+		);
+
+		foreach ( $this->disposable_catalog_tables as $site_id => $tables ) {
+			$this->assert_same(
+				0,
+				(int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->blogs} WHERE blog_id = %d", $site_id ) ),
+				"disposable hall {$site_id}: the site record was removed"
+			);
+			$this->assert_same(
+				0,
+				(int) $wpdb->get_var( $wpdb->prepare( 'SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = %s AND table_name LIKE %s', DB_NAME, $wpdb->esc_like( 'bc_' . (int) $site_id . '_bingo_' ) . '%' ) ),
+				"disposable hall {$site_id}: no hall-local Catalog table survives"
+			);
+			$this->assert_same(
+				0,
+				(int) $wpdb->get_var( $wpdb->prepare( 'SELECT COUNT(*) FROM information_schema.triggers WHERE trigger_schema = %s AND event_object_table LIKE %s', DB_NAME, $wpdb->esc_like( 'bc_' . (int) $site_id . '_' ) . '%' ) ),
+				"disposable hall {$site_id}: no trigger remains attached to any of its tables"
+			);
+			$this->assert_same(
+				0,
+				(int) $wpdb->get_var( $wpdb->prepare( 'SELECT COUNT(*) FROM ' . CoreMigrations::audit_log_table() . ' WHERE blog_id = %d', $site_id ) ),
+				"disposable hall {$site_id}: no audit rows remain"
+			);
+		}
+
+		$this->assert_same(
+			0,
+			(int) $wpdb->get_var( $wpdb->prepare( 'SELECT COUNT(*) FROM information_schema.triggers WHERE trigger_schema = %s AND trigger_name LIKE %s', DB_NAME, 'bc_gti1_%' ) ),
+			'no Game Type test trigger remains anywhere'
+		);
+		$this->assert_same(
+			0,
+			(int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->blogs} WHERE domain LIKE 'gti1disposable%'" ),
+			'no disposable Game Type hall remains'
+		);
 	}
 
 	private function cleanup(): void {
@@ -444,7 +745,13 @@ final class GameTypeIncrementOneTest {
 			restore_current_blog();
 		}
 		global $wpdb;
-		$wpdb->query( 'DROP TRIGGER IF EXISTS bc_gti1_force_code' );
+
+		// No DROP TRIGGER against a persistent hall. This suite never attaches a
+		// trigger to Sunrise or Tampa, so there is nothing there to drop, and
+		// issuing one as routine cleanup would imply otherwise. Disposable halls
+		// drop their own triggers inside destroy_disposable_site().
+		$this->destroy_all_disposable_sites();
+
 		foreach ( $this->created_ids as $site_id => $ids ) {
 			switch_to_blog( $site_id );
 			try {
@@ -457,6 +764,8 @@ final class GameTypeIncrementOneTest {
 				restore_current_blog();
 			}
 		}
+
+		$this->verify_disposable_teardown();
 	}
 
 	private function service(): GameTypeService {
@@ -476,18 +785,6 @@ final class GameTypeIncrementOneTest {
 	private function track( int $site_id, $result ): void {
 		if ( $result instanceof GameTypeResult ) {
 			$this->created_ids[ $site_id ][] = (int) $result->game_type['game_type_id'];
-		}
-	}
-
-	private function capture_fixture_ids( int $site_id, array $names ): void {
-		$this->actor( $site_id, $this->super_admin_id );
-		foreach ( array_unique( $names ) as $name ) {
-			global $wpdb;
-			$canonical = preg_replace( '/\s+/', ' ', trim( $name ) );
-			$id = $wpdb->get_var( $wpdb->prepare( 'SELECT game_type_id FROM ' . Migrations::game_types_table() . ' WHERE name = %s', $canonical ) );
-			if ( $id ) {
-				$this->created_ids[ $site_id ][] = (int) $id;
-			}
 		}
 	}
 
