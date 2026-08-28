@@ -451,6 +451,288 @@ serialization boundary without adding a competing authority table, extending
 ADR-025's security-sensitive semantics, or bringing WordPress/WooCommerce side
 effects into the critical transaction.
 
+- **ADR-033 — [2026-08-27] — Package Composition Atomicity Transport:**
+
+`bingocommerce-catalog` may use a second narrow captured-mysqli transaction
+boundary, distinct from ADR-032, for one purpose only: replacing a Bingo
+Package's base composition as a single all-or-nothing mutation.
+
+*Why a boundary is required.* BR-061 derives Package type from the complete base
+composition, so `bingo_package_components` rows and `bingo_packages.package_type`
+must never be observable in disagreement. A component-set replacement decomposes
+into deletes, inserts, updates and a type rewrite; applying part of that set
+would persist a Package that no Hall Manager configured and that BR-061 cannot
+classify. Additionally, two Hall Managers editing one Package must not silently
+overwrite each other.
+
+**Execution mechanism: the captured `$wpdb->dbh` mysqli handle, exactly as
+ADR-032 uses it. Ordinary `$wpdb->query()` is PROHIBITED for any statement
+issued while this transaction is open.**
+
+That prohibition is a measured finding, not a precaution. `wpdb::query()`
+executes `apply_filters( 'query', $query )` on every statement it runs,
+including `BEGIN`, `COMMIT`, `ROLLBACK`, and every in-transaction statement. Any
+plugin may register on that hook, and a callback there can both execute
+arbitrary code and rewrite the SQL string before it reaches the server. The same
+path can additionally invoke `strip_invalid_text_from_query()`, which issues
+further queries of its own and calls `wp_load_translations_early()` and `__()`,
+firing the `gettext` filters; and `log_query()` fires
+`apply_filters( 'log_query_custom_data', ... )` whenever `SAVEQUERIES` is
+enabled. `$wpdb->query()` is therefore not callback-free and cannot carry an
+open Catalog transaction. The captured mysqli handle bypasses `wpdb` entirely
+and fires no WordPress hook.
+
+Only the following may execute inside the Package-composition transaction:
+
+- `BEGIN`, `COMMIT`, `ROLLBACK`;
+- `SELECT ... FOR UPDATE NOWAIT` against the parent `bingo_packages` row;
+- `SELECT` against `bingo_package_components` for the current composition;
+- `SELECT ... FOR UPDATE NOWAIT` against every `bingo_play_products` row whose
+  current state the mutation depends on;
+- `INSERT` / `UPDATE` / `DELETE` against `bingo_package_components`; and
+- `UPDATE` of `bingo_packages.package_type` and `updated_at` as part of the same
+  mutation.
+
+Every explicit locking READ uses `FOR UPDATE NOWAIT`, matching ADR-032, so a
+contended anchor fails fast rather than parking on
+`innodb_lock_wait_timeout`.
+
+That does NOT make the boundary wait-free. `INSERT`, `UPDATE` and `DELETE` have
+no `NOWAIT` option in MySQL, and measurement on MySQL 9.5 confirms in-boundary
+DML can both wait and deadlock between two CONFORMING Catalog writers:
+
+- two Package creations for DIFFERENT WooCommerce products against an empty
+  `bingo_packages` table both acquired their `wc_product_unique` claim locks
+  with `NOWAIT` successfully — gap locks are mutually compatible — and then
+  deadlocked on the subsequent inserts, because an insert-intention lock
+  conflicts with the other transaction's retained gap lock (errno **1213**);
+- two `replaceComponents` deletes against DIFFERENT packages produced a lock
+  wait timeout (errno **1205**).
+
+The tested empty-table case exposed contention that was not observed in the
+corresponding populated-table run. This case is operationally important because
+`bingo_packages` begins empty when Package Increment 1 is first introduced. The
+experiment does not establish a universal worst-case table state.
+
+Deadlock and lock-wait between conforming Catalog writers are therefore EXPECTED
+and DESIGNED-FOR, not impossible. InnoDB's deadlock detector aborts one
+transaction, and the bounded retry budget over errnos 1205, 1213 and 3572 is the
+mechanism that resolves it. That retry budget is correctness-bearing for
+liveness, not a latency optimization, and retry exhaustion legitimately surfaces
+as `catalog_write_conflict`. The canonical lock order remains required because it
+reduces cycle frequency, but it must not be described as eliminating cycles.
+
+`replaceComponents()` acquires locks in exactly this order:
+
+1. the parent `bingo_packages` row;
+2. read the current composition and verify the expected fingerprint;
+3. determine which `bingo_play_products` rows the mutation depends on;
+4. lock those rows in ascending `bingo_play_product_id` order;
+5. validate under those locks;
+6. mutate `bingo_package_components`;
+7. recompute `package_type` from the `medium` values read under those locks;
+8. `UPDATE bingo_packages.package_type` and `updated_at`;
+9. `COMMIT`.
+
+Validation under lock distinguishes two cases:
+
+- a **newly added** Bingo Play Product must exist and must be `active` at the
+  moment its row is locked; and
+- an **already-existing** component may remain referenced even if its Bingo Play
+  Product has since been archived. Archive never silently detaches a component
+  (BR-067).
+
+An already-existing component whose Bingo Play Product is archived may be
+**retained unchanged or removed**, but its **quantity may not be changed**; a
+quantity change on an archived component is rejected with
+`play_product_not_active`. Retention is preservation, which BR-067 requires;
+altering how much of an inactive product a Package contains is a new authoring
+decision about unsellable inventory, and is therefore treated the same as adding
+a new reference. A Hall Manager who needs that change restores the Bingo Play
+Product first.
+
+The transaction MUST NOT contain WooCommerce CRUD, `wp_posts` or `postmeta`
+mutation, AuditLog writes, BR-032/BR-065 projection writes, hooks, callbacks,
+translation calls, emails, cache mutations, logging callbacks, UI or
+presentation work, or any `bingocommerce-core` Hall Staff transaction mechanism.
+Error objects constructed inside the boundary MUST be built without `__()`,
+`_x()`, or any other translation call, for the reason stated above;
+localization happens in the presentation layer after the boundary closes.
+
+`package_type` is computed ONLY from the `medium` values read from the locked
+`bingo_play_products` rows inside the transaction. Values observed during
+preflight are advisory validation only and are never authoritative for
+derivation. This applies to composition replacement and equally to the initial
+composition written during Package creation.
+
+The lock set and the derivation set are deliberately different. Locking covers
+the UNION of the currently referenced and the requested Bingo Play Product IDs,
+because a row being removed must also be held still while the mutation runs.
+Derivation, however, considers ONLY the Bingo Play Products that remain in the
+FINAL REQUESTED component set. A component being removed is locked but MUST NOT
+contribute to `package_type`.
+
+For example, a Package whose current composition is Paper A plus Digital B, with
+a requested set of Paper A alone, locks both A and B and derives
+`package_type = paper`.
+
+The `$active` nested-use guard and the `$untrusted` poisoned-session flag are
+shared with ADR-032, because both boundaries live in the one Catalog transport
+class. A Package composition transaction therefore cannot begin while an
+ADR-032 boundary is open in the same request, and a session marked untrusted by
+either boundary is untrusted for both. Two independent guard pairs are
+prohibited: they would let one boundary nest inside the other undetected.
+
+Two distinct concurrency controls operate together and are not
+interchangeable:
+
+- the parent `bingo_packages` row lock provides **serialization**, so two
+  writers cannot interleave; and
+- a canonical composition fingerprint provides **stale-edit detection**, so a
+  Hall Manager submitting a form built from an older composition is rejected
+  rather than silently overwriting a newer committed edit.
+
+`bingo_packages.updated_at` MUST NOT be used as the sole optimistic-concurrency
+token, because the approved schema's `datetime` precision does not guarantee
+distinct values for rapid consecutive edits.
+
+Commit results reuse ADR-032's contract exactly: a clean acknowledgement is
+success; a rejection detected before `COMMIT` followed by a confirmed rollback
+is an ordinary failure; a failed `ROLLBACK` marks the session untrusted and is
+never retried; and an unclean or interrupted `COMMIT` acknowledgement returns
+`catalog_commit_outcome_unknown` with no state inference, no retry, and no audit
+event.
+
+This decision is NOT ADR-025: it introduces no `operation_id`, no commit
+witness, no retry token, no mandatory-audit atomicity, no reconciliation
+protocol, and no Hall Staff class. It is NOT a generic `atomic(callable)` or
+transaction-callback API, and MUST NOT be offered to other plugins or to
+arbitrary Catalog code. ADR-032 remains the sole mechanism for WooCommerce
+product classification serialization between `bingo_play_products` and
+`bingo_packages`; ADR-033 never claims a WooCommerce product and never locks the
+`wp_posts` anchor. Ordinary ADR-023 audit events occur outside both boundaries,
+only after a confirmed commit, through the canonical AuditLog path protected by
+ADR-024.
+
+Package creation is deliberately excluded from ADR-033. A Package may never
+persist as an active zero-component object, so its initial component rows are
+inserted inside the single ADR-032 Package-create profile as part of creating
+one valid Package. That narrow allowance applies to creation only and does not
+authorize later composition replacement to use ADR-032.
+
+That create profile MUST also lock every referenced component
+`bingo_play_products` row, in ascending `bingo_play_product_id` order, and
+verify under those locks that each exists and is `active`, before inserting the
+Package or its components. Preflight state is never authoritative for creation.
+The resulting concurrency behaviour is deterministic: if Package creation
+acquires those locks and commits first, a subsequent Bingo Play Product archive
+proceeds and the existing relationship is preserved (BR-067); if the archive
+commits first, Package creation observes the archived state under lock and
+rejects the new reference.
+
+*Rationale:* BR-061's Package-type invariant spans several rows, so composition
+replacement needs atomicity, while the classification claim it does not touch
+needs the different guarantee ADR-032 already provides. Adding a second narrow,
+explicitly bounded transport is safer than widening ADR-032's approved uses or
+routing multi-row Catalog writes through a `$wpdb` path that can execute
+third-party callbacks mid-transaction.
+
+
+- **ADR-034 — [2026-08-28] — Play Product Medium Reference Integrity:**
+
+BR-069 forbids a Bingo Play Product's `medium` from changing while any
+`bingo_package_components` row references it, because persisted
+`bingo_packages.package_type` is derived from component media (BR-061). This
+entry decides the mechanism that enforces it.
+
+ADR-034 adds a THIRD approved use to ADR-032's captured-mysqli transport:
+
+3. Bingo Play Product medium-change integrity against Package-component
+   references.
+
+ADR-032's first two approved uses, its permitted statement set, its canonical
+lock order, its `FOR UPDATE NOWAIT` policy, its bounded retry budget, its
+failed-ROLLBACK rule, and its commit contract are unchanged and are inherited
+here in full. This entry does not edit ADR-032; it extends its approved use
+list.
+
+Both medium directions are covered and both serialize on the Play Product's own
+`bingo_play_products` row:
+
+- Paper to Digital already runs inside the ADR-032 transport and gains the
+  reference check.
+- Digital to Paper MOVES OUT of the ordinary single-statement `$wpdb` path and
+  into the ADR-032 transport. It is no longer an ordinary Catalog mutation.
+
+The fixed medium-change profile is:
+
+1. `BEGIN`;
+2. lock the target `bingo_play_products` row `FOR UPDATE NOWAIT`;
+3. verify the current medium and that the requested transition applies;
+4. perform all transition-specific validation, including Paper-to-Digital's
+   existing requirement of an explicit active Game Type;
+5. determine whether any `bingo_package_components` row references the Play
+   Product, using `SELECT ... FOR UPDATE NOWAIT`;
+6. if referenced: `ROLLBACK` and return `play_product_package_referenced`;
+7. apply the medium mutation;
+8. `COMMIT`;
+9. emit the ordinary ADR-023 audit event outside the transaction, only after a
+   confirmed commit.
+
+No `operation_id`, commit witness, reconciliation token, retry token, or Hall
+Staff semantics are introduced. This is not ADR-025 and not a generic
+transaction API.
+
+*The component-reference check is a locking read, and that is a measured
+decision.* The Play Product row is already the shared serialization anchor:
+Package creation locks it before inserting a component, `replaceComponents`
+locks it before inserting, retaining or removing one, and the medium change
+locks it before checking. A plain non-locking `SELECT` was therefore tested as a
+possible simplification. Across REPEATABLE READ and READ COMMITTED, and across
+every required interleaving — Package writer first, medium writer first,
+multiple references, replacement adding a reference, and replacement removing
+the last reference — the plain `SELECT` was correct in all fourteen measured
+runs, PROVIDED it was the transaction's first consistent read.
+
+That proviso is what disqualifies it. A separate measured case showed that if
+any non-locking read occurs earlier in the same transaction, InnoDB opens the
+REPEATABLE READ consistent snapshot at that earlier point, and the later plain
+`SELECT` then observed ZERO references while a committed reference existed —
+silently permitting exactly the medium change BR-069 forbids. The same case was
+safe under READ COMMITTED, so the failure is isolation-dependent as well as
+ordering-dependent. Encoding a correctness requirement that depends on no
+future profile ever adding a preceding consistent read is a fragile contract for
+a durable architecture document. The `bingo_play_products` row remains the
+serialization anchor; the Package-component reference check is a SEPARATE
+locking read against `bingo_package_components`, on rows the anchor does not
+cover. That separate locking read is retained precisely because it is a current
+read: it observes the latest committed component state regardless of when the
+transaction's consistent snapshot was opened, and therefore regardless of
+isolation level. It is mandatory, not optional.
+
+*Rejected alternative, recorded with its measured reason.* A single autocommit
+`UPDATE ... WHERE ... AND NOT EXISTS (SELECT 1 FROM bingo_package_components
+...)` was evaluated as a narrower mechanism that would have left Digital to
+Paper on the ordinary `$wpdb` path. Under REPEATABLE READ it behaved correctly
+in every interleaving, because the `NOT EXISTS` subquery performs a locking read
+and blocks on the uncommitted component row. Under READ COMMITTED, real MySQL
+9.5 testing produced an invariant violation in three of three runs of the real
+writer shape: the statement blocked on the Play Product row lock, and on being
+granted it re-evaluated only the row predicate while reusing the stale subquery
+result, committing the medium change despite a committed Package reference.
+Production hosting and database defaults are not yet locked (ADR-013 remains
+open), several managed MySQL services default to READ COMMITTED, and ADR-032's
+transport does not currently assert or pin an isolation level. BR-069 must not
+depend on an external default isolation level, so the guarded single-statement
+form is rejected. WordPress `query`-filter callbacks were NOT the reason for
+this rejection; for a single autocommit statement with no application-held
+transaction they create no domain atomicity problem.
+
+Asserting or pinning the transaction isolation level inside the ADR-032
+transport remains a separate technical follow-up. It is not a prerequisite for
+BR-069, because this entry's mechanism is isolation-independent.
+
+
 ---
 
 ## Business Rules (BR)
@@ -1546,6 +1828,131 @@ delete_users.
   WooCommerce metadata. BR-032's one-Package-per-checkout rule, dependent
   add-on enforcement, ordinary-merchandise coexistence, explicit metadata
   values, and server-side cart/checkout enforcement remain in force.
+
+- **BR-066 — [2026-08-27] — Bingo Play Product Storefront Mechanism Deferred:**
+
+  The domain rule is unchanged and remains locked: a Bingo Play Product is a
+  package-building component and is NOT independently customer-purchasable in
+  v1 (BR-039), and membership in `bingo_play_products` is authoritative for that
+  classification regardless of BR-032 compatibility metadata (BR-065).
+
+  The exact WooCommerce mechanism that enforces non-purchasability in the
+  storefront is DEFERRED to the checkout/storefront increment and is not decided
+  by this entry.
+
+  Until that decision exists, no Catalog increment may change any of the
+  following on a linked WooCommerce product:
+
+  - `catalog_visibility`
+  - `is_purchasable` / purchasability filters
+  - post status
+  - add-to-cart behaviour
+  - stock or stock-status behaviour
+  - storefront or search visibility
+
+  Package Increment 1 specifically must not change them. An implementer must not
+  select a mechanism by inference; doing so requires a new reviewed entry.
+
+  Relationship to prior rules: this entry clarifies the scope boundary of
+  BR-039 and BR-065. It does not weaken either. BR-032's server-side cart and
+  checkout enforcement remains in force and remains the locked enforcement
+  layer.
+
+- **BR-067 — [2026-08-27] — Bingo Package Base Composition Integrity:**
+
+  A Bingo Package's base composition is a set, not a list of repeatable entries.
+
+  1. **No duplicate input.** A requested component set containing the same
+     `bingo_play_product_id` more than once is rejected deterministically with a
+     `duplicate_component` error. Quantities are never silently merged, because
+     silent consolidation would conceal a caller or interface defect.
+
+  2. **One relationship row.** Repeated use of the same Bingo Play Product is
+     represented by one relationship row carrying its aggregate quantity, never
+     by duplicate rows. This restates the approved persistence design and is
+     enforced by the unique `(package_id, bingo_play_product_id)` constraint.
+
+  3. **No empty active Package.** A Package may never persist as an active
+     zero-component object. BR-061 defines every Package type in terms of at
+     least one base component, so a component-less Package cannot be classified.
+     Creation therefore supplies the initial component set, and composition
+     replacement rejects an empty set.
+
+  4. **Archived components are preserved.** If a Bingo Play Product is archived
+     after a Package already references it, that existing component reference
+     survives. Package identity, composition, and stored `package_type` are not
+     silently rewritten by an unrelated Play Product lifecycle change.
+     Administrative reads MUST surface that a Package contains an archived
+     component so a Hall Manager can correct it deliberately. Actual sale
+     eligibility enforcement is a later checkout concern and is not decided
+     here.
+
+  5. **New references must be active.** A Bingo Play Product that is archived at
+     the time of the request may not be newly added to a composition.
+
+  Relationship to prior rules: additive to BR-040 and BR-061, and consistent
+  with the preservation model already locked for Bingo Play Product to Game Type
+  references. It does not alter BR-049's pricing separation.
+
+- **BR-068 — [2026-08-27] — Bingo Package Composition Editing Boundary:**
+
+  Composition mutation is rejected while a Bingo Package is archived. A Hall
+  Manager restores the Package first, then edits its composition.
+
+  Archiving a Package never removes, detaches, or rewrites its component rows.
+  Restoring a Package never requires its component Bingo Play Products to be
+  active, because BR-067 preserves existing references.
+
+  Relationship to prior rules: additive to BR-040 and BR-061, and consistent
+  with the archive/restore preservation model already applied to Game Types and
+  Bingo Play Products.
+
+
+- **BR-069 — [2026-08-27] — Medium Is Immutable While a Bingo Play Product Is Package-Referenced:**
+
+  A Bingo Play Product's `medium` MUST NOT change while that Bingo Play Product
+  is referenced by one or more `bingo_package_components` rows. Both directions
+  are covered: Paper to Digital and Digital to Paper.
+
+  A Hall Manager who needs to change a referenced Bingo Play Product's medium
+  must first remove it from every Package that uses it as a base component. The
+  attempt is otherwise rejected, and the rejection names the referencing
+  Packages so the Hall Manager can act on it.
+
+  *Why this restriction exists.* BR-061 derives Package type from base
+  composition, and the approved persistence design stores `package_type` on the
+  Package row. A referenced Bingo Play Product that flipped medium would
+  therefore make every referencing Package's stored `package_type` immediately
+  wrong, with no mutation of the Package itself having occurred. Two alternatives
+  were considered and rejected: synchronously rewriting every referencing
+  Package's type turns one Play Product edit into an unbounded multi-Package
+  write with no Hall Manager intent behind it, and deferred reconciliation leaves
+  authoritative Catalog rows knowingly inconsistent between the change and the
+  repair. Refusing the edit keeps the Hall Manager's intent explicit and keeps
+  every Package row correct at all times.
+
+  This restriction is specific to `medium`, because `medium` alone determines
+  persisted Package type. The following remain permitted on a
+  Package-referenced Bingo Play Product unless some other rule prohibits them:
+
+  - changing `faces_per_unit`;
+  - assigning or reassigning a Game Type;
+  - clearing a Game Type where otherwise valid (Paper only);
+  - archiving and restoring the Bingo Play Product, whose existing Package
+    references are preserved under BR-067 and do not rewrite `package_type`.
+
+  Enforcement MUST be concurrency-safe. The check and the write occur while
+  holding the `bingo_play_products` row lock, which is the same row that Package
+  creation and Package composition replacement lock before inserting or
+  retaining a component referencing it. A medium change and a new component
+  reference therefore serialize on that row: either the medium change commits
+  first and the Package writer then derives `package_type` from the new value
+  under lock, or the component row exists first and the medium change is
+  rejected. Neither ordering can produce a stale `package_type`.
+
+  Relationship to prior rules: additive to BR-039, BR-061 and BR-067. It does
+  not alter BR-039's medium definition, only when a change may be applied.
+
 
 ---
 

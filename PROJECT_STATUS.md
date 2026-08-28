@@ -406,38 +406,163 @@
     uses `performance_schema.events_transactions_current` instead, which was
     verified to report ACTIVE for an externally opened transaction both before
     and after row access.
+- **[2026-08-27]** Package Increment 1 design pass completed; **no code,
+  migration, table, or test was created**. Reviewed decisions were locked in
+  `docs/decisions/DECISIONS.md` and
+  `docs/architecture/catalog-session-persistence-design.md`.
+  - Added `ADR-033` (Package Composition Atomicity Transport): a second narrow
+    captured-mysqli boundary, distinct from ADR-032, for all-or-nothing Package
+    composition replacement across `bingo_package_components` and
+    `bingo_packages.package_type`.
+  - **`$wpdb->query()` was measured and REJECTED for that boundary.**
+    `wpdb::query()` fires `apply_filters( 'query', $query )` on every statement
+    it runs, including `BEGIN`/`COMMIT`/`ROLLBACK`, so a third-party callback
+    could execute arbitrary code and rewrite SQL mid-transaction; the same path
+    can call `strip_invalid_text_from_query()` (which issues further queries and
+    fires `gettext`) and `log_query_custom_data` under `SAVEQUERIES`. ADR-033
+    therefore uses the captured `$wpdb->dbh` handle, which bypasses `wpdb` and
+    fires no hook.
+  - Added `BR-066` (Play Product storefront mechanism deferred; Catalog
+    increments must not touch `catalog_visibility`, `is_purchasable`, post
+    status, add-to-cart, stock, or storefront/search visibility),
+    `BR-067` (Package base composition integrity: duplicate input rejected, one
+    relationship row, no empty active Package, archived components preserved and
+    surfaced, new references must be active), and `BR-068` (composition mutation
+    rejected while a Package is archived).
+  - Documented the canonical composition fingerprint for stale-edit detection —
+    row lock provides serialization, fingerprint provides stale-edit detection —
+    and recorded that `updated_at` is unusable as the concurrency token because
+    `datetime` precision cannot separate rapid consecutive edits.
+  - Documented the two-stage Catalog v3 rollout contract that retires the Play
+    Product absent-`bingo_packages` bridge before any Package writer is enabled.
+  - Recorded base-component `quantity` as a storage/validation bound (1 to the
+    unsigned-int maximum), explicitly NOT a business maximum, and kept
+    `sort_order` in v3 per the approved design with no reorder UI in Increment 1.
+  - Concurrency correction pass applied to the same documents: the ADR-032
+    Package-create profile and the ADR-033 replacement profile both now lock
+    every referenced `bingo_play_products` row in ascending
+    `bingo_play_product_id` order and validate under those locks; `package_type`
+    is derived only from `medium` values read under lock, with preflight state
+    advisory only.
+  - Recorded that an already-existing component whose Bingo Play Product was
+    archived may be retained unchanged or removed, but its quantity may not be
+    changed (`play_product_not_active`).
+  - Documented the full Catalog lock-order review across all eight Play Product
+    paths plus both Package paths. Two relative inversions exist, one of them
+    pre-existing and shipped. Explicit locking reads use `FOR UPDATE NOWAIT` and
+    fail fast, but DML may wait and may deadlock; errnos 1205, 1213 and 3572 are
+    handled by the bounded Catalog retry contract. Lock ordering reduces
+    contention and keeps reasoning tractable, but does not eliminate all cycles.
+  - Confirmed ADR-033 shares ADR-032's `$active` nested-use guard and
+    `$untrusted` poisoned-session flag in the one Catalog transport class; two
+    independent guard pairs are prohibited.
+  - Removed PHP-FPM as an assumed production mechanism from the Stage A
+    completion condition; production runtime is still unselected (ADR-013).
+  - Clarified that the ADR-033 lock set and derivation set differ:
+    `replaceComponents()` locks the UNION of currently referenced and requested
+    Bingo Play Product IDs, but derives `package_type` from ONLY the Play
+    Products in the final requested set. A component being removed is locked and
+    contributes nothing to the resulting type.
+  - Added `BR-069`: a Bingo Play Product's `medium` may not change while it is
+    referenced by any `bingo_package_components` row, in either direction,
+    because persisted `package_type` is derived from component media. Changing
+    `faces_per_unit`, assigning/reassigning or clearing a Game Type, and
+    archiving/restoring all remain permitted on a Package-referenced Play
+    Product. Enforcement serializes on the `bingo_play_products` row, which
+    Package create and `replaceComponents` already lock.
+  - **BR-069 enforcement mechanism decided and recorded as `ADR-034`.** Both
+    medium transitions run inside the ADR-032 transport and serialize on the
+    Play Product row; `Digital -> Paper` must move out of the ordinary `$wpdb`
+    path during Package implementation. ADR-034 adds a third approved ADR-032
+    use without editing ADR-032.
+  - The narrower single guarded autocommit `UPDATE ... AND NOT EXISTS (...)`
+    alternative was **empirically rejected**: safe under REPEATABLE READ, but
+    under READ COMMITTED real MySQL 9.5 testing committed the medium change
+    despite a committed Package reference in 3/3 runs of the real writer shape.
+    Production database defaults are not locked (ADR-013), so BR-069 must not
+    depend on an external isolation default. WordPress `query`-filter callbacks
+    were **not** the reason for rejection.
+  - The component-reference check keeps `SELECT ... FOR UPDATE NOWAIT`. A plain
+    read passed all fourteen required interleavings under both isolation levels,
+    but only as the transaction's first consistent read; an earlier non-locking
+    read opened the snapshot sooner and silently observed zero references while a
+    committed reference existed.
+  - Asserting or pinning transaction isolation inside the ADR-032 transport
+    remains a **separate technical follow-up**, not a BR-069 blocker, because
+    ADR-034's mechanism is isolation-independent.
+  - No implementation was performed; Package Increment 1 remains design-only.
+  - Removed the PHP-FPM example from the Stage A rollout condition entirely; no
+    process manager, restart mechanism, or deployment topology is part of the
+    contract while ADR-013 remains open.
+  - **Withdrew an incorrect deadlock-freedom claim.** An earlier revision of
+    ADR-033 and the persistence design asserted that every Catalog statement
+    uses `FOR UPDATE NOWAIT` and therefore never waits, so no wait-for cycle
+    could form. Measurement on MySQL 9.5 disproved it: only explicit locking
+    READS take `NOWAIT`, while `INSERT`/`UPDATE`/`DELETE` have no such option.
+    Two Package creates for DIFFERENT products against an empty
+    `bingo_packages` both passed their `NOWAIT` claim checks (gap locks are
+    mutually compatible) and then **deadlocked on insert, errno 1213**; two
+    `replaceComponents` deletes on DIFFERENT packages produced a **lock wait
+    timeout, errno 1205**. The tested empty-table case exposed contention not
+    observed in the corresponding populated-table run; it matters operationally
+    because `bingo_packages` begins empty when Package Increment 1 is first
+    introduced, and it does not establish a universal worst-case. Deadlock and
+    lock-wait between conforming writers are now documented as expected and
+    handled by the existing bounded retry over errnos 1205/1213/3572, which is
+    recorded as correctness-bearing for liveness rather than a latency choice.
+  - Synced `AGENTS.md` Rule 4, which named only ADR-025 as an approved
+    direct-mysqli exception and therefore conflicted with ADR-032/033/034. It
+    now lists all three approved captured-`$wpdb->dbh` transports, keeps
+    `$wpdb->prepare()` mandatory for ordinary SQL, records ADR-033's
+    prohibition on `$wpdb->query()` inside its open transaction, and still
+    forbids raw interpolation everywhere.
+  - Corrected the Catalog lock-order table: both medium directions now show the
+    ADR-034 mechanism and the Package-component reference check; `Digital ->
+    Paper` is no longer listed as an ordinary `$wpdb` writer.
+  - No Package production code, migration, table, or test was created in this
+    pass; it was design and documentation only.
 ---
 
 ## In Progress
 - No Hall Staff Management work currently in progress.
-- Bingo Play Product Increment 1 is implemented, locally verified, and has
-  completed interactive Hall Manager wp-admin verification. It is
-  **not committed**.
+- Bingo Play Product Increment 1 is implemented, verified, and **committed** as
+  `e0459a9 feat(catalog): implement bingo play product management`.
+- Package Increment 1 **architecture and design are complete**. Its authority is
+  `ADR-033`, `ADR-034`, `BR-066`-`BR-069`, and the approved Package sections of
+  `docs/architecture/catalog-session-persistence-design.md`. **Package
+  production implementation has not started.**
 
 ## Next Up (Strict Execution Order)
-1. Review and commit Bingo Play Product Increment 1. Implementation,
-   automated verification, and interactive wp-admin verification are complete.
-2. The online entitlement-activation business rule is now resolved as
+1. Implement Package Increment 1, beginning with the separately reviewed
+   Catalog v3 persistence/migration slice plus the ADR-032/ADR-033 transport
+   extension. Follow the approved design in `ADR-033`, `ADR-034`,
+   `BR-066`-`BR-069`, and the Package sections of
+   `docs/architecture/catalog-session-persistence-design.md`.
+2. During that slice, move `Digital -> Paper` out of the ordinary `$wpdb` path
+   into the ADR-032 transport per `ADR-034`, and retire the Play Product
+   absent-`bingo_packages` bridge per the two-stage Catalog v3 rollout
+   contract.
+3. The online entitlement-activation business rule is now resolved as
    successful online payment confirmation (`BR-053`). Exact WooCommerce
    successful-payment hook/status mapping belongs to later
    entitlement/QR integration-design work. It does not block the Bingo Play
    Product implementation increment.
-3. Package pricing persistence is resolved by ADR-031: linked WooCommerce
+4. Package pricing persistence is resolved by ADR-031: linked WooCommerce
    native price for Package base price; relational Package/add-on unit price
    and quantity ceiling.
-4. Packages, Sessions/sales-window behavior, coordinated starter-catalog copy,
+5. Packages, Sessions/sales-window behavior, coordinated starter-catalog copy,
    Game Type hard delete, entitlement activation, and reporting remain deferred
    and are not implemented.
-5. Continue only through separately reviewed, focused implementation slices
+6. Continue only through separately reviewed, focused implementation slices
    that preserve ADR-031, ADR-032, and the detailed persistence design.
-6. Platform Admin network identity Disable/Reactivate/Permanent Delete
+7. Platform Admin network identity Disable/Reactivate/Permanent Delete
    remains deferred under BR-035 §4 and requires a separate
    architecture/decision pass before implementation.
-7. Separately review the ADR-025 `HallStaffTransactionTransport`
+8. Separately review the ADR-025 `HallStaffTransactionTransport`
    `information_schema.innodb_trx` false-negative recorded above. It does not
    block Catalog work and must not be folded into a Catalog slice.
-8. Separately fix the tests/game-types-increment-1.php harness issues recorded above: the orphaned-audit-row leak and the interrupted-run collation-mutation hazard."
-9. Separately resolve the local PHP/Homebrew libcurl `.test` hostname-resolution
+9. Separately fix the tests/game-types-increment-1.php harness issues recorded above: the orphaned-audit-row leak and the interrupted-run collation-mutation hazard."
+10. Separately resolve the local PHP/Homebrew libcurl `.test` hostname-resolution
    stall recorded above. It is an environment issue, not a platform defect, and
    must not be worked around in repository code.
 

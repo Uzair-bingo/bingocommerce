@@ -102,22 +102,36 @@ and Session use surrogate domain IDs. A linked WooCommerce product ID must be
 unique within its mapping and must not be registered simultaneously as both a
 Package and Bingo Play Product. Enforcement MUST be concurrency-safe; a
 standalone check-then-insert across the two authoritative tables is
-insufficient. ADR-032 permits `bingocommerce-catalog` to use its narrow
-captured-mysqli critical-serialization transport for the approved
-Package/Play-Product claim and Play-Product/Game-Type reference boundaries.
-This is a second named exception to ordinary `$wpdb->prepare()` / WordPress DB
-API usage; it is not permission for custom plugins generally to use mysqli
-transactions, and it does not reuse or broaden ADR-025.
+insufficient.
 
-Inside the ADR-032 boundary, use the captured `$wpdb->dbh` mysqli connection,
-native prepared statements, verified current-site context, and the canonical
-Catalog lock order. Only `BEGIN`, `COMMIT`, `ROLLBACK`, `SELECT ... FOR UPDATE`,
-and concurrency-critical authoritative custom Catalog-table DML are permitted.
-WooCommerce/WordPress writes, metadata/projection writes, AuditLog writes,
-hooks/callbacks, caches, emails, UI effects, and unrelated writes remain
-outside. Fail closed if the transport or connection state is unsafe. Do not
-add another table or import ADR-025 operation IDs, witnesses, mandatory-audit
-atomicity, Hall Staff classes, retry tokens, or reconciliation behavior.
+Ordinary `$wpdb` SQL uses `$wpdb->prepare()`. Direct mysqli is allowed ONLY
+inside an approved captured-`$wpdb->dbh` transport, and every such transport
+binds values through native mysqli prepared statements. The approved transports
+are ADR-025 (Hall Staff mandatory audit), ADR-032 (Catalog critical
+serialization, including ADR-034's approved third use for Play Product
+medium-change integrity against Package-component references), and ADR-033
+(Package composition atomicity). ADR-033 additionally PROHIBITS `$wpdb->query()`
+for statements issued while its transaction is open. No other feature may
+introduce direct mysqli without reviewed authority. Raw value interpolation into
+SQL remains prohibited everywhere.
+
+These transports do NOT share one contract. Each boundary has its own permitted
+statement set, lock order, commit semantics, and retry behaviour, and they
+differ in ways that matter: ADR-025 REQUIRES its mandatory audit insert inside
+the transaction, whereas the Catalog boundaries REQUIRE AuditLog writes to stay
+outside and to run only after a confirmed commit. Always follow the ADR that
+governs the boundary you are working in, and never carry a rule across from
+another one.
+
+Inside the CATALOG boundaries (ADR-032, its ADR-034 extension, and ADR-033) use
+the captured `$wpdb->dbh` connection, verified current-site context, and the
+canonical Catalog lock order; keep WooCommerce and WordPress writes,
+metadata/projection writes, AuditLog writes, hooks, callbacks, caches, emails,
+and UI effects outside; fail closed when the transport or connection state is
+unsafe; and do not add another table or import ADR-025 operation IDs, witnesses,
+mandatory-audit atomicity, Hall Staff classes, retry tokens, or reconciliation
+behavior. Consult the applicable ADR for that boundary's exact contract rather
+than restating it here.
 
 Use indexed logical relationships and restrictive canonical-service reference
 validation initially. Do not assume physical foreign keys or cascading deletes.
