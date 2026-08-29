@@ -631,6 +631,55 @@ final class PackageStageATest {
 		$wpdb->query( $wpdb->prepare( "UPDATE {$play_products_table} SET medium = 'paper' WHERE bingo_play_product_id = %d", $corrupt ) );
 		$this->is_ok( $this->replace( $disposable, $pkg, $this->fingerprint( $pkg ), [ [ $paper_a, 2 ] ] ), 'the removal succeeds once the row is valid again' );
 
+		/* -------------------- missing CURRENT-ONLY dependency -------------------- */
+
+		// ADR-033 step 5 defines the dependency set as (requested UNION current)
+		// and step 7 validates it UNDER THOSE LOCKS. A current component whose
+		// authoritative Play Product row has gone missing must therefore fail
+		// closed — even when the requested edit is exactly the one that would
+		// remove it. Silent repair would drop a corrupt reference nobody decided
+		// to drop, and would derive package_type from an incomplete picture.
+		$orphan_pkg = $this->make_package( $disposable, 'orphan' );
+		$keep       = $this->make_play_product( $service, 'compKeep', 'paper', 2 );
+		$vanishing  = $this->make_play_product( $service, 'compVanishing', 'digital', 3, $game_type );
+		$this->is_ok( $this->replace( $disposable, $orphan_pkg, self::EMPTY_FINGERPRINT, [ [ $keep, 1 ], [ $vanishing, 2 ] ] ), 'a two-component Package for the missing-dependency test' );
+		$this->same( 'hybrid', $this->package_type( $orphan_pkg ), '  starts as hybrid' );
+
+		$orphan_before      = $this->component_rows( $orphan_pkg );
+		$orphan_pkg_before  = $wpdb->get_row( $wpdb->prepare( "SELECT package_type, status, updated_at FROM {$packages} WHERE package_id = %d", $orphan_pkg ), ARRAY_A );
+		$orphan_fingerprint = $this->fingerprint( $orphan_pkg );
+
+		// The authoritative Play Product row disappears while the component row
+		// that references it survives. Disposable hall only.
+		$wpdb->delete( Migrations::play_products_table(), [ 'bingo_play_product_id' => $vanishing ], [ '%d' ] );
+		$this->same( 0, (int) $wpdb->get_var( $wpdb->prepare( 'SELECT COUNT(*) FROM ' . Migrations::play_products_table() . ' WHERE bingo_play_product_id = %d', $vanishing ) ), 'the dependency Play Product row is gone' );
+		$this->same( 1, $this->component_count_for( $orphan_pkg, $vanishing ), '  while its component row still references it' );
+
+		$orphaned = $this->replace( $disposable, $orphan_pkg, $orphan_fingerprint, [ [ $keep, 1 ] ] );
+		$this->is_error( 'play_product_not_found', $orphaned, 'removing a component whose Play Product row is MISSING fails closed' );
+		$this->ok(
+			is_wp_error( $orphaned ) && $vanishing === (int) ( $orphaned->get_error_data()['bingo_play_product_id'] ?? 0 ),
+			'  and the error names the unresolvable dependency'
+		);
+		$this->same( $orphan_before, $this->component_rows( $orphan_pkg ), '  no component row was written — the broken reference was NOT silently repaired' );
+		$this->same( $orphan_pkg_before, $wpdb->get_row( $wpdb->prepare( "SELECT package_type, status, updated_at FROM {$packages} WHERE package_id = %d", $orphan_pkg ), ARRAY_A ), '  and package_type, status and updated_at are unchanged' );
+		$this->same( false, $this->transport_untrusted(), '  and the session stays trusted' );
+
+		// A REQUESTED component that is missing is still rejected too, by the
+		// dependency check now rather than only by the later requested loop.
+		$this->is_error( 'play_product_not_found', $this->replace( $disposable, $orphan_pkg, $orphan_fingerprint, [ [ $keep, 1 ], [ $vanishing, 5 ] ] ), 'a REQUESTED component whose row is missing is also rejected' );
+		$this->same( $orphan_before, $this->component_rows( $orphan_pkg ), '  and still writes nothing' );
+
+		// Once the authoritative row exists again, the same edit proceeds.
+		$now_restore = current_time( 'mysql', true );
+		$wpdb->insert(
+			Migrations::play_products_table(),
+			[ 'bingo_play_product_id' => $vanishing, 'wc_product_id' => $this->make_product( $disposable, 'revived' ), 'medium' => 'digital', 'faces_per_unit' => 3, 'game_type_id' => $game_type, 'status' => 'active', 'created_at' => $now_restore, 'updated_at' => $now_restore ],
+			[ '%d', '%d', '%s', '%d', '%d', '%s', '%s', '%s' ]
+		);
+		$this->is_ok( $this->replace( $disposable, $orphan_pkg, $orphan_fingerprint, [ [ $keep, 1 ] ] ), 'the same removal succeeds once every dependency resolves again' );
+		$this->same( 'paper', $this->package_type( $orphan_pkg ), '  and package_type is rederived from the final requested set' );
+
 		/* -------------------- DML rollback integrity -------------------- */
 
 		$this->is_ok( $this->replace( $disposable, $pkg, $this->fingerprint( $pkg ), [ [ $paper_a, 2 ], [ $paper_b, 1 ] ] ), 'a two-component baseline for the rollback test' );

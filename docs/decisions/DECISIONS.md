@@ -1953,6 +1953,53 @@ delete_users.
   Relationship to prior rules: additive to BR-039, BR-061 and BR-067. It does
   not alter BR-039's medium definition, only when a change may be applied.
 
+- **BR-070 — [2026-08-29] — Bingo Package Lifecycle Semantics:**
+
+  A Bingo Package's lifecycle states are `active` and `archived`. There is no
+  hard delete in this increment.
+
+  Archive and restore are ordinary conditional single-row Catalog writes. They
+  do NOT revalidate the linked WooCommerce product, do NOT enter the ADR-032
+  captured-mysqli transport, and do NOT introduce a new transaction profile.
+
+  *Why no Woo revalidation.* The authoritative `bingo_packages` row remains
+  present while archived and retains its UNIQUE `wc_product_id` claim
+  throughout. Restore therefore creates, reassigns and reacquires nothing: there
+  is no claim to re-establish and nothing for a WooCommerce row lock to
+  serialize against. This is the material difference from Bingo Play Product
+  restore, which does revalidate the linked product row.
+
+  **Archive** (`active` -> `archived`): sets `archived_at` and `updated_at`;
+  preserves `package_id`, `wc_product_id`, `package_type`, the complete
+  component composition, and the BR-065 `bc_product_kind = package` projection.
+
+  **Restore** (`archived` -> `active`): clears `archived_at` and sets
+  `updated_at`; performs no WooCommerce revalidation, no composition
+  rederivation, and preserves Package identity and the Woo claim.
+
+  **No-ops.** Archiving an already-archived Package and restoring an
+  already-active Package are no-ops. A no-op emits no mutation audit event.
+
+  **Corrupt state.** A `bingo_packages` row holding an unrecognised lifecycle
+  value fails closed rather than being coerced to either state.
+
+  Package archive and restore emit the ordinary post-commit Catalog audit
+  events `catalog.package.archived` and `catalog.package.restored`. These are
+  ordinary Catalog audit events and are NOT ADR-025 mandatory-audit operations:
+  there is no `operation_id`, commit witness, retry token, audit atomicity, or
+  reconciliation protocol.
+
+  **Scope limit.** Package lifecycle state is Catalog lifecycle state. It is NOT
+  a statement that the linked WooCommerce product is currently storefront- or
+  sale-eligible. Session, storefront and checkout sale eligibility remain
+  undecided here and are settled by their own later requirements.
+
+  Relationship to prior rules: additive to BR-067 and BR-068, which already lock
+  composition preservation across archive and the rejection of composition
+  edits while archived. It does not alter either, and it does not alter BR-065's
+  projection or its Package-removal disposition requirement, which applies only
+  to permanent removal and is out of scope while no hard delete exists.
+
 
 ---
 

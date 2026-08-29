@@ -506,6 +506,10 @@ BEGIN
        empty requested set          -> package_requires_component    (BR-067)
        duplicate play product       -> duplicate_component           (BR-067)
        unknown / cross-hall         -> play_product_not_found
+         applies to EVERY id in the step-5 dependency union, including a
+         CURRENT-ONLY component this edit would remove: a component whose
+         authoritative row has gone missing fails closed and is never
+         silently repaired
        newly added but archived     -> play_product_not_active       (BR-067)
        archived existing component,
          quantity changed           -> play_product_not_active
@@ -602,6 +606,44 @@ Product, because none of them feeds `package_type`: `faces_per_unit` changes,
 Game Type assignment or reassignment, Game Type clearing where otherwise valid,
 and archive or restore (whose existing references are preserved under BR-067).
 
+### Package lifecycle (BR-070)
+
+A Bingo Package's lifecycle states are `active` and `archived`. There is no hard
+delete in this increment.
+
+Archive and restore are ordinary conditional single-row `$wpdb` writes. They do
+NOT revalidate the linked WooCommerce product, do NOT enter the ADR-032
+captured-mysqli transport, and introduce no new transaction profile.
+
+The authoritative `bingo_packages` row stays present while archived and keeps its
+UNIQUE `wc_product_id` claim throughout, so restore creates, reassigns and
+reacquires nothing. There is no claim to re-establish and nothing for a
+WooCommerce row lock to serialize against. This is the material difference from
+Bingo Play Product restore, which does revalidate the linked product row.
+
+```text
+archive  (active -> archived)
+  set archived_at, updated_at
+  preserve package_id, wc_product_id, package_type, composition
+  preserve the BR-065 bc_product_kind = package projection
+  (audit catalog.package.archived, after the confirmed write)
+
+restore  (archived -> active)
+  clear archived_at, set updated_at
+  no Woo revalidation, no composition rederivation
+  preserve Package identity and the Woo claim
+  (audit catalog.package.restored, after the confirmed write)
+```
+
+Archiving an already-archived Package and restoring an already-active Package are
+no-ops and emit no mutation audit event. A row holding an unrecognised lifecycle
+value fails closed rather than being coerced to either state.
+
+Package lifecycle state is Catalog lifecycle state. It is NOT a statement that
+the linked WooCommerce product is currently storefront- or sale-eligible; Session,
+storefront and checkout sale eligibility are settled by their own later
+requirements.
+
 ### Package creation lock order
 
 Package creation runs in the single ADR-032 Package-create profile and never
@@ -654,6 +696,8 @@ acquisition is contiguous and no `bingo_packages` lock is held while a
 | `updateFacesPerUnit` | ordinary `$wpdb` | one PK-qualified row |
 | Package create | ADR-032 | posts, play_products(claim), play_products(components asc), packages(claim) |
 | `replaceComponents` | ADR-033 | packages, play_products(asc) |
+| Package `archive` | ordinary `$wpdb` | one PK-qualified row |
+| Package `restore` | ordinary `$wpdb` | one PK-qualified row |
 
 Two relative inversions exist across these paths:
 

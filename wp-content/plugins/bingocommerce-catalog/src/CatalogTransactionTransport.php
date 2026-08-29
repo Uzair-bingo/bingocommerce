@@ -486,8 +486,10 @@ final class CatalogTransactionTransport {
 
 	/**
 	 * ADR-033 sequence: lock the parent Package row -> plain first-consistent
-	 * read of the current composition -> fingerprint -> dependency union ->
-	 * lock those Play Product rows ascending -> component DML -> package_type.
+	 * read of the current composition -> fingerprint -> dependency union
+	 * (current UNION requested) -> lock those Play Product rows ascending ->
+	 * verify EVERY dependency exists -> validate the locked rows' medium/status
+	 * -> validate the requested components -> component DML -> package_type.
 	 *
 	 * The parent bingo_packages row is the serialization anchor for conforming
 	 * composition writers. bingo_package_components is NEVER locked here, and
@@ -573,6 +575,23 @@ final class CatalogTransactionTransport {
 		$play_products = $this->lock_play_product_rows( $dependency );
 		if ( is_wp_error( $play_products ) ) {
 			return $play_products;
+		}
+
+		// EVERY dependency must resolve to an authoritative row — the currently
+		// referenced ones as well as the requested ones. A current component
+		// pointing at a Play Product row that no longer exists is a Catalog
+		// integrity fault, and it is NOT silently repaired just because this edit
+		// happens to remove it: doing so would let a corrupt reference disappear
+		// without anyone deciding that it should, and would derive package_type
+		// from an incomplete picture of what the Package actually contained.
+		foreach ( $dependency as $id ) {
+			if ( ! isset( $play_products[ $id ] ) ) {
+				return self::error(
+					'play_product_not_found',
+					'A Bingo Play Product this Package depends on was not found in this hall.',
+					[ 'bingo_play_product_id' => (int) $id ]
+				);
+			}
 		}
 
 		// Fail closed on corrupt authoritative state BEFORE any component DML.
