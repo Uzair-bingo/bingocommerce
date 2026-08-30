@@ -16,6 +16,11 @@ if ( ! defined( 'ABSPATH' ) ) {
 final class CatalogWriteOutcome {
 
 	/**
+	 * @param int                      $bingo_play_product_id The SUBJECT id of the
+	 *        boundary that produced this outcome. For the Play Product profiles
+	 *        that is the bingo_play_product_id; for the Package profiles it is the
+	 *        package_id. The name is historical and predates the Package
+	 *        boundaries.
 	 * @param array<string,mixed>|null $before_row Row as locked, before any write.
 	 */
 	public function __construct(

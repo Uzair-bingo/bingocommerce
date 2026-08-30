@@ -518,7 +518,8 @@
   - No Package production code, migration, table, or test was created in this
     pass; it was design and documentation only.
 - **[2026-08-28]** **Package Increment 1 — Stage A: Catalog v3 + transport
-  foundation implemented (NOT COMMITTED; awaiting review).** Infrastructure
+  foundation implemented.** Subsequently committed as `35cef4c`, with its
+  ADR-033 dependency-union correction committed as `80c41bb`. Infrastructure
   only: no Package writer, no Package admin UI, no storefront, no add-ons, no
   Session assignment, no REST, no `bc_product_kind` projection.
   - Catalog schema raised to **v3**, creating the per-site `bingo_packages` and
@@ -678,73 +679,227 @@
 - No Hall Staff Management work currently in progress.
 - Bingo Play Product Increment 1 is implemented, verified, and **committed** as
   `e0459a9 feat(catalog): implement bingo play product management`.
-- Package Increment 1 **architecture and design are complete**. Its authority is
-  `ADR-033`, `ADR-034`, `BR-066`-`BR-069`, and the approved Package sections of
-  `docs/architecture/catalog-session-persistence-design.md`.
 - Package Increment 1 **Stage A (Catalog v3 + transport foundation) is
-  implemented and passing, and is awaiting review before commit.** No Package
-  domain service, admin UI, storefront, or projection exists yet.
+  committed** as `35cef4c feat(catalog): implement package stage a foundation`,
+  with its ADR-033 dependency-union correction committed as
+  `80c41bb fix(catalog): enforce package dependency integrity`.
+- Package Increment 1 **Stage B (Package domain writer + Hall Manager
+  administration) is complete and verified.** Implementation is finished, the
+  source has been reviewed, automated verification passes, and interactive
+  wp-admin verification has been performed. A Hall Manager can create a Package
+  with its initial composition, see its derived Paper/Digital/Hybrid type, edit
+  the composition, change permitted quantities, archive and restore it, and read
+  the linked WooCommerce product and its native price.
+- **Package Increment 1 is COMPLETE.** Stage A and Stage B together deliver the
+  Catalog v3 persistence, the ADR-032/ADR-033/ADR-034 transport boundaries, the
+  Package domain writer, and the Hall Manager administration screen.
+- **[2026-08-30] Stage B — complete and verified.**
+  - `PackageService` is the supported writer for `bingo_packages` and
+    `bingo_package_components`. Creation enters the frozen ADR-032
+    Package-create profile so a Package and its INITIAL composition commit
+    together (BR-067); composition replacement calls the existing ADR-033
+    boundary and never reimplements it; archive and restore are ordinary
+    conditional single-row `$wpdb` writes (BR-070).
+  - `package_type` is never accepted from a caller. It is derived inside the
+    transaction from the `medium` values read while the component rows are
+    locked (BR-061), and an unrecognised medium or status fails closed rather
+    than being inferred as Paper or archived.
+  - The linked WooCommerce product's NATIVE price remains the sole Package
+    base-price authority (ADR-031, BR-049). No price is stored in either
+    Catalog table, no price column exists on them, component prices are never
+    summed, and the admin screen READS the price from WooCommerce.
+  - BR-065's deterministic Package projection `bc_product_kind = package` is
+    written post-commit, outside the transaction, and cannot roll back a
+    committed Package; a failed projection surfaces as a warning.
+    `bc_package_relation` is add-on relationship work and is NOT written here.
+  - Ordinary post-commit Catalog audit only: `catalog.package.created`,
+    `catalog.package.components_updated`, `catalog.package.archived`,
+    `catalog.package.restored`. No `operation_id`, commit witness, retry token,
+    audit atomicity or reconciliation — this is not ADR-025. Verified no-ops
+    emit no audit event, and an ambiguous COMMIT emits none either.
+  - Minimal Hall Manager screen under Products, gated by `is_super_admin()` or
+    `bc_manage_products`, nonce-protected, with no Package type control, no
+    Package price input, and no `sort_order` or reordering surface.
+  - The admin screen treats Package lifecycle EXPLICITLY. `active` shows Active
+    and offers Edit and Archive; `archived` shows Archived and offers Restore
+    only; anything else shows an inconsistent-state warning, offers no
+    Archive/Restore and no composition edit, and directs the Hall Manager to
+    Platform Admin. An unrecognised status is never coerced to Archived.
+  - A component that is absent from the active selection list is classified from
+    its own authoritative joined state, never from that absence. An actually
+    archived Bingo Play Product keeps BR-067's retain-or-remove behaviour; a
+    component whose Play Product row does not resolve is an integrity fault,
+    is labelled UNRESOLVED rather than Archived, and the ordinary
+    composition-save workflow is withheld entirely — which agrees with ADR-033,
+    where a missing current dependency fails closed and is not repairable
+    through ordinary composition editing.
+  - Administrative reads fail visibly. A component-read or listing failure
+    propagates as `WP_Error` instead of degrading into an empty Package or
+    composition list, and the screen renders an explicit error rather than
+    "No Bingo Packages yet."
+  - A component whose authoritative `medium` is neither exactly `paper` nor
+    exactly `digital` is a Catalog integrity fault, not a Paper component. Paper
+    is never inferred from "not digital" anywhere in administration: the
+    affected Package is gated exactly like an unresolved component — labelled an
+    integrity fault, composition editing withheld, Platform Admin named — and
+    such a Bingo Play Product is never offered as a selectable new component.
+    ADR-033 is unchanged; its writer already failed closed, and this makes the
+    administrative reads agree with it.
+  - Admin request integers are parsed WITHOUT absolute-value coercion.
+    `absint()` mapped a crafted `-5` quantity to a valid `5`, silently turning
+    invalid input into a different Package mutation. Identities and quantities
+    now pass through unchanged so `PackageService` rejects them
+    deterministically; it remains the final domain validator.
+  - **Verification status: complete.** Implementation complete; source reviewed;
+    automated verification complete — Package Stage B **258/258 PASS** and
+    Package Stage A **313/313 PASS**; interactive wp-admin verification complete,
+    covering Paper / Digital / Hybrid Package creation, composition
+    re-derivation, the identical-composition no-op, archive and restore,
+    WooCommerce-native Package price authority, Game Operator denial, and
+    Tampa/Sunrise hall isolation.
+  - Automated coverage: `tests/package-increment-1-stage-b.php`, **258/258
+    assertions passing** — Setup 4, Authorization 18, Create 26, Derivation 8,
+    Create atomicity 10, Composition edit 27, Dependency corruption 8, Archive
+    and restore 31, Woo price authority 8, Presentation boundary 68, Claim
+    concurrency 13, Failure contract 14, Cleanup verification 23 — plus
+    `tests/package-create-worker.php` for real multi-process claim races.
+  - Harness ownership was tightened across three suites, and nothing is deleted
+    on inferred authority in any of them. A hall is destroyed only when THIS PHP
+    process created and recorded its id in its own current-run registry;
+    `destroy_disposable_site()` refuses any other id. The domain-pattern plus
+    blog-id-range destructive sweep is gone from BOTH the Stage A and Stage B
+    suites — a hall whose domain merely resembles a fixture is detected and
+    REPORTED, never destroyed — and the final assertions require only that every
+    hall THIS run created is gone, not that zero fixture-shaped halls exist
+    network-wide. Products are deleted only by exact tracked ids or a durable
+    ownership marker. The before/after auto-draft diff that deleted products
+    merely for appearing during a run was removed from Stage B, Stage A and the
+    Play Product suite; such products are now reported and left alone.
+  - Persistent halls are checked for PRESERVATION, not emptiness, in BOTH the
+    Stage A and Stage B suites. Each captures a deterministic
+    primary-key-ordered snapshot of `bingo_packages` and
+    `bingo_package_components` for Sunrise, Tampa and Orlando before any fixture
+    work and requires it to be byte-identical after cleanup, so legitimate
+    pre-existing or manually created Package data survives and never causes a
+    failure. Each also proves the comparison is non-vacuous by asserting the
+    live snapshot differs from the baseline while the run holds a Sunrise
+    Package.
+  - Nothing in Stage B changes `catalog_visibility`, `is_purchasable`, post
+    status, add-to-cart, stock or storefront/search visibility (BR-066). No
+    add-ons, Sessions, checkout, cart enforcement, QR, entitlement or REST work
+    is included.
 
-## Next Up (Strict Execution Order)
-1. Review and commit Package Increment 1 Stage A, then implement Stage B: the
-   `PackageService` writer, the Package admin create/edit/archive/restore
-   screens, and the public `replaceComponents` domain entry. Follow the approved
-   design in `ADR-033`, `ADR-034`, `BR-066`-`BR-069`, and the Package sections
-   of `docs/architecture/catalog-session-persistence-design.md`. The BR-065
-   `bc_product_kind` Package projection belongs to whichever slice ships the
-   Package base writer; the `bc_package_relation` add-on projection is a
-   SEPARATE concern that belongs with `PackageAddonService` / add-on
-   relationship work and must not be pulled into the base-writer slice unless
-   that slice is separately approved to include add-ons.
-2. The frozen `docs/architecture/catalog-session-persistence-design.md`
-   §"Catalog lock-order review" needs no change. An earlier revision of this
-   file claimed the `replaceComponents` row was missing a
-   `bingo_package_components` rank; that was implementation drift, not a
-   documentation error, and the implementation has been corrected to the frozen
-   sequence. ADR-033 locks `bingo_packages` then `bingo_play_products`
-   ascending, and locks no component rows at all.
-3. The online entitlement-activation business rule is now resolved as
-   successful online payment confirmation (`BR-053`). Exact WooCommerce
-   successful-payment hook/status mapping belongs to later
-   entitlement/QR integration-design work. It does not block the Bingo Play
-   Product implementation increment.
-4. Package pricing persistence is resolved by ADR-031: linked WooCommerce
-   native price for Package base price; relational Package/add-on unit price
-   and quantity ceiling.
-5. Packages, Sessions/sales-window behavior, coordinated starter-catalog copy,
-   Game Type hard delete, entitlement activation, and reporting remain deferred
-   and are not implemented.
-6. Continue only through separately reviewed, focused implementation slices
-   that preserve ADR-031, ADR-032, and the detailed persistence design.
-7. Platform Admin network identity Disable/Reactivate/Permanent Delete
-   remains deferred under BR-035 §4 and requires a separate
-   architecture/decision pass before implementation.
-8. Separately review the ADR-025 `HallStaffTransactionTransport`
+---
+
+## Immediate Demo Critical Path
+1. **Package Increment 1** — COMPLETE. Stage A and Stage B are implemented,
+   source reviewed, automated-verified and interactively verified in wp-admin.
+2. **Session Increment 1** — next demo-critical-path implementation. Not
+   started.
+3. **Jim backend review / business confirmation** of the
+   Woo Product -> Bingo Play Product -> Bingo Package -> Session flow.
+
+Everything below is tracked work that is NOT a blocker to that demo.
+
+## Before Customer-Facing Digital Launch
+1. The BR-066 storefront mechanism that enforces Bingo Play Product
+   non-purchasability. Deferred by decision; requires a new reviewed entry
+   before any implementer selects a mechanism.
+2. Package add-ons: `PackageAddonService`, `bingo_package_addons`, BR-062's
+   quantity ceiling, and the BR-065 `bc_package_relation` projection. This is a
+   SEPARATE concern from the Package base writer and must not be folded into it
+   without its own approved slice.
+3. Checkout electronic-limit enforcement (BR-042) and redemption accumulation
+   (BR-045), including the effective-limit resolver (BR-038, BR-064).
+4. Entitlement snapshot (BR-043, ADR-029), QR issuance (BR-044) and Android
+   redemption (ADR-030).
+5. Exact WooCommerce successful-payment hook/status mapping for BR-053
+   entitlement activation. The business rule is resolved; only the integration
+   mapping is open.
+6. Coordinated starter-catalog copy at provisioning (BR-047, ADR-027).
+7. Game Type hard delete, which stays disabled until its complete
+   reference-writer/delete contract and concurrency tests exist (ADR-032).
+8. Package hard delete, including BR-065's mandatory linked-product
+   disposition. No hard delete exists in any Catalog entity today.
+
+## Production Hardening / Technical Follow-ups
+1. Platform Admin network identity Disable/Reactivate/Permanent Delete remains
+   deferred under BR-035 §4 and requires a separate architecture/decision pass.
+2. Review the ADR-025 `HallStaffTransactionTransport`
    `information_schema.innodb_trx` false-negative recorded above. It does not
    block Catalog work and must not be folded into a Catalog slice.
-9. Separately fix the remaining `tests/game-types-increment-1.php` harness
-   issue recorded above: the orphaned `catalog.game_type.*` audit rows left
-   behind for Game Types the suite deletes. The interrupted-run
-   collation-mutation hazard is resolved — that scenario now runs entirely on
-   disposable infrastructure.
-10. Separately resolve the local PHP/Homebrew libcurl `.test` hostname-resolution
-   stall recorded above. It is an environment issue, not a platform defect, and
-   must not be worked around in repository code.
-11. Deliberately remove the local test residue left on Sunrise and Tampa by an
+3. Asserting or pinning the transaction isolation level inside the ADR-032
+   transport (recorded as a follow-up by ADR-034). Not a prerequisite for
+   BR-069.
+4. Fix the remaining `tests/game-types-increment-1.php` harness issue: the
+   orphaned `catalog.game_type.*` audit rows left behind for Game Types the
+   suite deletes.
+5. Provider selections that remain open: Redis, S3-compatible storage, CDN, and
+   production hosting (ADR-013).
+
+## Local Development Cleanup
+1. Resolve the local PHP/Homebrew libcurl `.test` hostname-resolution stall
+   recorded above. It is an environment issue, not a platform defect, and must
+   not be worked around in repository code.
+2. Deliberately remove the local test residue left on Sunrise and Tampa by an
    aborted `tests/play-products-increment-1.php` run on 2026-08-28: orphaned
    Bingo Play Product rows `#175`, `#191`, `#226`, `#233` on site 2, unmarked
    Game Types `#833`-`#844` on site 2, and Game Type `#39` on site 3. The
    harness reports them and refuses to delete them, because naming is not
    ownership proof. Sunrise Game Type `#654 "Manual Test Regular"` is real
    manual smoke-test data and must NOT be removed.
-12. Deliberately remove six orphaned Catalog tables left by disposable halls
+3. Deliberately remove six orphaned Catalog tables left by disposable halls
    that were destroyed BEFORE the teardown fix: `bc_9_bingo_packages`,
    `bc_9_bingo_package_components`, `bc_10_bingo_packages`,
    `bc_10_bingo_package_components`, `bc_12_bingo_packages` and
    `bc_12_bingo_package_components`. Sites 9, 10 and 12 no longer exist in
    `wp_blogs`. New disposable halls can no longer leave these behind, and the
-   suites do not delete them, because ownership is inferred rather than
-   proven.
+   suites do not delete them, because ownership is inferred rather than proven.
+4. **Interrupted CLI test runs can lose persistent-hall fixture ownership
+   proof.** The durable `_bc_pkga_test_artifact` marker lives on the WooCommerce
+   post. If a run is interrupted after the marker-proven post is deleted but
+   before the corresponding Catalog rows are removed, the surviving Catalog rows
+   become permanently unprovable: the evidence was destroyed with the post. Do
+   NOT infer ownership for orphan Catalog rows from title, prefix, timestamp,
+   id range, a missing Woo post, or domain shape. Recorded, not resolved.
+5. **Sunrise candidate interrupted-run residue remains deliberately untouched.**
+   Packages `#91`-`#94`, components `#242`-`#248`, and the related unproven
+   Catalog rows (Bingo Play Products `#1029`-`#1037`, Game Types `#1345`-`#1347`)
+   on site 2. A read-only audit on 2026-08-30 found **zero**
+   `_bc_pkga_test_artifact` markers anywhere on Sunrise, so marker evidence
+   accounts for none of the observed +4 Package / +7 component delta. Cleanup is
+   separate maintenance and requires a deliberate decision.
+6. **Disposable halls `#78` and `#76` remain in `wp_blogs`.** `#78`
+   (`pkgajjlnla.bingocommerce.test`) is known from terminal history to belong to
+   the interrupted Stage A run; `#76` (`pkgagcvmnt.bingocommerce.test`) remains
+   unproven. Both still carry their four hall-local Catalog tables, their audit
+   rows, and intact `_bc_pkga_test_artifact` markers. Cleanup is separate
+   maintenance.
+7. **Disposable test halls emit WooCommerce Action Scheduler missing-table
+   warnings.** Observed: disposable halls created by the current CLI test
+   harness are missing the Action Scheduler tables when WooCommerce product
+   saves run, logging `bc_{id}_actionscheduler_actions doesn't exist` noise. The
+   exact provisioning/root-cause contract remains a follow-up. It is not Package
+   logic and does not affect any Package assertion.
+
+## Standing Execution Rules
+- Continue only through separately reviewed, focused implementation slices that
+  preserve ADR-031, ADR-032, ADR-033, ADR-034 and the detailed persistence
+  design.
+- The frozen `docs/architecture/catalog-session-persistence-design.md`
+  §"Catalog lock-order review" is accurate as written. ADR-033 locks
+  `bingo_packages` then `bingo_play_products` ascending, and locks no component
+  rows at all.
+- Latest run: Package Stage B **258/258 PASS**; Package Stage A **313/313
+  PASS**. Game Type **164/164 PASS** and Bingo Play Product **457
+  functional/regression assertions PASS, 0 functional failures** out of 460 were
+  measured on the immediately preceding run; no production code either suite
+  covers has changed since, so neither was rerun,
+  the remaining 3 being residue detections whose ownership is not proven. No
+  residue was deleted. A structural snapshot of every persistent hall is
+  byte-identical before and after that run, and the Sunrise/Tampa/Orlando
+  `bingo_packages` and `bingo_package_components` baselines came through
+  unchanged.
 
 ---
 

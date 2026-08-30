@@ -12,7 +12,10 @@ if ( ! defined( 'ABSPATH' ) ) {
  * Scope is deliberately tiny. Only four invariants justify this transport:
  *
  *   1. ADR-032 — WooCommerce-product exclusivity between bingo_play_products
- *      and bingo_packages, anchored on the current site's posts row;
+ *      and bingo_packages, anchored on the current site's posts row. This covers
+ *      Bingo Play Product creation AND the Package-create profile, which creates
+ *      a Package together with its INITIAL composition so that no active
+ *      zero-component Package can ever persist (BR-067);
  *   2. ADR-032 — Bingo Play Product -> Game Type reference integrity, anchored
  *      on the Game Type row that a future hard-delete writer will lock;
  *   3. ADR-033 — Bingo Package composition replacement, which must be
@@ -27,9 +30,10 @@ if ( ! defined( 'ABSPATH' ) ) {
  * $untrusted guards, so neither can nest inside the other and a session poisoned
  * by one is poisoned for both. They are not one contract.
  *
- * Everything else — archive, faces-per-unit, clearing a Game Type — is a single
- * conditional statement through ordinary $wpdb and never enters this class. This
- * is NOT a general Catalog transaction mechanism.
+ * Everything else — Play Product archive, faces-per-unit, clearing a Game Type,
+ * and Package archive/restore (BR-070) — is a single conditional statement
+ * through ordinary $wpdb and never enters this class. This is NOT a general
+ * Catalog transaction mechanism.
  *
  * It accepts no callable. Each public entry point owns one fixed, reviewed
  * statement sequence and interprets an immutable plan object, so the complete
@@ -46,7 +50,7 @@ if ( ! defined( 'ABSPATH' ) ) {
  *   - INSERT and UPDATE against bingo_play_products;
  *   - narrow INSERT, single-row UPDATE, and DELETE against
  *     bingo_package_components;
- *   - UPDATE against bingo_packages.
+ *   - INSERT and UPDATE against bingo_packages.
  *
  * ADR-033 takes NO lock on bingo_package_components, so there is no
  * package_components -> play_products lock rank.
@@ -154,15 +158,129 @@ final class CatalogTransactionTransport {
 	}
 
 	/**
+	 * ADR-032 Package-create profile — Package identity and its INITIAL
+	 * composition, created together as one valid Package.
+	 *
+	 * ADR-033 deliberately excludes creation: a Package may never persist as an
+	 * active zero-component object (BR-067), so its first component rows are
+	 * inserted inside this single ADR-032 boundary. That allowance applies to
+	 * creation ONLY and does not authorise later composition replacement to use
+	 * ADR-032.
+	 *
+	 * @return CatalogWriteOutcome|\WP_Error
+	 */
+	public static function createPackageWithComposition( CatalogPackagePlan $plan ) {
+		if ( CatalogPackagePlan::CREATE_PACKAGE !== $plan->mutation ) {
+			return self::error( 'catalog_transport_plan_mismatch', 'The Catalog write plan does not match the requested boundary.' );
+		}
+
+		$shape = self::assert_package_plan_shape( $plan );
+		if ( is_wp_error( $shape ) ) {
+			return $shape;
+		}
+
+		if ( self::$untrusted ) {
+			return self::error( self::STATE_UNTRUSTED, 'The Catalog database session can no longer be trusted for a critical transaction.' );
+		}
+
+		if ( self::$active ) {
+			return self::error( self::NESTED_USE, 'A Catalog critical transaction is already in progress.' );
+		}
+
+		$transport = new self();
+		$captured  = $transport->capture( $plan->blog_id );
+		if ( is_wp_error( $captured ) ) {
+			return $captured;
+		}
+
+		$attempt = 0;
+		while ( true ) {
+			++$attempt;
+			$outcome = $transport->attempt_package_create( $plan );
+
+			if ( ! is_wp_error( $outcome ) ) {
+				return $outcome;
+			}
+
+			if ( self::$untrusted || ! self::is_lock_conflict( $outcome ) ) {
+				return $outcome;
+			}
+
+			if ( $attempt >= self::RETRY_ATTEMPTS ) {
+				return self::error(
+					self::WRITE_CONFLICT,
+					'The Catalog change could not be serialized against concurrent activity. Reload and try again.',
+					[ 'attempts' => $attempt, 'db_errno' => $outcome->get_error_data()['db_errno'] ?? 0 ]
+				);
+			}
+
+			$base = self::RETRY_BACKOFF_US[ min( $attempt - 1, count( self::RETRY_BACKOFF_US ) - 1 ) ];
+			usleep( (int) ( $base * ( 0.5 + ( random_int( 0, 1000 ) / 1000 ) ) ) );
+		}
+	}
+
+	/**
+	 * Reject a structurally malformed Package-create plan BEFORE BEGIN, for the
+	 * same reason assert_composition_plan_shape() exists: a missing or
+	 * non-integer inner-array field would otherwise raise a PHP warning while the
+	 * transaction is open, inside a boundary that must stay callback-free.
+	 *
+	 * Plan SHAPE only. WooCommerce eligibility, claim exclusivity, Play Product
+	 * existence and lifecycle all remain inside the transaction under their locks.
+	 *
+	 * @return true|\WP_Error
+	 */
+	private static function assert_package_plan_shape( CatalogPackagePlan $plan ) {
+		if ( $plan->blog_id < 1 ) {
+			return self::error( 'catalog_transport_plan_mismatch', 'The Catalog write plan carries no hall context.' );
+		}
+
+		if ( $plan->wc_product_id < 1 ) {
+			return self::error( 'catalog_transport_plan_mismatch', 'The Catalog write plan carries no WooCommerce product.' );
+		}
+
+		if ( 1 !== preg_match( '/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $plan->now ) ) {
+			return self::error( 'catalog_transport_plan_mismatch', 'The Catalog write plan carries an unusable timestamp.' );
+		}
+
+		if ( ! array_is_list( $plan->components ) ) {
+			return self::error( 'catalog_transport_plan_mismatch', 'The Bingo Package composition must be a plain list of components.' );
+		}
+
+		foreach ( $plan->components as $component ) {
+			if ( ! is_array( $component ) ) {
+				return self::error( 'catalog_transport_plan_mismatch', 'A Bingo Package composition entry is not a component.' );
+			}
+			if ( ! array_key_exists( 'bingo_play_product_id', $component ) || ! array_key_exists( 'quantity', $component ) ) {
+				return self::error( 'catalog_transport_plan_mismatch', 'A Bingo Package composition entry is missing a required field.' );
+			}
+			if ( ! is_int( $component['bingo_play_product_id'] ) || ! is_int( $component['quantity'] ) ) {
+				return self::error( 'catalog_transport_plan_mismatch', 'A Bingo Package composition entry carries a non-integer field.' );
+			}
+			if ( $component['bingo_play_product_id'] < 1 ) {
+				return self::error( 'catalog_transport_plan_mismatch', 'A Bingo Package composition entry references an invalid Bingo Play Product.' );
+			}
+			if ( $component['quantity'] < 1 || $component['quantity'] > self::COMPONENT_QUANTITY_MAX ) {
+				return self::error(
+					'invalid_component_quantity',
+					'A Bingo Package component quantity must be a whole number between 1 and 4294967295.',
+					[ 'bingo_play_product_id' => $component['bingo_play_product_id'] ]
+				);
+			}
+		}
+
+		return true;
+	}
+
+	/**
 	 * ADR-033 — Package composition replacement, all-or-nothing.
 	 *
 	 * A DISTINCT boundary from ADR-032, sharing this class's $active and
 	 * $untrusted guards so neither boundary can nest inside the other and a
 	 * session poisoned by one is poisoned for both.
 	 *
-	 * NOTE FOR THE NEXT SLICE: no public PackageService composition writer exists
-	 * yet, so nothing in wp-admin or REST can reach this entry point. It is the
-	 * transaction machinery only.
+	 * PackageService::replaceComponents() is the supported caller. It marshals the
+	 * request and settles the result; it never reimplements this sequence.
 	 *
 	 * @return CatalogWriteOutcome|\WP_Error
 	 */
@@ -438,6 +556,53 @@ final class CatalogTransactionTransport {
 	}
 
 	/**
+	 * The Package-create transaction attempt. Shares begin/commit/rollback, the
+	 * $active guard, and the $untrusted poison flag with every other boundary.
+	 *
+	 * @return CatalogWriteOutcome|\WP_Error
+	 */
+	private function attempt_package_create( CatalogPackagePlan $plan ) {
+		$begun = $this->begin();
+		if ( is_wp_error( $begun ) ) {
+			return $begun;
+		}
+
+		self::$active = true;
+
+		try {
+			$outcome = $this->create_package_sequence( $plan );
+
+			if ( is_wp_error( $outcome ) ) {
+				if ( ! $this->rollback() ) {
+					self::$untrusted = true;
+
+					return self::error(
+						self::STATE_UNTRUSTED,
+						'The Catalog transaction could not be rolled back, so the database session is no longer trustworthy.',
+						[ 'original_code' => $outcome->get_error_code() ]
+					);
+				}
+
+				return $outcome;
+			}
+
+			if ( true !== $this->commit() ) {
+				self::$untrusted = true;
+				$this->rollback_quietly();
+
+				return self::error(
+					self::COMMIT_OUTCOME_UNKNOWN,
+					'The Catalog change was submitted but its result could not be confirmed. Reload this screen and check the current state before retrying.'
+				);
+			}
+
+			return $outcome;
+		} finally {
+			self::$active = false;
+		}
+	}
+
+	/**
 	 * ADR-033's transaction attempt. Shares begin/commit/rollback, the $active
 	 * guard, and the $untrusted poison flag with the ADR-032 attempt loop.
 	 *
@@ -482,6 +647,167 @@ final class CatalogTransactionTransport {
 		} finally {
 			self::$active = false;
 		}
+	}
+
+	/**
+	 * The frozen ADR-032 Package-create profile. Preflight state is never
+	 * authoritative; every decision below is made under a lock taken here.
+	 *
+	 * 1. the {prefix}posts row for wc_product_id, then revalidate it;
+	 * 2. any rival bingo_play_products claim on wc_product_id;
+	 * 3. every component bingo_play_products row, ascending, verifying existence
+	 *    and active state and reading each current `medium` under that lock;
+	 * 4. any rival bingo_packages claim on wc_product_id;
+	 * 5. derive package_type from the media read at step 3;
+	 * 6. INSERT bingo_packages;
+	 * 7. INSERT its initial bingo_package_components.
+	 *
+	 * Step 4 deliberately follows step 3 so every bingo_play_products acquisition
+	 * is contiguous and no bingo_packages lock is held while a
+	 * bingo_play_products lock is still being sought.
+	 *
+	 * @return CatalogWriteOutcome|\WP_Error
+	 */
+	private function create_package_sequence( CatalogPackagePlan $plan ) {
+		// 1. Woo anchor row, then the minimal revalidation ADR-032 permits.
+		$post = $this->lock_posts_row( $plan->wc_product_id );
+		if ( is_wp_error( $post ) ) {
+			return $post;
+		}
+
+		$eligible = self::assert_woo_row_eligible( $post );
+		if ( is_wp_error( $eligible ) ) {
+			return $eligible;
+		}
+
+		// 2. A rival Bingo Play Product claim on the same product.
+		$claimed = $this->lock_play_product_by_wc_product( $plan->wc_product_id );
+		if ( is_wp_error( $claimed ) ) {
+			return $claimed;
+		}
+		if ( [] !== $claimed ) {
+			return self::error( 'play_product_claim_exists', 'That WooCommerce product is already a Bingo Play Product.' );
+		}
+
+		// Plan shape was validated before BEGIN; duplicates are a composition
+		// rule (BR-067) and are rejected here rather than silently merged.
+		$requested = [];
+		foreach ( $plan->components as $component ) {
+			$id = (int) $component['bingo_play_product_id'];
+			if ( isset( $requested[ $id ] ) ) {
+				return self::error( 'duplicate_component', 'A Bingo Play Product may appear only once in a Package composition.' );
+			}
+			$requested[ $id ] = (int) $component['quantity'];
+		}
+
+		if ( [] === $requested ) {
+			// BR-067: a Package may never persist as an active zero-component object.
+			return self::error( 'package_requires_component', 'A Bingo Package must contain at least one Bingo Play Product.' );
+		}
+
+		// 3. Every component row, ascending.
+		$dependency = array_keys( $requested );
+		sort( $dependency, SORT_NUMERIC );
+
+		$play_products = $this->lock_play_product_rows( $dependency );
+		if ( is_wp_error( $play_products ) ) {
+			return $play_products;
+		}
+
+		foreach ( $dependency as $id ) {
+			if ( ! isset( $play_products[ $id ] ) ) {
+				return self::error(
+					'play_product_not_found',
+					'A referenced Bingo Play Product was not found in this hall.',
+					[ 'bingo_play_product_id' => (int) $id ]
+				);
+			}
+
+			$row = $play_products[ $id ];
+
+			// Fail closed on corrupt authoritative state, exactly as composition
+			// replacement does. An unrecognised medium is never inferred as Paper
+			// and an unrecognised status is never inferred as archived.
+			if ( ! in_array( (string) $row['medium'], self::VALID_MEDIUMS, true ) ) {
+				return self::error(
+					self::SCHEMA_INCONSISTENT,
+					'A referenced Bingo Play Product holds an unrecognised medium value.',
+					[ 'bingo_play_product_id' => (int) $id ]
+				);
+			}
+			if ( ! in_array( (string) $row['status'], self::VALID_PLAY_PRODUCT_STATUSES, true ) ) {
+				return self::error(
+					self::SCHEMA_INCONSISTENT,
+					'A referenced Bingo Play Product holds an unrecognised status value.',
+					[ 'bingo_play_product_id' => (int) $id ]
+				);
+			}
+
+			// BR-067: every reference in a new Package is a NEW reference, so it
+			// must be active at the moment its row is locked.
+			if ( 'active' !== (string) $row['status'] ) {
+				return self::error(
+					'play_product_not_active',
+					'An archived Bingo Play Product cannot be added to a Package.',
+					[ 'bingo_play_product_id' => (int) $id ]
+				);
+			}
+		}
+
+		// 4. A rival Bingo Package claim on the same product.
+		$package_claim = $this->lock_package_claim( $plan->wc_product_id );
+		if ( is_wp_error( $package_claim ) ) {
+			return $package_claim;
+		}
+		if ( [] !== $package_claim ) {
+			return self::error( 'package_already_linked', 'That WooCommerce product is already linked to a Bingo Package.' );
+		}
+
+		// 5. BR-061, derived only from media read under the step-3 locks.
+		$has_paper   = false;
+		$has_digital = false;
+		foreach ( $dependency as $id ) {
+			if ( 'digital' === (string) $play_products[ $id ]['medium'] ) {
+				$has_digital = true;
+			} else {
+				$has_paper = true;
+			}
+		}
+		$package_type = $has_paper && $has_digital ? 'hybrid' : ( $has_digital ? 'digital' : 'paper' );
+
+		// 6. The Package row.
+		$inserted = $this->execute_write(
+			"INSERT INTO {$this->packages_table}"
+			. ' (wc_product_id, package_type, status, created_at, updated_at, archived_at)'
+			. " VALUES (?, ?, 'active', ?, ?, NULL)",
+			'isss',
+			[ $plan->wc_product_id, $package_type, $plan->now, $plan->now ]
+		);
+		if ( is_wp_error( $inserted ) ) {
+			return $inserted;
+		}
+
+		$package_id = (int) $this->connection->insert_id;
+		if ( $package_id < 1 ) {
+			return self::error( 'persistence_failed', 'The Bingo Package could not be created.' );
+		}
+
+		// 7. Its initial composition, in the same transaction. A Package and its
+		// first components are one valid object or neither exists.
+		foreach ( $dependency as $id ) {
+			$component = $this->execute_write(
+				"INSERT INTO {$this->package_components_table}"
+				. ' (package_id, bingo_play_product_id, quantity, sort_order, created_at, updated_at)'
+				. ' VALUES (?, ?, ?, 0, ?, ?)',
+				'iiiss',
+				[ $package_id, $id, $requested[ $id ], $plan->now, $plan->now ]
+			);
+			if ( is_wp_error( $component ) ) {
+				return $component;
+			}
+		}
+
+		return new CatalogWriteOutcome( $package_id, true, [ 'package_type' => $package_type ] );
 	}
 
 	/**

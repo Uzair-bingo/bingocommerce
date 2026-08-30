@@ -112,6 +112,18 @@ final class PackageStageATest {
 	/** @var array<int,array<int,int>> */
 	private array $baseline_auto_drafts = [];
 
+	/**
+	 * Canonical bingo_packages / bingo_package_components snapshots for every
+	 * persistent hall, taken before any fixture work.
+	 *
+	 * Legitimate pre-existing or manually created Package data MUST survive this
+	 * suite. Asserting those tables are empty would both fail on real hall data
+	 * and invite a future "clean it up" reflex, so the contract is preservation.
+	 *
+	 * @var array<int,array<string,array<int,array<string,mixed>>>>
+	 */
+	private array $baseline_packages = [];
+
 	private string $group = '';
 	/** @var array<string,array{pass:int,fail:int}> */
     private array $groups = [];
@@ -126,7 +138,16 @@ final class PackageStageATest {
 		$this->ok( $this->super_admin_id > 0, 'native Super Admin fixture exists' );
 		wp_set_current_user( $this->super_admin_id );
 		$this->record_baseline_auto_drafts();
+		$this->record_baseline_packages();
 		$roles_before = $this->role_snapshot();
+		foreach ( [ self::SUNRISE, self::TAMPA, self::ORLANDO ] as $baseline_site ) {
+			$this->note( sprintf(
+				'hall %d Package baseline: %d Package row(s), %d component row(s) — these must survive untouched',
+				$baseline_site,
+				count( $this->baseline_packages[ $baseline_site ]['packages'] ),
+				count( $this->baseline_packages[ $baseline_site ]['components'] )
+			) );
+		}
 
 		$disposable = $this->create_disposable_site();
 		$this->ok( $disposable > 0, 'disposable hall created for every destructive schema test' );
@@ -365,6 +386,12 @@ final class PackageStageATest {
 
 		// Referenced by an ACTIVE Package.
 		$active_pkg = $this->make_package( self::SUNRISE, 'active' );
+
+		// Prove the preservation comparison is not vacuous: with this row present
+		// the live snapshot MUST differ from the baseline, so the cleanup-time
+		// equality assertion is a real round-trip through non-empty state.
+		$live_snapshot = $this->package_snapshot( self::SUNRISE );
+		$this->ok( $live_snapshot['packages'] !== $this->baseline_packages[ self::SUNRISE ]['packages'], 'the Package baseline comparison detects a difference while this run holds a Sunrise Package' );
 		$referenced = $this->make_play_product( $service, 'ref', 'digital', 3, $game_type );
 		$this->add_component( self::SUNRISE, $active_pkg, $referenced );
 
@@ -1411,12 +1438,22 @@ final class PackageStageATest {
 		return (int) $site;
 	}
 
-	private function destroy_disposable_site(): void {
+	/**
+	 * Destroy a disposable hall.
+	 *
+	 * The ONLY authority is this PHP process's current-run registry. A domain
+	 * shape, a name, or a blog-id range is never ownership: a hall that merely
+	 * looks like a fixture may belong to something else entirely, so it is
+	 * reported and left alone.
+	 */
+	private function destroy_disposable_site( int $site_id = 0 ): void {
 		global $wpdb;
-		if ( $this->disposable_site_id < 1 ) {
+
+		$site_id = $site_id > 0 ? $site_id : $this->disposable_site_id;
+		if ( $site_id < 1 || empty( $this->disposable_sites[ $site_id ] ) ) {
 			return;
 		}
-		$site_id = $this->disposable_site_id;
+
 		switch_to_blog( $site_id );
 		foreach ( self::SUITE_TRIGGERS as $trigger ) {
 			$wpdb->query( "DROP TRIGGER IF EXISTS {$trigger}" );
@@ -1434,7 +1471,9 @@ final class PackageStageATest {
 			}
 		}
 		unset( $this->disposable_sites[ $site_id ] );
-		$this->disposable_site_id = 0;
+		if ( $this->disposable_site_id === $site_id ) {
+			$this->disposable_site_id = 0;
+		}
 	}
 
 	/**
@@ -1479,6 +1518,72 @@ final class PackageStageATest {
 		return $count;
 	}
 
+	private function record_baseline_packages(): void {
+		foreach ( [ self::SUNRISE, self::TAMPA, self::ORLANDO ] as $site_id ) {
+			$this->baseline_packages[ $site_id ] = $this->package_snapshot( $site_id );
+		}
+	}
+
+	/**
+	 * A deterministic canonical snapshot, ordered by primary key, of both
+	 * authoritative Package tables for one hall.
+	 *
+	 * @return array{packages:array<int,array<string,mixed>>,components:array<int,array<string,mixed>>}
+	 */
+	private function package_snapshot( int $site_id ): array {
+		global $wpdb;
+
+		$switched = get_current_blog_id() !== $site_id;
+		if ( $switched ) {
+			switch_to_blog( $site_id );
+		}
+
+		$snapshot = [
+			'packages'   => (array) $wpdb->get_results(
+				'SELECT package_id, wc_product_id, package_type, status, created_at, updated_at, archived_at FROM '
+				. Migrations::packages_table() . ' ORDER BY package_id',
+				ARRAY_A
+			),
+			'components' => (array) $wpdb->get_results(
+				'SELECT package_component_id, package_id, bingo_play_product_id, quantity, sort_order, created_at, updated_at FROM '
+				. Migrations::package_components_table() . ' ORDER BY package_component_id',
+				ARRAY_A
+			),
+		];
+
+		if ( $switched ) {
+			restore_current_blog();
+		}
+
+		return $snapshot;
+	}
+
+	/** Report, never delete, auto-drafts that appeared without this suite's marker. */
+	private function report_unowned_auto_drafts( int $site_id ): void {
+		global $wpdb;
+
+		if ( ! isset( $this->baseline_auto_drafts[ $site_id ] ) ) {
+			return;
+		}
+
+		$current = array_map( 'intval', (array) $wpdb->get_col( "SELECT ID FROM `{$wpdb->posts}` WHERE post_type = 'product' AND post_status = 'auto-draft'" ) );
+		$new     = array_values( array_diff( $current, $this->baseline_auto_drafts[ $site_id ] ) );
+		if ( [] === $new ) {
+			return;
+		}
+
+		$this->note( sprintf(
+			'site %d: %d auto-draft product(s) appeared during this run but carry NO ownership marker. They were LEFT UNTOUCHED: %s',
+			$site_id,
+			count( $new ),
+			implode( ', ', array_map( static fn( $id ) => '#' . (int) $id, $new ) )
+		) );
+	}
+
+	/**
+	 * Recorded for REPORTING only. This suite never deletes a product because it
+	 * appeared after a baseline snapshot — existence timing is not ownership.
+	 */
 	private function record_baseline_auto_drafts(): void {
 		global $wpdb;
 		foreach ( [ self::SUNRISE, self::TAMPA, self::ORLANDO ] as $site_id ) {
@@ -1566,7 +1671,10 @@ final class PackageStageATest {
 		wp_set_current_user( $this->super_admin_id );
 		$this->set_flag( 'active', false );
 		$this->set_flag( 'untrusted', false );
-		$this->destroy_disposable_site();
+		// Every hall THIS run registered, and nothing else.
+		foreach ( array_keys( $this->disposable_sites ) as $registered ) {
+			$this->destroy_disposable_site( (int) $registered );
+		}
 
 		foreach ( [ self::SUNRISE, self::TAMPA, self::ORLANDO ] as $site_id ) {
 			switch_to_blog( $site_id );
@@ -1596,17 +1704,16 @@ final class PackageStageATest {
 				$wpdb->delete( Migrations::game_types_table(), [ 'game_type_id' => (int) $game_type_id ], [ '%d' ] );
 			}
 
-			// Marker-proven products, plus any auto-draft this run caused.
+			// Products are deleted ONLY by the durable ownership marker this run
+			// stamped, which also covers every exact id it tracked. Nothing is
+			// deleted because it appeared after a baseline snapshot: existence
+			// timing is not ownership, and an incidental WordPress-minted
+			// auto-draft is not this suite's to remove.
 			$proven = array_map( 'intval', (array) $wpdb->get_col( $wpdb->prepare( "SELECT post_id FROM `{$wpdb->postmeta}` WHERE meta_key = %s", self::OWNER_META ) ) );
 			foreach ( $proven as $post_id ) {
 				wp_delete_post( $post_id, true );
 			}
-			if ( isset( $this->baseline_auto_drafts[ $site_id ] ) ) {
-				$current = array_map( 'intval', (array) $wpdb->get_col( "SELECT ID FROM `{$wpdb->posts}` WHERE post_type = 'product' AND post_status = 'auto-draft'" ) );
-				foreach ( array_diff( $current, $this->baseline_auto_drafts[ $site_id ] ) as $post_id ) {
-					wp_delete_post( (int) $post_id, true );
-				}
-			}
+			$this->report_unowned_auto_drafts( $site_id );
 			restore_current_blog();
 		}
 
@@ -1620,24 +1727,39 @@ final class PackageStageATest {
 				(int) $wpdb->get_var( 'SELECT COUNT(*) FROM ' . Migrations::play_products_table() . ' pp LEFT JOIN `' . $wpdb->posts . '` p ON p.ID = pp.wc_product_id WHERE p.ID IS NULL AND pp.created_at >= \'' . esc_sql( $this->started_at ) . '\'' ),
 				"hall {$site_id}: this run left no orphaned Play Product rows"
 			);
-			$this->same( 0, (int) $wpdb->get_var( 'SELECT COUNT(*) FROM ' . Migrations::packages_table() ), "hall {$site_id}: no Package rows remain" );
-			$this->same( 0, (int) $wpdb->get_var( 'SELECT COUNT(*) FROM ' . Migrations::package_components_table() ), "hall {$site_id}: no Package component rows remain" );
+			// PRESERVATION, not emptiness. Pre-existing Package data — including
+			// anything a Hall Manager created by hand — must come through this
+			// suite byte-identical.
+			$snapshot = $this->package_snapshot( $site_id );
+			$this->same( $this->baseline_packages[ $site_id ]['packages'], $snapshot['packages'], "hall {$site_id}: the authoritative bingo_packages baseline is unchanged" );
+			$this->same( $this->baseline_packages[ $site_id ]['components'], $snapshot['components'], "hall {$site_id}: the authoritative bingo_package_components baseline is unchanged" );
 			restore_current_blog();
 		}
 
-		// An interrupted earlier run can leave its own disposable hall behind. The
-		// domain shape is created ONLY by this suite, and the id range excludes
-		// every persistent hall, so sweeping them is safe and keeps the assertion
-		// below meaningful.
-		foreach ( (array) $wpdb->get_col( "SELECT blog_id FROM {$wpdb->blogs} WHERE domain REGEXP '^pkga[a-z0-9]+\\.bingocommerce\\.test$'" ) as $stray ) {
-			$stray = (int) $stray;
-			if ( $stray > 4 ) {
-				$this->disposable_site_id = $stray;
-				$this->destroy_disposable_site();
-			}
+		// A domain shape is NOT ownership proof. An interrupted earlier run may
+		// have left a hall whose domain looks like this suite's; it is reported
+		// and left untouched, because nothing proves this process created it.
+		$leftovers = [];
+		foreach ( (array) $wpdb->get_results( "SELECT blog_id, domain FROM {$wpdb->blogs} WHERE domain LIKE 'pkga%'", ARRAY_A ) as $row ) {
+			$leftovers[] = '#' . (int) $row['blog_id'] . ' ' . (string) $row['domain'];
+		}
+		if ( [] !== $leftovers ) {
+			$this->note( sprintf(
+				'%d hall(s) with this suite\'s domain shape were NOT created by this run and were LEFT UNTOUCHED; they need deliberate cleanup: %s',
+				count( $leftovers ),
+				implode( ', ', $leftovers )
+			) );
 		}
 
-		$this->same( 0, (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->blogs} WHERE domain LIKE 'pkga%'" ), 'no disposable hall remains' );
+		// Only halls THIS run created are required to be gone.
+		$this->same( [], $this->disposable_sites, 'every disposable hall this run created was destroyed' );
+		foreach ( array_keys( $this->disposable_tables ) as $site_id ) {
+			$this->same(
+				0,
+				(int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->blogs} WHERE blog_id = %d", (int) $site_id ) ),
+				"disposable hall {$site_id} created by THIS run no longer exists"
+			);
+		}
 
 		foreach ( $this->disposable_tables as $site_id => $tables ) {
 			foreach ( $tables as $table ) {

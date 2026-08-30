@@ -23,6 +23,7 @@ final class Plugin {
 
 		GameTypeAdmin::register();
 		PlayProductAdmin::register();
+		PackageAdmin::register();
 
 		add_action( 'network_admin_menu', [ Migrations::class, 'maybe_migrate_network' ], 6 );
 		add_action( 'admin_init', [ Migrations::class, 'maybe_migrate_current_site' ], 7 );

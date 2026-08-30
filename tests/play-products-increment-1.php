@@ -2758,10 +2758,11 @@ final class PlayProductIncrementOneTest {
 		// carried.
 		$this->destroy_all_disposable_sites();
 
-		// Ownership-scoped sweep for anything the tracked-ID pass missed, plus any
-		// auto-draft product WordPress minted as a side effect of this run.
+		// Ownership-scoped sweep for anything the tracked-ID pass missed. Auto-drafts
+		// WordPress minted as a side effect are REPORTED, never deleted: appearing
+		// after a baseline snapshot is existence timing, not ownership.
 		$this->purge_residue();
-		$this->purge_new_auto_drafts();
+		$this->report_unowned_auto_drafts();
 
 		$this->verify_clean_state();
 	}
@@ -2778,8 +2779,9 @@ final class PlayProductIncrementOneTest {
 
 	/**
 	 * WordPress/WooCommerce mint an `auto-draft` product as a side effect of
-	 * product creation. Record the ones that already exist so cleanup removes
-	 * only the ones this run caused, and never pre-existing hall state.
+	 * product creation. Recorded for REPORTING only: this suite never deletes a
+	 * product because it appeared after a baseline snapshot, because existence
+	 * timing is not ownership.
 	 */
 	/**
 	 * Report Play Product rows this suite will not touch. An interrupted run that
@@ -2831,7 +2833,8 @@ final class PlayProductIncrementOneTest {
 		}
 	}
 
-	private function purge_new_auto_drafts(): void {
+	/** Report, never delete, auto-drafts that appeared without this suite's marker. */
+	private function report_unowned_auto_drafts(): void {
 		global $wpdb;
 
 		foreach ( [ self::SUNRISE, self::TAMPA ] as $site_id ) {
@@ -2844,10 +2847,19 @@ final class PlayProductIncrementOneTest {
 				'intval',
 				(array) $wpdb->get_col( "SELECT ID FROM `{$wpdb->posts}` WHERE post_type = 'product' AND post_status = 'auto-draft'" )
 			);
-			foreach ( array_diff( $current, $this->baseline_auto_drafts[ $site_id ] ) as $post_id ) {
-				wp_delete_post( (int) $post_id, true );
-			}
+			$new = array_values( array_diff( $current, $this->baseline_auto_drafts[ $site_id ] ) );
 			restore_current_blog();
+
+			if ( [] === $new ) {
+				continue;
+			}
+
+			$this->note( sprintf(
+				'site %d: %d auto-draft product(s) appeared during this run but carry NO ownership marker. They were LEFT UNTOUCHED: %s',
+				$site_id,
+				count( $new ),
+				implode( ', ', array_map( static fn( $id ) => '#' . (int) $id, $new ) )
+			) );
 		}
 	}
 
