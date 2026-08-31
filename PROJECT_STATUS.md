@@ -673,10 +673,6 @@
       reports it rather than deleting it because naming is not ownership proof.
       **No residue was deleted.** Residue detection was not weakened to make the
       suite green.
----
-
-## In Progress
-- No Hall Staff Management work currently in progress.
 - Bingo Play Product Increment 1 is implemented, verified, and **committed** as
   `e0459a9 feat(catalog): implement bingo play product management`.
 - Package Increment 1 **Stage A (Catalog v3 + transport foundation) is
@@ -788,16 +784,136 @@
     status, add-to-cart, stock or storefront/search visibility (BR-066). No
     add-ons, Sessions, checkout, cart enforcement, QR, entitlement or REST work
     is included.
+- **[2026-08-31] Session Increment 1 — COMPLETE.** New
+  `wp-content/plugins/bingocommerce-sessions` plugin delivering hall-local
+  Session scheduling and Session-to-Package assignment. Implemented, source
+  reviewed, automated-verified and interactively verified in wp-admin.
+  - New per-site tables `bingo_sessions` and `bingo_session_packages` under
+    `bc_sessions_db_version` = 1, provisioned by a `Migrations` class that
+    mirrors `Catalog\Migrations` exactly — `dbDelta()` followed by explicit
+    verification before the version option is persisted, current-site migration
+    on `admin_init`, trusted Super Admin network migration, and
+    `wp_initialize_site` provisioning for new halls. ADR-031 remains the
+    Catalog/Session persistence authority.
+  - The structured schedule is a **calendar date only**. `session_date` is a
+    `DATE` column; there is no time column, no datetime column and no stored
+    offset. Human-readable time such as "6:00 PM" lives only inside
+    `display_name`, which is display-label text and drives no automatic logic
+    (BR-050).
+  - Customer visibility is evaluated on request against the hall's WordPress
+    timezone: a Session for date `D` is visible when
+    `D - 5 calendar days <= hall-local today <= D` **and** Available for Sale is
+    ON (**BR-051**, **BR-063**). `SessionService::salesWindowStartDate()` is the
+    single place the window start is derived, no caller reconstructs a date, and
+    the window is never precomputed into a scheduled job.
+  - `SessionService` is the supported writer, using ordinary `$wpdb->prepare()`
+    statements throughout. **No custom Session transaction transport was
+    introduced.** ADR-025, ADR-032, ADR-033 and ADR-034 are untouched, and none
+    of their transports were reused, extended or copied.
+  - Package assignment is guarded inside a single statement — an
+    `INSERT ... SELECT ... FROM DUAL WHERE EXISTS` that requires the target
+    Session to still be `active` — rather than a read-then-write pair, with the
+    `(session_id, package_id)` uniqueness constraint carrying the rest.
+  - `PackageGateway` is the ONLY Catalog touchpoint. It validates a Package
+    deeply before assignment: exact lifecycle, exact `package_type` among
+    paper/digital/hybrid, a non-empty component list, per-component identity,
+    quantity, medium and Play Product status with no duplicates, BR-061
+    re-derivation matching the persisted type, and a healthy linked WooCommerce
+    product. A Package carrying an archived component remains assignable.
+  - Reads fail closed and fail visibly. Every confirming read propagates
+    `WP_Error` on `$wpdb->last_error` instead of degrading into "not found", and
+    a corrupt stored date is rejected rather than coerced. Admin request
+    integers are parsed WITHOUT `absint()`, for the reason already recorded for
+    Package Stage B.
+  - Audit deliberately omits `session_id` from the payload:
+    `AuditLog::is_sensitive_key()` compacts keys to alphanumerics and rejects
+    `sessionid`, so `session_id` can never be an audit payload key.
+  - The plugin fails closed on missing dependencies. If `HallContext`,
+    `AuditLog` or `PackageService` is unavailable it registers nothing and shows
+    an admin notice.
+  - **Verification status: complete.**
+    - Source review — **PASS**. No `bingocommerce-core` production file and no
+      `bingocommerce-catalog` production file was modified.
+    - Automated — `tests/session-increment-1.php`, **343 / 343 assertions
+      PASS**.
+    - `bingocommerce-sessions` is **Network Active**.
+    - Manual wp-admin smoke test — **PASS**: Sunrise Session `#10` created;
+      structured schedule remained calendar date only; human-readable time
+      remained display-name text only; the Available for Sale and `D - 5`
+      through `D` hall-local sales-window result was correct; Package `#89`
+      assigned; the combined Session edit succeeded; archive preserved the
+      Package assignment; an archived Session was not on sale; restore preserved
+      Session identity and the Package assignment.
+    - Tenant isolation — **PASS**. A Tampa Hall Manager cannot see Sunrise
+      Session data.
+    - Game Operator denial — **PASS**. A Sunrise Game Operator is denied Session
+      management.
+  - No checkout, cart enforcement, capacity, QR, entitlement, add-ons, REST or
+    storefront work is included, and none was started.
+- **[2026-08-31] Action Scheduler backlog diagnostic — classified
+  NON-BLOCKING LOCAL ENVIRONMENT ISSUE.** Investigated during Session
+  Increment 1 closeout. It is tracked as separate local maintenance under Local
+  Development Cleanup and does **not** block Session Increment 1.
+  - Sunrise carries a large and still-growing past-due Action Scheduler
+    backlog. It had grown from the 2775 shown in the wp-admin notice to 2935
+    past-due actions while the diagnostic ran.
+  - Approximately **99.5%** of the Sunrise backlog — 2919 of 2935 — is
+    WooCommerce `woocommerce_run_product_attribute_lookup_update_callback`
+    work in the `woocommerce-db-updates` group. These are one-shot actions, not
+    a single recurring hook repeated thousands of times.
+  - The backlog substantially **predates Session Increment 1** and correlates
+    with heavy Catalog/Package test product churn. Creation is concentrated on
+    2026-08-27 through 2026-08-29, and 1464 of the 1469 referenced product ids
+    no longer exist in `wp_posts`.
+  - **`bingocommerce-sessions` schedules no Action Scheduler or WP-Cron work**,
+    and neither does `bingocommerce-core` or `bingocommerce-catalog`. Verified
+    by source search across every custom plugin and harness file.
+  - **Session `#10` produced no scheduled actions.** The most recent action
+    created on Sunrise predates Session `#10`'s creation, and zero actions were
+    created at or after it.
+  - Action Scheduler tables on the real halls (Sunrise, Tampa, Orlando) are
+    **present and structurally healthy**: current store/logger schema, all
+    expected indexes, `CHECK TABLE` clean, and no orphaned rows.
+  - **No stale claims were found** on any hall, and no pending action holds a
+    claim id.
+  - Local cron/background execution is **not reliably completing**. The
+    `doing_cron` lock is repeatedly refreshed while no `cron` entry ever
+    advances.
+  - The exact loopback/background-request failure mechanism remains **UNKNOWN**
+    and must not be stated as proven. Confirming it would require issuing an
+    HTTP request to a hall, which would execute pending actions.
+  - **Procedural disclosure.** The diagnostic was intended to be read-only, but
+    early diagnostic scripts loaded `wp-load.php` before `DISABLE_WP_CRON` was
+    defined. Normal WordPress bootstrap therefore updated a `doing_cron`
+    transient on blog 1 and dispatched a non-blocking wp-cron loopback request.
+    No Action Scheduler queue execution was observed from that side effect, and
+    the final diagnostic pass defined `DISABLE_WP_CRON` and reverified the
+    counts unchanged. This entry deliberately does NOT record the diagnostic as
+    "no data modified".
+  - No scheduled action was executed, cancelled, retried or deleted, and no
+    Action Scheduler data was cleaned.
+---
+
+## In Progress
+- No Hall Staff Management work currently in progress.
+- No Catalog or Session implementation work currently in progress. Package
+  Increment 1 and Session Increment 1 are both COMPLETE and are recorded under
+  Done.
+- The next demo-critical-path item is the Jim/backend business review, which is
+  a review activity rather than an implementation slice.
 
 ---
 
 ## Immediate Demo Critical Path
-1. **Package Increment 1** — COMPLETE. Stage A and Stage B are implemented,
+1. **Package Increment 1** — **COMPLETE.** Stage A and Stage B are implemented,
    source reviewed, automated-verified and interactively verified in wp-admin.
-2. **Session Increment 1** — next demo-critical-path implementation. Not
-   started.
-3. **Jim backend review / business confirmation** of the
-   Woo Product -> Bingo Play Product -> Bingo Package -> Session flow.
+2. **Session Increment 1** — **COMPLETE.** Implemented, source reviewed,
+   automated-verified (343/343) and interactively verified in wp-admin on a
+   Network Active plugin, including tenant isolation and Game Operator denial.
+3. **NEXT: Jim / backend business review** — business confirmation of the
+   Woo Product -> Bingo Play Product -> Bingo Package -> Session flow. This is a
+   review activity, not an implementation slice. No checkout, capacity, QR,
+   entitlement, add-ons or storefront work starts before it.
 
 Everything below is tracked work that is NOT a blocker to that demo.
 
@@ -869,18 +985,40 @@ Everything below is tracked work that is NOT a blocker to that demo.
    `_bc_pkga_test_artifact` markers anywhere on Sunrise, so marker evidence
    accounts for none of the observed +4 Package / +7 component delta. Cleanup is
    separate maintenance and requires a deliberate decision.
-6. **Disposable halls `#78` and `#76` remain in `wp_blogs`.** `#78`
-   (`pkgajjlnla.bingocommerce.test`) is known from terminal history to belong to
-   the interrupted Stage A run; `#76` (`pkgagcvmnt.bingocommerce.test`) remains
-   unproven. Both still carry their four hall-local Catalog tables, their audit
-   rows, and intact `_bc_pkga_test_artifact` markers. Cleanup is separate
-   maintenance.
+6. **Disposable halls `#78` and `#76` remain in `wp_blogs`. Do NOT delete
+   either.** PKGA `#78` (`pkgajjlnla.bingocommerce.test`) has **proven**
+   interrupted-run ownership. PKGA `#76` (`pkgagcvmnt.bingocommerce.test`)
+   ownership remains **UNPROVEN**, and it must not be deleted by inference from
+   domain shape, prefix, id range or timestamp. Both still carry their four
+   hall-local Catalog tables, their audit rows, and intact
+   `_bc_pkga_test_artifact` markers. Cleanup is separate maintenance.
 7. **Disposable test halls emit WooCommerce Action Scheduler missing-table
    warnings.** Observed: disposable halls created by the current CLI test
    harness are missing the Action Scheduler tables when WooCommerce product
    saves run, logging `bc_{id}_actionscheduler_actions doesn't exist` noise. The
    exact provisioning/root-cause contract remains a follow-up. It is not Package
    logic and does not affect any Package assertion.
+8. **Action Scheduler backlog and local WP-Cron execution investigation.**
+   Classified NON-BLOCKING LOCAL ENVIRONMENT ISSUE and recorded in full under
+   Done for 2026-08-31. Sunrise's past-due backlog is growing, is ~99.5%
+   WooCommerce product-attribute-lookup work generated by Catalog/Package test
+   product churn, and predates Session Increment 1; the Action Scheduler tables
+   on the real halls are healthy and carry no stale claims; local cron is not
+   reliably completing and the failure mechanism is UNKNOWN. **Do NOT clean
+   Action Scheduler. Do NOT execute, cancel, retry or delete scheduled
+   actions.** This is separate local-environment maintenance and blocks
+   nothing.
+9. **Local `class-wp-http.php` 30-second timeout observed on the Game Operator
+   denied-page flow.** Seen during Session Increment 1 manual wp-admin
+   verification. The denial itself was correct and the check PASSED; the stall
+   is local HTTP behaviour, is consistent with item 1's `.test`
+   hostname-resolution stall, and must not be worked around in repository code.
+10. **Existing Package, Bingo Play Product and Game Type residue remains
+    untouched.** Items 2, 5 and 6 above are the standing record. Nothing was
+    deleted during Session Increment 1 or the Action Scheduler diagnostic, and
+    ownership is never inferred from name, title, prefix, code, timestamp, id
+    range or domain shape. Sunrise Game Type `#654 "Manual Test Regular"` is
+    real manual smoke-test data and must NOT be removed.
 
 ## Standing Execution Rules
 - Continue only through separately reviewed, focused implementation slices that
@@ -890,9 +1028,10 @@ Everything below is tracked work that is NOT a blocker to that demo.
   §"Catalog lock-order review" is accurate as written. ADR-033 locks
   `bingo_packages` then `bingo_play_products` ascending, and locks no component
   rows at all.
-- Latest run: Package Stage B **258/258 PASS**; Package Stage A **313/313
-  PASS**. Game Type **164/164 PASS** and Bingo Play Product **457
-  functional/regression assertions PASS, 0 functional failures** out of 460 were
+- Latest run: Session Increment 1 **343/343 PASS**; Package Stage B **258/258
+  PASS**; Package Stage A **313/313 PASS**. Game Type **164/164 PASS** and Bingo
+  Play Product **457 functional/regression assertions PASS, 0 functional
+  failures** out of 460 were
   measured on the immediately preceding run; no production code either suite
   covers has changed since, so neither was rerun,
   the remaining 3 being residue detections whose ownership is not proven. No
@@ -920,9 +1059,13 @@ Everything below is tracked work that is NOT a blocker to that demo.
 - **Halls:** Sunrise (2), Tampa (3), Orlando test hall (4) (Local)
 - **Commerce:** WooCommerce network-active, HPOS on
 - **Local mail:** SMTP configured and verified for WordPress staff invitation/password setup testing
-- **Custom code:** `wp-content/plugins/bingocommerce-core/` and
-  `wp-content/plugins/bingocommerce-catalog/`
+- **Custom code:** `wp-content/plugins/bingocommerce-core/`,
+  `wp-content/plugins/bingocommerce-catalog/` and
+  `wp-content/plugins/bingocommerce-sessions/` (all three Network Active)
 - **Catalog schema:** per-site `bc_catalog_db_version` = 3
   (`bingo_game_types`, `bingo_play_products`, `bingo_packages`,
   `bingo_package_components`)
+- **Session schema:** per-site `bc_sessions_db_version` = 1
+  (`bingo_sessions`, `bingo_session_packages`)
 - **Rule for AI agents:** Read `AGENTS.md`, `docs/architecture/plugin-architecture.md`, and this file before coding. Do not re-scaffold Multisite, WooCommerce, or core bootstrap.
+
