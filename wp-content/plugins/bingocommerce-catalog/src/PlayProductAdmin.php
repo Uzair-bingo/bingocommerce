@@ -287,34 +287,19 @@ final class PlayProductAdmin {
 	}
 
 	/**
-	 * Current-site simple products that are not already a Bingo Play Product.
+	 * Current-site simple products not claimed by either Catalog identity.
 	 *
 	 * @return array<int,string>
 	 */
 	private static function linkable_products( BingoPlayProductService $service ): array {
-		if ( ! function_exists( 'wc_get_products' ) ) {
-			return [];
-		}
-
-		$ids = wc_get_products(
-			[
-				'type'   => 'simple',
-				'status' => [ 'publish', 'draft', 'private', 'pending' ],
-				'limit'  => self::PRODUCT_CHOICE_LIMIT,
-				'return' => 'ids',
-				'parent' => 0,
-			]
-		);
-		if ( ! is_array( $ids ) ) {
+		$ids = $service->selectableWooProductIds( self::PRODUCT_CHOICE_LIMIT );
+		if ( is_wp_error( $ids ) ) {
 			return [];
 		}
 
 		$choices = [];
 		foreach ( $ids as $id ) {
 			$id = (int) $id;
-			if ( ! is_wp_error( $service->getByWooProductId( $id ) ) ) {
-				continue;
-			}
 			$choices[ $id ] = self::product_label( $id );
 		}
 

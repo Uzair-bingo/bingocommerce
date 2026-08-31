@@ -892,6 +892,48 @@
     "no data modified".
   - No scheduled action was executed, cancelled, retried or deleted, and no
     Action Scheduler data was cleaned.
+- **[2026-08-31] Operator-authorized local demo cleanup — COMPLETE.** The
+  project owner/operator adjudicated the deleted records as disposable local
+  test residue; this was human authorization, not durable harness ownership
+  proof.
+  - Sunrise deletions: Game Types `#833`-`#844` and `#1345`-`#1347`; Bingo Play
+    Products `#175`, `#191`, `#226`, `#233`, and `#1029`-`#1037`; Packages
+    `#91`-`#94`; and Package components `#242`-`#248`.
+  - Protected Sunrise data remains: Game Types `#654` and `#1343`; Bingo Play
+    Products `#1026` and `#1027`; Packages `#87`, `#88`, and `#89`; components
+    `#236`-`#240`; Session `#10`; and Session-Package relation `#7` to Package
+    `#89`.
+  - Hall `#78` was deleted by operator-authorized maintenance: the site and its
+    exact `bc_78_*` custom tables were removed, while audit history was
+    preserved.
+  - Hall `#76` was deleted by explicit operator adjudication without claiming
+    whole-site harness ownership as proven: the site and its exact `bc_76_*`
+    custom tables were removed, while audit history was preserved.
+  - No source code was changed by this cleanup.
+- **[2026-08-31] Woo product selector cross-claim filtering — COMPLETE.**
+  - The Bingo Play Product create selector now excludes WooCommerce products
+    already claimed by either a Bingo Play Product or a Bingo Package. Its
+    previous read path excluded only Bingo Play Product claims, which exposed
+    Package-linked products such as Sunrise Woo product `#6300` as choices.
+  - The Bingo Package create selector already excluded both claim types and was
+    not changed. Unclaimed eligible draft products remain valid choices even
+    when their titles look like old manual/test data.
+  - ADR-032 writer serialization and exclusivity were not changed. Existing
+    writer regression coverage still verifies that either rival claim is
+    rejected authoritatively; six new selector assertions verify both create
+    selectors hide both claim types and retain an unclaimed product.
+  - Live read-only Sunrise verification confirms protected Woo products
+    `#6297`-`#6301` are absent from both selectors, while unclaimed products
+    `#208`, `#212`, and `#213` remain eligible.
+  - Protected Sunrise Game Types `#654`/`#1343`, Play Products `#1026`/`#1027`,
+    Packages `#87`/`#88`/`#89`, and Session `#10` were not mutated. No Woo
+    product was deleted.
+  - Syntax checks and the selector regression pass. Play Product
+    functional/regression assertions are **461 / 461 PASS**, with zero
+    functional/regression failures. Current-run disposable-hall cleanup
+    assertions are **5 / 5 PASS**, with zero cleanup failures. One residue-only
+    detection remains: Tampa Game Type `#39 "PPI1 Tampa Only 89AUU"` has
+    unproven ownership, was not deleted, and is **not** a functional failure.
 ---
 
 ## In Progress
@@ -957,13 +999,9 @@ Everything below is tracked work that is NOT a blocker to that demo.
 1. Resolve the local PHP/Homebrew libcurl `.test` hostname-resolution stall
    recorded above. It is an environment issue, not a platform defect, and must
    not be worked around in repository code.
-2. Deliberately remove the local test residue left on Sunrise and Tampa by an
-   aborted `tests/play-products-increment-1.php` run on 2026-08-28: orphaned
-   Bingo Play Product rows `#175`, `#191`, `#226`, `#233` on site 2, unmarked
-   Game Types `#833`-`#844` on site 2, and Game Type `#39` on site 3. The
-   harness reports them and refuses to delete them, because naming is not
-   ownership proof. Sunrise Game Type `#654 "Manual Test Regular"` is real
-   manual smoke-test data and must NOT be removed.
+2. The only remaining Play Product-suite residue detection is Tampa Game Type
+   `#39 "PPI1 Tampa Only 89AUU"`. Ownership remains unproven, so it was not
+   deleted. This is a residue detection only, not a functional failure.
 3. Deliberately remove six orphaned Catalog tables left by disposable halls
    that were destroyed BEFORE the teardown fix: `bc_9_bingo_packages`,
    `bc_9_bingo_package_components`, `bc_10_bingo_packages`,
@@ -978,20 +1016,15 @@ Everything below is tracked work that is NOT a blocker to that demo.
    become permanently unprovable: the evidence was destroyed with the post. Do
    NOT infer ownership for orphan Catalog rows from title, prefix, timestamp,
    id range, a missing Woo post, or domain shape. Recorded, not resolved.
-5. **Sunrise candidate interrupted-run residue remains deliberately untouched.**
-   Packages `#91`-`#94`, components `#242`-`#248`, and the related unproven
-   Catalog rows (Bingo Play Products `#1029`-`#1037`, Game Types `#1345`-`#1347`)
-   on site 2. A read-only audit on 2026-08-30 found **zero**
-   `_bc_pkga_test_artifact` markers anywhere on Sunrise, so marker evidence
-   accounts for none of the observed +4 Package / +7 component delta. Cleanup is
-   separate maintenance and requires a deliberate decision.
-6. **Disposable halls `#78` and `#76` remain in `wp_blogs`. Do NOT delete
-   either.** PKGA `#78` (`pkgajjlnla.bingocommerce.test`) has **proven**
-   interrupted-run ownership. PKGA `#76` (`pkgagcvmnt.bingocommerce.test`)
-   ownership remains **UNPROVEN**, and it must not be deleted by inference from
-   domain shape, prefix, id range or timestamp. Both still carry their four
-   hall-local Catalog tables, their audit rows, and intact
-   `_bc_pkga_test_artifact` markers. Cleanup is separate maintenance.
+5. **Sunrise operator-adjudicated residue cleanup is complete.** Packages
+   `#91`-`#94`, components `#242`-`#248`, Bingo Play Products `#1029`-`#1037`,
+   and Game Types `#1345`-`#1347` were deleted under explicit human/operator
+   authorization, not harness-proven ownership.
+6. **Disposable hall cleanup is complete for `#78` and `#76`.** Both site
+   records and only their exact `bc_78_*` / `bc_76_*` custom tables were
+   removed; audit history was preserved. Hall `#76` was deleted by explicit
+   operator adjudication, and whole-site harness ownership was not claimed as
+   proven.
 7. **Disposable test halls emit WooCommerce Action Scheduler missing-table
    warnings.** Observed: disposable halls created by the current CLI test
    harness are missing the Action Scheduler tables when WooCommerce product
@@ -1013,12 +1046,13 @@ Everything below is tracked work that is NOT a blocker to that demo.
    verification. The denial itself was correct and the check PASSED; the stall
    is local HTTP behaviour, is consistent with item 1's `.test`
    hostname-resolution stall, and must not be worked around in repository code.
-10. **Existing Package, Bingo Play Product and Game Type residue remains
-    untouched.** Items 2, 5 and 6 above are the standing record. Nothing was
-    deleted during Session Increment 1 or the Action Scheduler diagnostic, and
-    ownership is never inferred from name, title, prefix, code, timestamp, id
-    range or domain shape. Sunrise Game Type `#654 "Manual Test Regular"` is
-    real manual smoke-test data and must NOT be removed.
+10. **Local cleanup state.** The operator-authorized Sunrise and PKGA cleanup
+    recorded under Done is complete; those deleted records and halls no longer
+    remain. Tampa Game Type `#39` remains the sole unproven Play Product-suite
+    residue detection and was not deleted. The unrelated orphan-table,
+    ownership-proof, Action Scheduler/local-cron, and local HTTP follow-ups
+    above remain open. Sunrise Game Type `#654 "Manual Test Regular"` remains
+    protected manual data.
 
 ## Standing Execution Rules
 - Continue only through separately reviewed, focused implementation slices that
@@ -1029,16 +1063,13 @@ Everything below is tracked work that is NOT a blocker to that demo.
   `bingo_packages` then `bingo_play_products` ascending, and locks no component
   rows at all.
 - Latest run: Session Increment 1 **343/343 PASS**; Package Stage B **258/258
-  PASS**; Package Stage A **313/313 PASS**. Game Type **164/164 PASS** and Bingo
-  Play Product **457 functional/regression assertions PASS, 0 functional
-  failures** out of 460 were
-  measured on the immediately preceding run; no production code either suite
-  covers has changed since, so neither was rerun,
-  the remaining 3 being residue detections whose ownership is not proven. No
-  residue was deleted. A structural snapshot of every persistent hall is
-  byte-identical before and after that run, and the Sunrise/Tampa/Orlando
-  `bingo_packages` and `bingo_package_components` baselines came through
-  unchanged.
+  PASS**; Package Stage A **313/313 PASS**; Game Type **164/164 PASS**. The
+  Play Product suite reports **461/461 functional/regression assertions PASS**
+  with zero functional/regression failures; the selector regression passes;
+  and current-run disposable-hall cleanup reports **5/5 PASS** with zero cleanup
+  failures. Tampa Game Type `#39 "PPI1 Tampa Only 89AUU"` remains an unproven,
+  undeleted residue detection only, not a functional failure. The persistent
+  Sunrise protected-row snapshot was byte-identical before and after the run.
 
 ---
 
@@ -1068,4 +1099,3 @@ Everything below is tracked work that is NOT a blocker to that demo.
 - **Session schema:** per-site `bc_sessions_db_version` = 1
   (`bingo_sessions`, `bingo_session_packages`)
 - **Rule for AI agents:** Read `AGENTS.md`, `docs/architecture/plugin-architecture.md`, and this file before coding. Do not re-scaffold Multisite, WooCommerce, or core bootstrap.
-

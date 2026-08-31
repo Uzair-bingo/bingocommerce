@@ -510,6 +510,59 @@ final class BingoPlayProductService {
 	}
 
 	/**
+	 * WooCommerce products this hall may still link as a Bingo Play Product.
+	 *
+	 * Convenience only. ADR-032 claim exclusivity remains authoritative inside
+	 * the serialized writer; this read prevents already-claimed products from
+	 * being presented as ordinary create choices.
+	 *
+	 * @return array<int,int>|\WP_Error
+	 */
+	public function selectableWooProductIds( int $limit = 200 ) {
+		$context = $this->authorize();
+		if ( is_wp_error( $context ) ) {
+			return $context;
+		}
+
+		if ( ! function_exists( 'wc_get_products' ) ) {
+			return [];
+		}
+
+		$ids = wc_get_products(
+			[
+				'type'   => 'simple',
+				'status' => self::WOO_ALLOWED_STATUSES,
+				'limit'  => max( 1, min( 500, $limit ) ),
+				'return' => 'ids',
+				'parent' => 0,
+			]
+		);
+		if ( ! is_array( $ids ) ) {
+			return [];
+		}
+
+		global $wpdb;
+		$selectable = [];
+		foreach ( $ids as $id ) {
+			$id = (int) $id;
+
+			$play_claim = (int) $wpdb->get_var(
+				$wpdb->prepare( 'SELECT COUNT(*) FROM ' . Migrations::play_products_table() . ' WHERE wc_product_id = %d', $id )
+			);
+			$package_claim = (int) $wpdb->get_var(
+				$wpdb->prepare( 'SELECT COUNT(*) FROM ' . Migrations::packages_table() . ' WHERE wc_product_id = %d', $id )
+			);
+			if ( $play_claim > 0 || $package_claim > 0 ) {
+				continue;
+			}
+
+			$selectable[] = $id;
+		}
+
+		return $selectable;
+	}
+
+	/**
 	 * Administrative listing. Rows are never mutated while reading, and a broken
 	 * WooCommerce link is surfaced through `woo_state` rather than hidden.
 	 *

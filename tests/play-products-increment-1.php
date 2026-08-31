@@ -35,6 +35,8 @@ use BingoCommerce\Catalog\CatalogPlayProductPlan;
 use BingoCommerce\Catalog\CatalogTransactionTransport;
 use BingoCommerce\Catalog\GameTypeService;
 use BingoCommerce\Catalog\Migrations;
+use BingoCommerce\Catalog\PackageAdmin;
+use BingoCommerce\Catalog\PackageService;
 use BingoCommerce\Catalog\PlayProductAdmin;
 use BingoCommerce\Catalog\PlayProductResult;
 use BingoCommerce\Core\Migrations as CoreMigrations;
@@ -1246,6 +1248,40 @@ final class PlayProductIncrementOneTest {
 			$this->assert_true( true === Migrations::migrate_current_site(), 'migrate_current_site recreates the authoritative Package table' );
 			$this->assert_true( true === Migrations::verify_packages_schema(), '  and it verifies against the v3 contract' );
 			$this->assert_status( 'play_product_created', $service->create( $this->make_product( $disposable, 'pkg after stub' ), 'paper', 1 ), 'creation resumes against the real Package table' );
+
+			// The admin selectors are convenience reads only, but both must hide
+			// either kind of existing Catalog claim. The writer assertions above
+			// remain the authoritative ADR-032 verification.
+			$selector_package_product = $this->make_product( $disposable, 'selector package claim' );
+			$selector_play_product    = $this->make_product( $disposable, 'selector play claim' );
+			$selector_free_product    = $this->make_product( $disposable, 'selector free' );
+			$now                      = current_time( 'mysql', true );
+			$wpdb->insert(
+				$packages,
+				[
+					'wc_product_id' => $selector_package_product,
+					'package_type'  => 'paper',
+					'status'        => 'active',
+					'created_at'    => $now,
+					'updated_at'    => $now,
+				],
+				[ '%d', '%s', '%s', '%s', '%s' ]
+			);
+			$this->assert_status( 'play_product_created', $service->create( $selector_play_product, 'paper', 1 ), 'selector fixture creates an authoritative Play Product claim' );
+
+			$play_method = new ReflectionMethod( PlayProductAdmin::class, 'linkable_products' );
+			$play_method->setAccessible( true );
+			$play_choices = (array) $play_method->invoke( null, $service );
+
+			$package_method = new ReflectionMethod( PackageAdmin::class, 'linkable_products' );
+			$package_method->setAccessible( true );
+			$package_choices = (array) $package_method->invoke( null, new PackageService() );
+
+			foreach ( [ 'Play Product' => $play_choices, 'Package' => $package_choices ] as $selector => $choices ) {
+				$this->assert_true( ! isset( $choices[ $selector_package_product ] ), "{$selector} selector excludes an existing Package claim" );
+				$this->assert_true( ! isset( $choices[ $selector_play_product ] ), "{$selector} selector excludes an existing Play Product claim" );
+				$this->assert_true( isset( $choices[ $selector_free_product ] ), "{$selector} selector retains an unclaimed eligible WooCommerce product" );
+			}
 		} finally {
 			restore_current_blog();
 		}
@@ -3008,9 +3044,10 @@ final class PlayProductIncrementOneTest {
 	}
 
 	/**
-	 * WordPress drops only the tables it knows about, so the two ADR-031 Catalog
-	 * tables for the disposed hall are removed explicitly. Both belong to a site
-	 * this run created, so this is provably safe.
+	 * WordPress drops only the tables it knows about, so the hall-local Catalog
+	 * tables and the two tables provisioned by the Network-Active Sessions plugin
+	 * are removed explicitly. All belong to a site this PHP process created and
+	 * recorded in $disposable_sites, so this is provably safe.
 	 */
 	private function destroy_disposable_site( int $site_id = 0 ): void {
 		global $wpdb;
@@ -3037,6 +3074,20 @@ final class PlayProductIncrementOneTest {
 			Migrations::play_products_table(),
 			Migrations::game_types_table(),
 		];
+
+		// The Network-Active Sessions plugin provisions these two tables when this
+		// process creates the disposable hall. Refuse to derive or drop anything
+		// unless WordPress returns this exact disposable-site prefix.
+		$expected_prefix = $wpdb->base_prefix . $site_id . '_';
+		$site_prefix     = $wpdb->get_blog_prefix( $site_id );
+		if ( $site_prefix !== $expected_prefix ) {
+			fwrite( STDERR, "ABORT: disposable site {$site_id} has an unexpected table prefix.\n" );
+			exit( 1 );
+		}
+		$session_tables = [
+			$expected_prefix . 'bingo_session_packages',
+			$expected_prefix . 'bingo_sessions',
+		];
 		$wpdb->query( $wpdb->prepare( "DELETE FROM " . CoreMigrations::audit_log_table() . " WHERE blog_id = %d", $site_id ) );
 		restore_current_blog();
 
@@ -3047,6 +3098,11 @@ final class PlayProductIncrementOneTest {
 			// guessed at.
 			if ( 1 === preg_match( '/^bc_' . $site_id . '_bingo_(package_components|packages|play_products|game_types)$/', $table ) ) {
 				$wpdb->query( "DROP TABLE IF EXISTS `{$table}`" );
+			}
+		}
+		foreach ( $session_tables as $table ) {
+			if ( in_array( $table, [ $expected_prefix . 'bingo_session_packages', $expected_prefix . 'bingo_sessions' ], true ) ) {
+				$this->disposable_ddl( $site_id, "DROP TABLE IF EXISTS `{$table}`" );
 			}
 		}
 
