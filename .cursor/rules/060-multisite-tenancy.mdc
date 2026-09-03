@@ -8,6 +8,10 @@ alwaysApply: false
 
 Each hall is one Multisite site with its own per-site table set
 (`bc_{blog_id}_*`). Identity (`bc_users`) and network registry are global.
+For Portal integration within the single authoritative Bingo Innovation Portal
+environment, immutable Portal Hall identity `halls.id` maps to WordPress Site
+ID; names and domains are never cross-system identity (ADR-035/BR-072). Exact
+mapping persistence is deferred.
 
 ## Context Resolution
 
@@ -26,6 +30,14 @@ Each hall is one Multisite site with its own per-site table set
   `bingo_session_packages` are all hall-owned per-site tables. Append these
   names to `$wpdb->prefix`; do not add another `bc_` sub-prefix or a redundant
   `blog_id`.
+- Portal-authoritative Game Types may be replicated only into the correctly
+  mapped Hall's per-site Game Type table. Only Portal Sessions owned by that
+  Portal Hall, satisfying `bingo_sessions.hall_id == mapped halls.id`, are
+  eligible for its Commerce v1 sync; received/shared Sessions and
+  `allSessions()` semantics must not cross this tenant boundary. Portal Session
+  `days` must not drive scheduling, generate occurrences, or constrain/validate
+  Commerce scheduling in v1. Future advisory validation requires a separately
+  approved requirement (ADR-035/BR-072/BR-073).
 - A custom table's scope follows data ownership (ADR-022): hall-owned /
   tenant-owned operational data is per-site unless a documented decision
   requires network-wide storage. Genuinely network-wide records (e.g.

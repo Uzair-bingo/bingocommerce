@@ -733,6 +733,169 @@ transport remains a separate technical follow-up. It is not a prerequisite for
 BR-069, because this entry's mechanism is isolation-independent.
 
 
+- **ADR-035 — [2026-09-03] — Portal Integration Authority, Identity, and Commerce Occurrence Boundary:**
+
+BingoCommerce integrates with the existing Laravel Bingo Innovation Portal
+without absorbing the Portal's operational domain or transferring commerce
+authority into the Portal.
+
+All Portal integration identities in this decision belong to the single
+authoritative Bingo Innovation Portal environment. Portal Hall identity is
+`halls.id`, Portal Game Type identity is `game_types.id`, and Portal Session
+template identity is `bingo_sessions.id`. Names are attributes and MUST NEVER
+be used as cross-system identity.
+
+**System authority.** The Portal is authoritative for Hall identity, Game Type
+identity and configuration, operational Session-template identity, the
+Portal's existing operational Session `days`, and the existing Games,
+Patterns, Caller, device, XML, and other operational functionality.
+BingoCommerce remains authoritative for WooCommerce products, Bingo Play
+Products, Packages, pricing, inventory and commerce configuration; commerce
+weekdays; recurrence choice and boundaries; specific non-recurring commerce
+dates; structured commerce time; generated dated commerce occurrences;
+Package-to-occurrence availability; five-day sales eligibility; checkout,
+orders and payments; and future entitlement, QR, and redemption commerce
+state.
+
+**Hall identity.** A Portal Hall is mapped to exactly one BingoCommerce
+Multisite tenant by immutable identifiers:
+
+```text
+Portal halls.id <-> WordPress Site ID
+```
+
+Hall names, WordPress site names, subdomains, and custom domains are attributes,
+not integration identity. The exact mapping persistence, provisioning workflow,
+and lifecycle reconciliation are deferred to the integration implementation
+design. ADR-001 and ADR-022's one-hall-per-site and tenant-isolation rules
+remain in force.
+
+**Game Type identity and v1 lifecycle.** Portal `game_types.id` is the trusted
+cross-system Game Type identity. Portal Game Type creation and rename are
+allowed. A name is an editable attribute, and rename preserves `game_types.id`.
+Once created, a Portal Game Type cannot be deleted. Portal Archive and Restore
+are not required in v1. `device_group_id` remains hardware/XML/device-only and
+MUST NEVER be used as a BingoCommerce integration identity. XML-generated
+GameGroup identifiers MUST NEVER be BingoCommerce integration identities.
+
+BingoCommerce retains its hall-scoped Game Type domain as a local replica for
+commerce relationships and runtime use, linked to Portal `game_types.id`. The
+existing local surrogate ID and machine code may remain internal implementation
+identifiers, but neither is the trusted cross-system identity. Exact link
+persistence and synchronization columns are deferred. Existing local
+create/edit/archive/restore and currently disabled hard-delete behavior is not
+removed or redesigned by this documentation decision. It is transitional local
+BingoCommerce behavior, not the Portal v1 lifecycle, and will be reconsidered
+when Portal synchronization becomes authoritative. Local writer restrictions
+apply only after authenticated synchronization, idempotent mapping,
+reconciliation, and operational rollback/recovery have been proven.
+
+**Session and commerce-occurrence identity.** Three separate concepts MUST NOT
+be conflated:
+
+1. A Portal Session template, identified by `bingo_sessions.id` and owned by its
+   Portal Hall through `bingo_sessions.hall_id`.
+2. A BingoCommerce commerce schedule linked to that template and owning
+   commerce weekdays, recurring yes/no, recurrence start/end dates, specific
+   non-recurring dates, and structured commerce time.
+3. A BingoCommerce dated commerce occurrence generated from that commerce
+   schedule and used for Package availability, five-day sales eligibility,
+   purchase attribution, and future entitlement/redemption state.
+
+Only Sessions owned by the mapped Portal Hall are eligible for v1 commerce
+sync. Received/shared Sessions are excluded; integration eligibility MUST NOT
+use the Portal equivalent of `allSessions()`. The conceptual eligibility rule
+is `bingo_sessions.hall_id == mapped halls.id`; this is an authority boundary,
+not an API query or schema implementation decision. Portal Session `days` are
+independent from BingoCommerce commerce scheduling in v1 and MUST NOT drive
+Commerce scheduling, generate Commerce occurrences, or constrain or validate
+Commerce scheduling. Future advisory validation between Portal operational
+days and Commerce scheduling MAY be introduced only by a separately approved
+future requirement.
+
+Customers purchase against and orders retain the identity of the exact dated
+commerce occurrence, not merely the Portal Session template or its schedule.
+For occurrence date `D`, BR-051/BR-063's hall-local inclusive five-day sales
+predicate and Available for Sale rule remain in force. Structured commerce time
+is owned by BingoCommerce and may be entered manually by the Hall Manager in v1,
+but display-name text remains non-authoritative and MUST NOT be parsed for time
+or automatic behavior. Database columns, UI controls, storage schema, and
+timezone implementation remain deferred to the compatibility/scheduling design.
+
+One Package may be assigned to multiple dated commerce occurrences. No one-
+Package-to-one-occurrence restriction is introduced. Existing Package/Session
+relationship work is preserved where compatible.
+
+The implemented `bingo_sessions` and `bingo_session_packages` model is retained
+until a schema-specific compatibility/refactoring review determines how it can
+represent or transition to the template/schedule/occurrence model. This ADR does
+not delete or replace either table, authorize a destructive migration, or
+discard compatible Package/Session relationship work.
+
+**Synchronization direction and delivery sequence.** The approved integration
+shape is an authenticated Portal read API plus Portal webhooks, BingoCommerce
+hall-scoped local replicas, and reconciliation. Delivery order is:
+
+1. authenticated read API;
+2. initial/full pull synchronization;
+3. prove idempotent Hall, Game Type, and Session-template mapping;
+4. webhooks;
+5. reconciliation;
+6. tenant provisioning; and
+7. SSO.
+
+No API contract, authentication credential, webhook payload, retry policy,
+mapping table, reconciliation algorithm, provisioning lifecycle, or SSO
+protocol is selected here. Each requires its own reviewed implementation design.
+Existing ADR-011 REST hardening remains applicable to any future
+BingoCommerce-owned endpoint, but this ADR does not implement or select an
+endpoint.
+
+**Commerce enablement and SSO.** `Enable BingoCommerce` is a separate platform
+capability authorized only by a Portal Global Admin. It MUST NOT inherit normal
+Portal Hall Settings authorization. Hall Managers/Admins may manage commerce
+only after the platform has enabled their Hall. The detailed enablement and
+provisioning lifecycle is deferred. Future SSO is approved only as a requirement
+for a short-lived secure handoff from an authenticated Portal staff session to
+the correct mapped BingoCommerce tenant; SSO is not in the first integration
+increment, and protocol details are deferred.
+
+**V1 exclusions.** Individual Games, Patterns, Caller/device data, Portal users,
+Portal Session `days`, `device_group_id`, and XML GameGroup IDs are not synced.
+Add-ons, QR, customer entitlement, and electronic-capacity implementation are
+not part of this integration decision; their existing independent rules are
+neither implemented nor altered here.
+
+**Relationship to earlier decisions.** This entry:
+
+- narrows ADR-026 only for Game Type source authority: the Catalog plugin keeps
+  the local domain/replica boundary, while Portal owns identity/configuration;
+- supersedes ADR-027 only where it makes Game Types one-time, independently
+  editable, unsynchronized hall copies; its WooCommerce Product and Bingo Play
+  Product starter-copy decisions remain in force;
+- narrows ADR-028 and ADR-031 only where they assign canonical Session identity
+  to BingoCommerce: that authority now describes the dated commerce occurrence,
+  not the Portal operational Session template;
+- clarifies ADR-030's tenant/session/caller/Game-Type accumulation scope so its
+  Session component is the exact dated commerce occurrence; ticket, QR,
+  device-binding, and concurrency decisions remain unchanged;
+- narrows ADR-031's Game Type authority in the same manner, without changing its
+  Package, Bingo Play Product, WooCommerce shell/projection, per-site isolation,
+  or concurrency decisions; and
+- leaves ADR-001, ADR-004, ADR-022, and ADR-032 through ADR-034's existing
+  concurrency/transaction mechanics unchanged. Earlier local Game Type hard-
+  delete design remains transitional BingoCommerce behavior and does not create
+  a Portal v1 delete, Archive, or Restore feature.
+
+*Rationale:* Stable Portal identifiers preserve identity across editable names,
+while a separate commerce schedule and dated-occurrence model prevents Portal
+operational scheduling fields from silently becoming commerce rules. Local
+replicas allow BingoCommerce to keep tenant-safe commerce relationships and
+runtime behavior without making names or hardware identifiers authoritative.
+Deferring schema and protocol choices prevents this authority decision from
+destructively predetermining the compatibility work.
+
+
 ---
 
 ## Business Rules (BR)
@@ -2001,10 +2164,158 @@ delete_users.
   to permanent removal and is out of scope while no hard delete exists.
 
 
+- **BR-071 — [2026-09-03] — Portal and BingoCommerce Authority Boundary:**
+
+  The Laravel Bingo Innovation Portal is authoritative for Hall identity, Game
+  Type identity/configuration, operational Session-template identity, Portal
+  Session `days`, and existing Games, Patterns, Caller, device/XML, and other
+  operational functionality.
+
+  BingoCommerce is authoritative for WooCommerce Products, Bingo Play Products,
+  Packages, pricing, inventory and commerce configuration; commerce weekdays;
+  recurring yes/no; recurrence start/end dates; specific non-recurring commerce
+  dates; structured commerce time; dated commerce occurrences; Package-to-
+  occurrence availability; five-day sales eligibility; checkout, orders and
+  payments; and future entitlement/QR/redemption commerce state.
+
+  Packages and Bingo Play Products remain BingoCommerce-authoritative and are
+  retained without redesign by this rule. The existing local Game Type domain
+  is retained as a future synchronized replica, and the existing Session
+  implementation is retained pending compatibility review.
+
+  Relationship to prior rules: narrows BR-037 and BR-041 only as stated in
+  BR-072/BR-073. BR-039, BR-040, BR-049, BR-065, WooCommerce ownership, and hall
+  isolation remain in force.
+
+- **BR-072 — [2026-09-03] — Portal Hall and Game Type Integration Identity:**
+
+  Within the single authoritative Bingo Innovation Portal environment, Portal
+  Hall identity is `halls.id`, Portal Game Type identity is `game_types.id`, and
+  Portal Session-template identity is `bingo_sessions.id`. Portal `halls.id`
+  maps to WordPress Site ID. Names and domains are editable attributes and MUST
+  NEVER be cross-system identities.
+
+  Portal Game Type creation and rename are allowed. Rename preserves
+  `game_types.id`. Once created, a Portal Game Type cannot be deleted. Archive
+  and Restore are not required in Portal v1. `device_group_id` remains
+  hardware/XML/device-only and MUST NEVER be used as a BingoCommerce integration
+  identity. XML-generated GameGroup identifiers MUST NEVER be BingoCommerce
+  integration identities.
+
+  BingoCommerce may retain a hall-scoped local Game Type replica linked to the
+  Portal ID. Its existing surrogate ID and immutable machine code may remain
+  internal identifiers but are not cross-system identity. Existing local
+  Game Type create/edit/archive/restore and currently disabled hard-delete
+  behavior remains transitional local behavior until sync and reconciliation
+  are proven; this rule does not authorize its immediate removal or redesign and
+  does not make it part of the Portal v1 lifecycle.
+
+  Exact Hall/Game-Type mapping persistence, provisioning, synchronization, and
+  transitional-local-writer handling are deferred to reviewed implementation
+  designs.
+
+  Relationship to prior rules: narrows BR-037's BingoCommerce-authority and
+  hall-local-creation provisions. Supersedes only BR-047's Game Type one-time-
+  copy/no-live-sync provisions; BR-047's starter WooCommerce Product and Bingo
+  Play Product behavior remains in force. BR-057 remains unchanged.
+
+- **BR-073 — [2026-09-03] — Portal Session Template, Commerce Schedule, and Dated Occurrence:**
+
+  Portal `bingo_sessions.id` identifies an operational Session template owned
+  by its Portal Hall through `bingo_sessions.hall_id`. Only Sessions owned by
+  that Hall are eligible for v1
+  BingoCommerce sync; received/shared Sessions are excluded, and an
+  `allSessions()`-equivalent source MUST NOT define integration eligibility.
+  The conceptual eligibility rule is
+  `bingo_sessions.hall_id == mapped halls.id`; this is not an API query or schema
+  implementation decision. Portal Session `days` are independent from Commerce
+  scheduling in v1 and MUST NOT drive Commerce scheduling, generate Commerce
+  occurrences, or constrain or validate Commerce scheduling. Future advisory
+  validation MAY be introduced only by a separately approved future requirement.
+
+  A BingoCommerce commerce schedule is distinct from the Portal template and
+  owns commerce weekdays, recurring yes/no, recurrence start/end dates,
+  specific non-recurring dates, and structured commerce time. Structured
+  commerce time is BingoCommerce-owned and may be entered manually by the Hall
+  Manager in v1. Database columns, UI controls, storage schema, and timezone
+  implementation remain deferred. The schedule
+  generates exact dated commerce occurrences. Package availability, BR-051/
+  BR-063 five-day sales eligibility, purchase attribution, and future
+  entitlement/redemption state apply to the exact dated occurrence. Customers
+  and orders reference that occurrence, not only the template or schedule.
+
+  Display names remain labels and MUST NOT be parsed for time or scheduling
+  behavior. The portal-integrated commerce schedule requires structured time,
+  superseding only BR-050's statement that separately structured time is not
+  required. BR-050's prohibition on parsing display-name time remains in force.
+
+  The existing BingoCommerce Session tables and implementation are retained
+  until a schema-specific compatibility/refactoring review. No deletion,
+  replacement, destructive migration, or loss of compatible Package/Session
+  assignments is authorized by this rule.
+
+  One Package may be assigned to multiple dated commerce occurrences. No one-
+  Package-to-one-occurrence restriction is introduced, and existing Package/
+  Session relationship work is preserved where compatible.
+
+  Relationship to prior rules: narrows BR-041's canonical identity to the
+  BingoCommerce dated commerce occurrence rather than the Portal Session
+  template; supersedes BR-050 only for structured commerce time; clarifies
+  BR-051, BR-052, BR-045, BR-055, BR-056, and BR-063 to operate on the exact
+  occurrence. Redemption accumulation, atomicity, and late-redemption behavior
+  are unchanged. The retired Session-capacity decisions remain retired.
+
+- **BR-074 — [2026-09-03] — Portal Synchronization Sequence and V1 Exclusions:**
+
+  The approved integration uses an authenticated Portal read API, initial/full
+  pull synchronization, idempotent mappings, Portal webhooks, BingoCommerce
+  local replicas, and reconciliation. Implementation proceeds in this order:
+  authenticated read API; full pull; prove idempotent mapping; webhooks;
+  reconciliation; tenant provisioning; SSO.
+
+  No API, webhook, reconciliation, provisioning, or SSO implementation is
+  authorized by this documentation rule. Individual Games, Patterns,
+  Caller/device data, Portal users, Portal Session `days`, `device_group_id`,
+  and XML GameGroup IDs are excluded from v1 sync. Add-ons, QR, customer
+  entitlement, and electronic-capacity implementation are outside this
+  integration increment and remain governed by their independent decisions.
+
+  Relationship to prior rules: additive. ADR-011 remains applicable to future
+  BingoCommerce endpoints; ADR-032 through ADR-034 and BR-038/BR-042/BR-045
+  concurrency boundaries are unchanged.
+
+- **BR-075 — [2026-09-03] — Commerce Enablement and Future SSO Authority:**
+
+  `Enable BingoCommerce` is a separate platform capability authorized only by
+  a Portal Global Admin. It MUST NOT inherit ordinary Portal Hall Settings
+  authorization. Hall Managers/Admins may manage commerce only after the
+  platform has enabled the Hall. Detailed enablement and provisioning lifecycle
+  rules are deferred.
+
+  Future SSO must provide a short-lived secure handoff from authenticated Portal
+  staff to the correct mapped BingoCommerce Hall tenant. SSO is approved in
+  principle but is not part of the first integration increment; protocol,
+  claims, expiry, replay defense, account mapping, and failure behavior are
+  deferred to a later security design.
+
+  Relationship to prior rules: additive. It does not broaden Hall Manager,
+  Platform Admin, or Super Admin permissions defined by BR-018/BR-023/BR-026,
+  and it does not waive ADR-012 authentication requirements.
+
+
 ---
 
 ## Still Open / TBD Items (Unresolved)
 
+- Portal integration persistence and contract details deferred by ADR-035:
+  Hall/Game-Type/Session-template mappings; Portal API authentication and
+  payloads; webhook signing, retry, replay and ordering; reconciliation and
+  transitional conflict policy; commerce-schedule recurrence horizon,
+  timezone/DST and regeneration rules; enablement/provisioning lifecycle; and
+  SSO protocol/account/tenant mapping.
+- Schema-specific compatibility/refactoring review for the implemented local
+  Game Type and Session models. The review must not assume either domain or the
+  existing Session tables are deleted or replaced.
 - Offline QR/Package usability **technical implementation** (local-server /
   cache / network architecture). The **business expectation** is locked by
   BR-060: previously synchronized QR/Package information should remain

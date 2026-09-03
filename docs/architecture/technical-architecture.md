@@ -49,6 +49,45 @@ context, with BingoCommerce custom network-level modules/services implementing
 hall provisioning, billing lifecycle, retention/deletion, cross-hall reporting,
 and other platform-specific operations.
 
+## Portal Integration Boundary
+
+ADR-035 adds the existing Laravel Bingo Innovation Portal as the authority for
+Hall identity, Game Type identity/configuration, and operational Session-template
+identity. BingoCommerce remains the authority for WooCommerce/catalog commerce,
+commerce schedules and structured time, exact dated occurrences, Package
+availability, sales eligibility, checkout/orders/payments, and future
+entitlement state.
+
+Within the single authoritative Bingo Innovation Portal environment, stable
+mappings use `halls.id` <-> WordPress Site ID and `game_types.id` <-> a hall-
+scoped BingoCommerce Game Type replica; `bingo_sessions.id` identifies the
+operational Session template. Names/domains are never cross-system identities.
+`device_group_id` and XML-generated GameGroup identifiers are never
+BingoCommerce integration identities. Portal Game Types may be created and
+renamed, with rename preserving `game_types.id`; deletion is prohibited once
+created, and Portal Archive/Restore is not required in v1.
+
+Only owned Sessions satisfying
+`bingo_sessions.hall_id == mapped halls.id` are v1 sync candidates;
+received/shared Sessions and `allSessions()` semantics are excluded. Portal
+Session `days` are independent from Commerce scheduling and must not drive it,
+generate occurrences, or constrain/validate it in v1. Future advisory
+validation requires a separately approved requirement.
+
+The Session model separates Portal template, BingoCommerce commerce schedule,
+and BingoCommerce dated occurrence. Orders eventually reference the exact dated
+occurrence. Structured Commerce time belongs to BingoCommerce and may be entered
+manually by the Hall Manager in v1; time is never parsed from display names.
+One Package may be assigned to multiple dated commerce occurrences. The
+existing Game Type and Session schemas remain unchanged until a schema-specific
+compatibility/refactoring review.
+
+Approved delivery order is authenticated Portal read API, full pull, proven
+idempotent mapping, webhooks, reconciliation, tenant provisioning, then SSO.
+No protocol, persistence, or implementation is selected by this architecture
+summary. `Enable BingoCommerce` is a separate Portal Global Admin-only platform
+capability. See `docs/architecture/portal-integration-architecture.md`.
+
 ## Data Architecture
 - Each hall has site-scoped products, orders, WooCommerce settings, and
   hall-specific commerce/customer records.
@@ -66,30 +105,36 @@ and other platform-specific operations.
   last staff actor — BR-010). A Paper-only Bingo Package never creates a
   ticket row; Digital and Hybrid/Combo packages create exactly one, covering
   the digital entitlement only (BR-044, ADR-030).
-- Catalog/Session persistence (ADR-031): WooCommerce products are commerce
-  shells, while BingoCommerce owns the authoritative relational domain in seven
+- Catalog/Session persistence (ADR-031, narrowed by ADR-035): WooCommerce
+  products are commerce shells, while BingoCommerce owns the relational local
+  commerce domain in seven
   per-site custom tables: `bingo_game_types`, `bingo_play_products`,
   `bingo_packages`, `bingo_package_components`, `bingo_package_addons`,
   `bingo_sessions`, and `bingo_session_packages`, each appended to
-  `$wpdb->prefix`. Game Type, Bingo Play Product, Package, and Session use
-  surrogate domain IDs; linked WooCommerce product IDs are unique mappings.
+  `$wpdb->prefix`. Game Type, Bingo Play Product, Package, and Session use local
+  surrogate domain IDs; Portal `game_types.id` is the trusted cross-
+  system Game Type identity, and the local Game Type row becomes its hall-scoped
+  replica. Linked WooCommerce product IDs are unique mappings.
   One WooCommerce product ID cannot be linked simultaneously as a Package and
   Bingo Play Product. ADR-032 serializes that exclusivity through the narrow
   Catalog critical-serialization transport, using the current-site Woo product
   row as the shared anchor; standalone cross-table check-then-insert remains
   prohibited. Play Product/Game Type reference creation and future Game Type
-  hard delete serialize on the Game Type row, although hard delete remains
-  deferred. WooCommerce CRUD and projection writes remain outside the critical
+  hard delete serialize on the Game Type row under the existing local design,
+  although hard delete remains disabled and is transitional—not a Portal v1
+  lifecycle feature. WooCommerce CRUD and projection writes remain outside the critical
   transaction. Detailed conceptual columns, indexes, relationships, and rules
   are in `docs/architecture/catalog-session-persistence-design.md`.
-- Bingo Catalog domain (BR-037/BR-039/BR-040/BR-061/BR-062, ADR-026/ADR-031):
+- Bingo Catalog domain (BR-037/BR-039/BR-040/BR-061/BR-062/BR-071/BR-072,
+  ADR-026/ADR-031/ADR-035):
   Game Type, Bingo Play Product metadata, and Package/component/add-on
   definitions are never inferred from a WooCommerce title, SKU, tag, or
-  category. Game Type has an immutable machine code separate from its editable
-  name. The linked Package product's native WooCommerce price is the Package
-  base-price authority; the Package/add-on relationship owns its unit price and
-  maximum quantity. Package type is validated from base components only;
-  optional add-ons do not change it.
+  category. Portal owns Game Type identity/configuration and Portal
+  `game_types.id` is cross-system identity; the local surrogate and machine code
+  remain internal compatibility identifiers. The linked Package product's native
+  WooCommerce price is the Package base-price authority; the Package/add-on
+  relationship owns its unit price and maximum quantity. Package type is
+  validated from base components only; optional add-ons do not change it.
 - BR-032 product metadata projection (BR-065/ADR-031): `bc_product_kind` and
   `bc_package_relation` are derived compatibility/cart-enforcement projections,
   not Catalog authorities. `PackageService`, `PackageAddonService`, and
@@ -100,11 +145,16 @@ and other platform-specific operations.
   Catalog rows and WooCommerce metadata, and ADR-025 does not automatically
   apply. The initial model uses indexed logical relationships with restrictive
   service validation, not database cascades/physical foreign keys.
-- Session domain (BR-041, ADR-028, BR-050–BR-052, BR-063): Session is hall-owned/per-site; tenant
-  context + Session ID is the canonical identity. No network-wide Session
-  registry is required in v1. Sessions no longer carry a capacity counter.
-  A Session has an exact calendar date; display-name time is a label only and
-  does not drive automatic logic (BR-050). For Session date `D`, storefront
+- Session domain (BR-041, ADR-028, BR-050–BR-052, BR-063, BR-073, ADR-035):
+  Portal `bingo_sessions.id` identifies the Portal-owned operational template.
+  Only templates satisfying `bingo_sessions.hall_id == mapped halls.id` are
+  sync-eligible. BingoCommerce
+  owns a separate commerce schedule and exact dated occurrences; the local
+  occurrence identity remains hall-scoped/per-site. Sessions/occurrences no
+  longer carry a capacity counter. The portal-integrated schedule has structured
+  commerce time, which may be entered manually by the Hall Manager in v1, while
+  display-name time remains a label that never drives automatic logic. One
+  Package may be assigned to multiple occurrences. For occurrence date `D`, storefront
   date eligibility is inclusive:
   `D - 5 calendar days <= hall_local_today <= D`, using the hall site's
   configured WordPress timezone, and Available for Sale must also be ON
@@ -129,9 +179,10 @@ and other platform-specific operations.
   mechanism — see ADR-028); exact schema is a later technical-design
   decision. Do not hardcode a WooCommerce order-status name as the
   business activation rule.
-- Redemption accumulation (BR-045, BR-055, ADR-030): scoped by hall/tenant + session_id
-  + Android caller_id + Game Type; multiple valid Digital Packages for the same
-  Session may redeem onto the same tablet and accumulate independently by Game
+- Redemption accumulation (BR-045, BR-055, BR-073, ADR-030/ADR-035): scoped by
+  hall/tenant + exact dated commerce occurrence (`session_id` in the current
+  model) + Android caller_id + Game Type; multiple valid Digital Packages for the same
+  occurrence may redeem onto the same tablet and accumulate independently by Game
   Type. An incoming Package/receipt is accepted or rejected as a whole against
   the effective electronic limit — no partial redemption. A Session starting
   does not automatically expire a valid QR (BR-056).
@@ -215,3 +266,8 @@ Must explicitly support (confirm before committing to a provider, don't assume):
 - Object storage provider (AWS S3 vs. Cloudflare R2 vs. other)
 - Overall hosting provider
 - Parent domain name
+- Portal integration mapping persistence, Portal API/webhook contracts and
+  authentication, reconciliation policy, commerce recurrence/timezone/DST
+  behavior, enablement/provisioning lifecycle, and SSO security protocol
+- Schema-specific compatibility/refactoring plan for existing Game Type and
+  Session persistence; do not assume destructive replacement

@@ -937,12 +937,22 @@
 ---
 
 ## In Progress
+- **[2026-09-03] Portal integration architecture documentation drafted for
+  review (documentation-only; not committed).** ADR-035 and BR-071 through
+  BR-075 record the approved Portal/BingoCommerce authority split, stable Hall
+  and Game Type identities, Portal-template / commerce-schedule / dated-
+  occurrence model, sync ordering, Portal Global Admin-only commerce
+  enablement, SSO boundary, and v1 exclusions. Existing Game Type and Session
+  implementations remain unchanged pending schema-specific compatibility
+  review. No code, schema, migration, API, webhook, provisioning, or SSO work
+  was performed. The post-draft consistency corrections are applied and await
+  final architecture review.
 - No Hall Staff Management work currently in progress.
 - No Catalog or Session implementation work currently in progress. Package
   Increment 1 and Session Increment 1 are both COMPLETE and are recorded under
   Done.
-- The next demo-critical-path item is the Jim/backend business review, which is
-  a review activity rather than an implementation slice.
+- The approved Jim/backend Portal-integration decisions are now documented;
+  architecture review of the uncommitted documentation is the next checkpoint.
 
 ---
 
@@ -952,31 +962,36 @@
 2. **Session Increment 1** — **COMPLETE.** Implemented, source reviewed,
    automated-verified (343/343) and interactively verified in wp-admin on a
    Network Active plugin, including tenant isolation and Game Operator denial.
-3. **NEXT: Jim / backend business review** — business confirmation of the
-   Woo Product -> Bingo Play Product -> Bingo Package -> Session flow. This is a
-   review activity, not an implementation slice. No checkout, capacity, QR,
-   entitlement, add-ons or storefront work starts before it.
+3. **NEXT: Portal integration architecture review** — review ADR-035,
+   BR-071–BR-075, and the linked architecture/current-state updates. No Portal
+   API, webhook, synchronization, provisioning, SSO, schema refactor, checkout,
+   capacity, QR, entitlement, add-on, or storefront work starts from this
+   documentation task.
 
 Everything below is tracked work that is NOT a blocker to that demo.
 
 ## Before Customer-Facing Digital Launch
-1. The BR-066 storefront mechanism that enforces Bingo Play Product
+1. Portal integration implementation designs and reviewed delivery increments:
+   authenticated read API; full pull/idempotent mapping; webhooks;
+   reconciliation; and tenant provisioning. The schema-specific Game Type/
+   Session compatibility review precedes any migration or writer change. SSO
+   remains a later integration phase and is not a customer-launch prerequisite.
+2. The BR-066 storefront mechanism that enforces Bingo Play Product
    non-purchasability. Deferred by decision; requires a new reviewed entry
    before any implementer selects a mechanism.
-2. Package add-ons: `PackageAddonService`, `bingo_package_addons`, BR-062's
+3. Package add-ons: `PackageAddonService`, `bingo_package_addons`, BR-062's
    quantity ceiling, and the BR-065 `bc_package_relation` projection. This is a
    SEPARATE concern from the Package base writer and must not be folded into it
    without its own approved slice.
-3. Checkout electronic-limit enforcement (BR-042) and redemption accumulation
+4. Checkout electronic-limit enforcement (BR-042) and redemption accumulation
    (BR-045), including the effective-limit resolver (BR-038, BR-064).
-4. Entitlement snapshot (BR-043, ADR-029), QR issuance (BR-044) and Android
+5. Entitlement snapshot (BR-043, ADR-029), QR issuance (BR-044) and Android
    redemption (ADR-030).
-5. Exact WooCommerce successful-payment hook/status mapping for BR-053
+6. Exact WooCommerce successful-payment hook/status mapping for BR-053
    entitlement activation. The business rule is resolved; only the integration
    mapping is open.
-6. Coordinated starter-catalog copy at provisioning (BR-047, ADR-027).
-7. Game Type hard delete, which stays disabled until its complete
-   reference-writer/delete contract and concurrency tests exist (ADR-032).
+7. Coordinated starter-product catalog copy at provisioning (BR-047, ADR-027);
+   Game Types instead follow ADR-035 synchronization.
 8. Package hard delete, including BR-065's mandatory linked-product
    disposition. No hard delete exists in any Catalog entity today.
 

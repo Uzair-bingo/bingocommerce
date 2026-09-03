@@ -19,11 +19,13 @@ alwaysApply: false
 
 - Use WooCommerce product types (simple, variable) for physical goods and for
   Bingo Play Products (BR-039).
-- Game Type, Bingo Play Product metadata (Medium, Faces per unit, Game Type
-  reference), and Bingo Package definitions/components/add-on eligibility are
-  authoritative BingoCommerce-owned structured domain data (BR-037/BR-039/
-  BR-040/BR-061/BR-062, ADR-026/ADR-031). Runtime logic must never infer them
-  from a WooCommerce product title, SKU, tag, category, or naming convention.
+- Portal owns Game Type identity/configuration, keyed across systems by Portal
+  `game_types.id`; BingoCommerce retains a hall-scoped local Game Type replica.
+  Bingo Play Product metadata (Medium, Faces per unit, Game Type reference) and
+  Bingo Package definitions/components/add-on eligibility remain authoritative
+  BingoCommerce-owned structured domain data (BR-037/BR-039/BR-040/BR-061/
+  BR-062/BR-071/BR-072, ADR-026/ADR-031/ADR-035). Runtime logic must never infer
+  them from a WooCommerce product title, SKU, tag, category, or naming convention.
   ADR-031's per-site Catalog tables are authoritative; linked WooCommerce
   products are commerce shells. A WooCommerce product ID must not be linked
   simultaneously as a Package and Bingo Play Product. Enforcement must be
@@ -69,6 +71,17 @@ alwaysApply: false
   but confirmed after the calendar/availability boundary; that gateway race
   belongs to the later checkout/payment integration design. BR-053 remains in
   force: successful online payment confirmation activates entitlement.
+- For Portal-integrated commerce, the selectable Session is the exact
+  BingoCommerce dated occurrence generated from a BingoCommerce commerce
+  schedule linked to a Portal-owned Session template (BR-073/ADR-035). Portal
+  Session `days` must not drive Commerce scheduling, generate occurrences, or
+  constrain/validate Commerce scheduling in v1; later advisory validation
+  requires a separately approved requirement. Received/shared Sessions are
+  excluded. The schedule requires structured Commerce time, which a Hall
+  Manager may enter manually in v1; display-name text remains non-authoritative.
+  One Package may be assigned to multiple dated occurrences. Existing Session
+  persistence stays unchanged until its compatibility/refactoring review is
+  approved.
 - At most one Bingo Package per checkout, plus its eligible add-ons and any
   ordinary merchandise (BR-032, BR-040) — never more than one package.
 - Final Package identity and Package/add-on eligibility checks use authoritative

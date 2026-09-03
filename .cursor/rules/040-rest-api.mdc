@@ -33,6 +33,23 @@ alwaysApply: false
 - NEVER build custom API-key auth systems for machine clients (ADR-011 /
   anti-pattern list).
 
+## Portal Integration (ADR-035)
+
+- The approved sequence is authenticated Portal read API, initial/full pull,
+  proven idempotent Hall/Game-Type/Session-template mapping, then Portal
+  webhooks and reconciliation. Do not implement or skip ahead to webhooks
+  before the pull/mapping increment is proven.
+- Portal endpoint paths, credentials, payloads, webhook signatures, replay/
+  ordering/retry rules, and reconciliation contracts are deferred. ADR-035 does
+  not authorize inventing them. ADR-011 still governs any future
+  BingoCommerce-owned REST endpoint.
+- Only Sessions satisfying `bingo_sessions.hall_id == mapped halls.id` are
+  eligible. Do not use an `allSessions()`-equivalent source; received/shared
+  Sessions are excluded from v1 Commerce sync. Portal Session `days` must not
+  drive scheduling, generate occurrences, or constrain/validate Commerce
+  scheduling in v1; later advisory validation requires a separately approved
+  requirement.
+
 ## Android Device API (QR redemption)
 
 - `caller_id` is unique per tablet and is BingoCommerce's confirmed tablet
