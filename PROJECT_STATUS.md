@@ -934,25 +934,24 @@
     assertions are **5 / 5 PASS**, with zero cleanup failures. One residue-only
     detection remains: Tampa Game Type `#39 "PPI1 Tampa Only 89AUU"` has
     unproven ownership, was not deleted, and is **not** a functional failure.
+- **[2026-09-03] Phase 3B Portal mapping/config foundation — COMPLETE.**
+  Introduced the network-only `bingocommerce-portal-integration` plugin, the
+  one-to-one Portal Hall/WordPress site mapping, and the server-only Portal
+  configuration abstraction. The focused Phase 3B harness passes 73/73
+  assertions. No Portal HTTP client/call, Game Type or Session replica schema
+  change, sync/import, webhook, scheduler, SSO, provisioning, or WP-CLI was
+  added.
 ---
 
 ## In Progress
-- **[2026-09-03] Portal integration architecture documentation drafted for
-  review (documentation-only; not committed).** ADR-035 and BR-071 through
-  BR-075 record the approved Portal/BingoCommerce authority split, stable Hall
-  and Game Type identities, Portal-template / commerce-schedule / dated-
-  occurrence model, sync ordering, Portal Global Admin-only commerce
-  enablement, SSO boundary, and v1 exclusions. Existing Game Type and Session
-  implementations remain unchanged pending schema-specific compatibility
-  review. No code, schema, migration, API, webhook, provisioning, or SSO work
-  was performed. The post-draft consistency corrections are applied and await
-  final architecture review.
+- **NEXT: Phase 3C — local replica persistence design/implementation.** This
+  phase is not implemented. Its scope is limited to Portal Game Type identity
+  support in the existing per-site Game Type domain and separate per-site
+  Portal Session-template replica persistence.
 - No Hall Staff Management work currently in progress.
 - No Catalog or Session implementation work currently in progress. Package
   Increment 1 and Session Increment 1 are both COMPLETE and are recorded under
   Done.
-- The approved Jim/backend Portal-integration decisions are now documented;
-  architecture review of the uncommitted documentation is the next checkpoint.
 
 ---
 
@@ -962,11 +961,10 @@
 2. **Session Increment 1** — **COMPLETE.** Implemented, source reviewed,
    automated-verified (343/343) and interactively verified in wp-admin on a
    Network Active plugin, including tenant isolation and Game Operator denial.
-3. **NEXT: Portal integration architecture review** — review ADR-035,
-   BR-071–BR-075, and the linked architecture/current-state updates. No Portal
-   API, webhook, synchronization, provisioning, SSO, schema refactor, checkout,
-   capacity, QR, entitlement, add-on, or storefront work starts from this
-   documentation task.
+3. **NEXT: Phase 3C — local replica persistence design/implementation** —
+   limited to Portal Game Type identity support in the existing per-site Game
+   Type domain and separate per-site Portal Session-template replica
+   persistence. Phase 3C is not implemented.
 
 Everything below is tracked work that is NOT a blocker to that demo.
 
@@ -1107,7 +1105,9 @@ Everything below is tracked work that is NOT a blocker to that demo.
 - **Local mail:** SMTP configured and verified for WordPress staff invitation/password setup testing
 - **Custom code:** `wp-content/plugins/bingocommerce-core/`,
   `wp-content/plugins/bingocommerce-catalog/` and
-  `wp-content/plugins/bingocommerce-sessions/` (all three Network Active)
+  `wp-content/plugins/bingocommerce-sessions/` (all three Network Active);
+  `wp-content/plugins/bingocommerce-portal-integration/` is the Phase 3B
+  foundation (declared network-only)
 - **Catalog schema:** per-site `bc_catalog_db_version` = 3
   (`bingo_game_types`, `bingo_play_products`, `bingo_packages`,
   `bingo_package_components`)
