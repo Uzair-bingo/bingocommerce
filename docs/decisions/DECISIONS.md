@@ -895,6 +895,39 @@ runtime behavior without making names or hardware identifiers authoritative.
 Deferring schema and protocol choices prevents this authority decision from
 destructively predetermining the compatibility work.
 
+- **ADR-036 — [2026-09-04] — Portal Hall Snapshot Transport URL Contract:**
+
+`BINGOCOMMERCE_PORTAL_BASE_URL` is the Portal application root URL. It MAY
+include the Portal application's deployment subpath, but MUST NOT include the
+`/integration` API prefix. For example, `https://portal.example.com` and
+`https://example.com/portal` are valid application-root forms. The
+`PortalHttpClient` appends the fixed, versioned Hall snapshot path:
+
+```text
+/integration/v1/halls/{portalHallId}/snapshot
+```
+
+The configured base URL is not automatically stripped or otherwise corrected
+when misconfigured. Portal credentials remain server-side and are sent only in
+the HTTP `Authorization` header, never in the URL, path, query string, or
+request body.
+
+This decision covers only Phase 3D1 transport URL semantics and credential
+placement. It does not authorize snapshot decoding or validation, persistence,
+synchronization/import, webhooks, SSO, or provisioning.
+
+**Relationship to earlier decisions.** This entry resolves only ADR-035's
+previously deferred endpoint-path question for the Portal Hall snapshot
+transport. ADR-035's historical deferral was correct when recorded, and all
+other authority, identity, sequencing, tenant-isolation, and future-phase
+boundaries remain unchanged.
+
+*Rationale:* Treating the configured value as the application root supports
+both root deployments and explicit deployment subpaths while assigning the
+versioned integration route to the client that owns that operation. Excluding
+the API prefix prevents ambiguous or duplicated paths such as
+`/integration/integration/v1/...`.
+
 
 ---
 

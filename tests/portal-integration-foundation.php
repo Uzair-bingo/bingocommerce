@@ -130,7 +130,7 @@ final class PortalIntegrationFoundationTest {
 		if ( ! defined( 'BINGOCOMMERCE_PORTAL_BASE_URL' ) ) {
 			$missing = PortalConfig::fromConstants();
 			$this->assert_error( 'portal_base_url_missing', $missing, 'missing Portal base URL fails closed' );
-			define( 'BINGOCOMMERCE_PORTAL_BASE_URL', 'http://portal.bingocommerce.test/integration/' );
+			define( 'BINGOCOMMERCE_PORTAL_BASE_URL', 'http://portal.bingocommerce.test/root/' );
 		}
 
 		if ( ! defined( 'BINGOCOMMERCE_PORTAL_INTEGRATION_TOKEN' ) ) {
@@ -301,6 +301,7 @@ final class PortalIntegrationFoundationTest {
 				'bingo_package_addons',
 				'bingo_sessions',
 				'bingo_session_packages',
+				'bingo_portal_session_templates',
 			]
 		);
 	}
@@ -338,6 +339,7 @@ final class PortalIntegrationFoundationTest {
 			'bingo_package_addons'      => 'package_addon_id',
 			'bingo_sessions'            => 'session_id',
 			'bingo_session_packages'    => 'session_package_id',
+			'bingo_portal_session_templates' => 'session_template_id',
 		];
 
 		foreach ( $keys as $suffix => $primary_key ) {
@@ -379,7 +381,7 @@ final class PortalIntegrationFoundationTest {
 			$wpdb->delete( Migrations::hall_mappings_table(), [ 'blog_id' => $site_id ], [ '%d' ] );
 			wp_delete_site( $site_id );
 
-			$allowed = '/^' . preg_quote( $wpdb->base_prefix, '/' ) . $site_id . '_bingo_(game_types|play_products|packages|package_components|package_addons|sessions|session_packages)$/';
+			$allowed = '/^' . preg_quote( $wpdb->base_prefix, '/' ) . $site_id . '_bingo_(game_types|play_products|packages|package_components|package_addons|sessions|session_packages|portal_session_templates)$/';
 			foreach ( $this->disposable_tables[ $site_id ] ?? [] as $table ) {
 				if ( 1 === preg_match( $allowed, $table ) ) {
 					$wpdb->query( "DROP TABLE IF EXISTS `{$table}`" );

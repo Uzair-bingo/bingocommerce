@@ -18,6 +18,7 @@ define( 'BINGOCOMMERCE_PORTAL_INTEGRATION_PATH', plugin_dir_path( __FILE__ ) );
 require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/Migrations.php';
 require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/HallMappingRepository.php';
 require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/PortalConfig.php';
+require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/PortalHttpClient.php';
 require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/Plugin.php';
 
 BingoCommerce\PortalIntegration\Plugin::boot();

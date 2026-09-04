@@ -1,10 +1,12 @@
 # Portal Integration Architecture
 
-Status: approved authority and boundary decision; implementation not started.
+Status: approved authority and boundary decision; implementation proceeds in
+reviewed increments tracked in `PROJECT_STATUS.md`.
 
 This document expands ADR-035 and BR-071 through BR-075. It defines the
 integration boundary between the existing Laravel Bingo Innovation Portal and
-the WordPress Multisite/WooCommerce BingoCommerce platform. It is not an API,
+the WordPress Multisite/WooCommerce BingoCommerce platform. Except for
+ADR-036's narrow Hall snapshot transport URL contract, it is not an API,
 webhook, persistence, provisioning, or SSO implementation design.
 
 All Portal identities below belong to the single authoritative Bingo Innovation
@@ -46,8 +48,11 @@ Portal halls.id <-> WordPress Site ID
 ```
 
 Names and domains are editable routing/display attributes. They are not trusted
-integration identity. The persistence and provisioning lifecycle for this
-mapping are deferred.
+integration identity. Phase 3B implements the one-to-one Portal Hall ID / Site
+ID persistence foundation through the network-wide
+`bingo_portal_hall_mappings` table and its mapping repository. Tenant
+provisioning and enablement lifecycles, plus reconciliation/recovery behavior
+beyond that mapping foundation, remain deferred.
 
 ### Game Type
 
@@ -64,7 +69,9 @@ BingoCommerce retains its existing hall-scoped Game Type domain as a local
 commerce replica. The replica may keep its local surrogate ID and machine code
 for internal relationships and implementation compatibility, but it must be
 linked to Portal `game_types.id` and must not present either local value or the
-editable name as cross-system identity.
+editable name as cross-system identity. Phase 3C1 implements that replica link
+as nullable, unique `bingo_game_types.portal_game_type_id`. It does not
+implement synchronization or import.
 
 Existing local create, rename, archive, restore, and currently disabled hard-
 delete behavior remains in place during the transition. It is transitional
@@ -129,6 +136,11 @@ bingo_sessions.hall_id == mapped halls.id
 This expresses the authority boundary; it does not select an API query or a
 storage schema.
 
+Phase 3C2 implements separate hall-local Portal Session-template replica
+persistence in `bingo_portal_session_templates`. This non-destructive
+persistence foundation does not implement snapshot application/import or
+conflate Portal templates with existing dated Commerce Sessions.
+
 Portal Session `days` are independent from BingoCommerce Commerce scheduling in
 v1. They MUST NOT drive Commerce scheduling, generate Commerce occurrences, or
 constrain or validate Commerce scheduling. Future advisory validation between
@@ -156,10 +168,11 @@ The approved authority split is not permission for destructive refactoring.
 
 - Packages are retained and remain BingoCommerce-authoritative.
 - Bingo Play Products are retained and remain BingoCommerce-authoritative.
-- The existing local Game Type domain is retained and transitions toward a
-  synchronized local replica.
-- The existing Session implementation is retained pending a schema-specific
-  compatibility/refactoring review.
+- The existing local Game Type domain is retained, with its Phase 3C1 Portal
+  identity link in place; synchronization remains a later phase.
+- The initial compatibility review produced Phase 3C2's separate Portal
+  Session-template replica table without replacing the existing dated Commerce
+  Session implementation.
 - Existing Package-to-Session assignment work is preserved wherever it can map
   safely to Package-to-dated-occurrence availability.
 - One Package may be assigned to multiple dated commerce occurrences; no one-
@@ -169,13 +182,34 @@ The approved authority split is not permission for destructive refactoring.
 - Existing Catalog concurrency transports and lock-order decisions remain
   unchanged; this document authorizes no new database transport.
 
-The compatibility review must evaluate the implemented `bingo_game_types`,
-`bingo_sessions`, and `bingo_session_packages` shapes against Portal identity,
-commerce schedule, and dated-occurrence needs before any schema or writer change
-is proposed. It must preserve historical identities and relationships and must
-not assume the existing Session table is deleted or replaced.
+The initial compatibility review produced the approved, non-destructive Phase
+3C1 Game Type identity link and Phase 3C2 Session-template replica persistence.
+Existing dated Commerce Sessions and `bingo_session_packages` relationships
+remain preserved. Any future commerce-schedule or dated-occurrence refactor
+still requires a separate reviewed compatibility design that preserves
+historical identities and relationships and does not assume the existing
+Session table is deleted or replaced.
 
 ## 5. Synchronization Architecture and Sequence
+
+### Phase 3D1 Hall snapshot transport URL
+
+ADR-036 defines `BINGOCOMMERCE_PORTAL_BASE_URL` as the Portal application root
+URL. It may include the application's deployment subpath, but it must not
+include the `/integration` API prefix. `PortalHttpClient` owns and appends the
+fixed Hall snapshot path:
+
+```text
+/integration/v1/halls/{portalHallId}/snapshot
+```
+
+For example, `https://portal.example.com` produces
+`https://portal.example.com/integration/v1/halls/42/snapshot`, while
+`https://example.com/portal` produces
+`https://example.com/portal/integration/v1/halls/42/snapshot`. Credentials
+remain server-side and are carried only in the HTTP `Authorization` header.
+This contract does not authorize snapshot validation, persistence,
+synchronization/import, webhooks, SSO, or provisioning.
 
 Approved shape:
 
@@ -203,12 +237,15 @@ The first implementation design must not skip directly to webhooks. Full pull
 and idempotent mapping establish the recovery baseline that later webhook and
 reconciliation work depend on.
 
-The following details remain undecided until their dedicated reviews:
+Except for ADR-036's Hall snapshot transport URL and header-only credential
+placement, the following details remain undecided until their dedicated
+reviews:
 
-- Portal API authentication and authorization mechanism;
-- endpoint paths, versions, filters, pagination, and payloads;
+- Portal API authentication and authorization lifecycle;
+- other endpoint paths, versions, filters, pagination, and payloads;
 - webhook event types, signatures, ordering, retry, replay, and delivery logs;
-- local mapping tables/columns, sync cursors, and reconciliation state;
+- any additional sync-state/cursor persistence, reconciliation state, and
+  future snapshot-application/import writer details;
 - conflict policy for transitional local Game Type changes;
 - provisioning lifecycle and rollback/recovery;
 - recurrence expansion horizon, regeneration, timezone, daylight-saving, and

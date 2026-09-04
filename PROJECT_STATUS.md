@@ -960,12 +960,21 @@
   separate BingoCommerce-owned configuration; no selection configuration or UI
   is implemented in Phase 3C2. The focused Phase 3C2 harness passes 98/98
   assertions, and Session Increment 1 passes 344/344 assertions on schema v2.
-  Portal `updated_at` validation/normalization and any `portal_updated_at`
-  persistence decision remain deferred to Phase 3D snapshot validation/import.
+  Portal `updated_at` validation/normalization remains deferred to Phase 3D2;
+  any `portal_updated_at` persistence decision remains deferred to Phase 3E
+  snapshot application/import.
   No Portal HTTP client/call, import, reconciliation, webhook, or scheduler was
   added.
-- **NEXT Portal-integration checkpoint: Phase 3D — Portal HTTP client + strict
-  snapshot validation.** Phase 3D is not implemented.
+- **Phase 3D1 — Portal HTTP transport: COMPLETE.** ADR-036 defines the Portal
+  base URL as the application root, permits an optional deployment subpath,
+  and excludes the `/integration` API prefix. The server-only
+  `PortalHttpClient` appends `/integration/v1/halls/{id}/snapshot`, performs a
+  blocking, read-only GET, and does not follow redirects. The focused harness
+  passes 67/67 assertions. No snapshot validation or Portal data import/write
+  exists yet.
+- **NEXT Portal-integration checkpoint: Phase 3D2 — strict Portal snapshot
+  validation.** Phase 3D2 is not implemented, and overall Phase 3D is not
+  complete. Snapshot application/import is Phase 3E and is not implemented.
 - No Hall Staff Management work currently in progress.
 - No other Catalog or Session implementation work is in progress. Package
   Increment 1 and Session Increment 1 remain COMPLETE and are recorded under
@@ -980,17 +989,24 @@
    automated-verified (344/344) and interactively verified in wp-admin on a
    Network Active plugin, including tenant isolation and Game Operator denial.
 3. **Phase 3C1 — Portal Game Type identity persistence: COMPLETE. Phase 3C2 —
-   Portal Session-template replica persistence: COMPLETE.** The next checkpoint
-   is **Phase 3D — Portal HTTP client + strict snapshot validation**, which is
-   not implemented. Commerce selection remains separate and is not implemented.
+   Portal Session-template replica persistence: COMPLETE. Phase 3D1 — Portal
+   HTTP transport: COMPLETE.** The next checkpoint is **Phase 3D2 — strict
+   Portal snapshot validation**, which is not implemented; overall Phase 3D is
+   not complete. Snapshot application/import remains Phase 3E. Commerce
+   selection remains separate and is not implemented.
 
 Everything below is tracked work that is NOT a blocker to that demo.
 
 ## Before Customer-Facing Digital Launch
-1. Portal integration implementation designs and reviewed delivery increments:
-   authenticated read API; full pull/idempotent mapping; webhooks;
-   reconciliation; and tenant provisioning. The schema-specific Game Type/
-   Session compatibility review precedes any migration or writer change. SSO
+1. Complete the remaining Portal integration delivery increments. Phase 3B
+   Hall mapping/config, Phase 3C1 Game Type identity persistence, Phase 3C2
+   Session-template replica persistence, and Phase 3D1 read-only HTTP transport
+   are complete. Remaining work begins with Phase 3D2 strict snapshot
+   validation, followed by Phase 3E snapshot application/full-pull idempotent
+   synchronization, followed by a separate second-mapped-Hall tenant-isolation
+   proof, then the separately reviewed webhook, reconciliation, and tenant-
+   provisioning increments. Any further Game Type/Session schema or writer
+   change requires its own reviewed compatibility/application design. SSO
    remains a later integration phase and is not a customer-launch prerequisite.
 2. The BR-066 storefront mechanism that enforces Bingo Play Product
    non-purchasability. Deferred by decision; requires a new reviewed entry
@@ -1093,14 +1109,19 @@ Everything below is tracked work that is NOT a blocker to that demo.
   §"Catalog lock-order review" is accurate as written. ADR-033 locks
   `bingo_packages` then `bingo_play_products` ascending, and locks no component
   rows at all.
-- Latest run: Session Increment 1 **344/344 PASS**; Package Stage B **258/258
-  PASS**; Package Stage A **313/313 PASS**; Game Type **164/164 PASS**. The
-  Play Product suite reports **461/461 functional/regression assertions PASS**
-  with zero functional/regression failures; the selector regression passes;
-  and current-run disposable-hall cleanup reports **5/5 PASS** with zero cleanup
-  failures. Tampa Game Type `#39 "PPI1 Tampa Only 89AUU"` remains an unproven,
-  undeleted residue detection only, not a functional failure. The persistent
-  Sunrise protected-row snapshot was byte-identical before and after the run.
+- Latest verified results: Phase 3D1 Portal HTTP transport **67/67 PASS**; Phase
+  3B Portal integration foundation regression **75/75 PASS**; Phase 3C2 Portal
+  Session-template replica persistence **98/98 PASS**; Phase 3C1 Portal Game
+  Type identity persistence **66/66 PASS**; Session Increment 1 **344/344
+  PASS**; Package Stage B **258/258 PASS**; Package Stage A **313/313 PASS**;
+  Game Type **164/164 PASS**. The Play Product suite reports **461/461
+  functional/regression assertions PASS** with zero functional/regression
+  failures; the selector
+  regression passes; and current-run disposable-hall cleanup reports **5/5
+  PASS** with zero cleanup failures. Tampa Game Type `#39 "PPI1 Tampa Only
+  89AUU"` remains an unproven, undeleted residue detection only, not a
+  functional failure. The persistent Sunrise protected-row snapshot was
+  byte-identical before and after the run.
 
 ---
 
@@ -1124,8 +1145,10 @@ Everything below is tracked work that is NOT a blocker to that demo.
 - **Custom code:** `wp-content/plugins/bingocommerce-core/`,
   `wp-content/plugins/bingocommerce-catalog/` and
   `wp-content/plugins/bingocommerce-sessions/` (all three Network Active);
-  `wp-content/plugins/bingocommerce-portal-integration/` is the Phase 3B
-  foundation (declared network-only)
+  `wp-content/plugins/bingocommerce-portal-integration/` is declared
+  network-only and contains the Phase 3B Hall mapping/config foundation plus
+  the Phase 3D1 read-only Portal HTTP transport; Phase 3D2 strict snapshot
+  validation and Phase 3E snapshot application/import are not implemented
 - **Catalog schema:** per-site `bc_catalog_db_version` = 4
   (`bingo_game_types`, `bingo_play_products`, `bingo_packages`,
   `bingo_package_components`); v4 adds nullable, unique
