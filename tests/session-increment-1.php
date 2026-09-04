@@ -166,18 +166,19 @@ final class SessionIncrementOneTest {
 		global $wpdb;
 		$this->group( 'A. Migration' );
 
-		$this->same( 1, Migrations::DB_VERSION, 'Session DB_VERSION is 1' );
+		$this->same( 2, Migrations::DB_VERSION, 'Session DB_VERSION is 2' );
 		$this->same( 'bc_sessions_db_version', Migrations::VERSION_OPTION, 'the per-site version option is bc_sessions_db_version' );
 
 		// Sessions must NOT live in the Catalog migration.
 		$catalog = file_get_contents( dirname( __DIR__ ) . '/wp-content/plugins/bingocommerce-catalog/src/Migrations.php' );
 		$this->ok( false === strpos( (string) $catalog, 'bingo_sessions' ), 'Catalog\\Migrations does not own bingo_sessions' );
 		$this->ok( false === strpos( (string) $catalog, 'bingo_session_packages' ), 'Catalog\\Migrations does not own bingo_session_packages' );
+		$this->ok( false === strpos( (string) $catalog, 'bingo_portal_session_templates' ), 'Catalog\\Migrations does not own bingo_portal_session_templates' );
 
 		foreach ( [ self::SUNRISE, self::TAMPA, self::ORLANDO ] as $site_id ) {
 			switch_to_blog( $site_id );
 			$this->ok( true === Migrations::migrate_current_site(), "persistent hall {$site_id} migrates" );
-			$this->same( 1, (int) get_option( Migrations::VERSION_OPTION ), "hall {$site_id} records version 1" );
+			$this->same( 2, (int) get_option( Migrations::VERSION_OPTION ), "hall {$site_id} records version 2" );
 			$this->ok( true === Migrations::verify_current_site_schema(), "hall {$site_id} schema verifies" );
 			$this->ok( true === Migrations::migrate_current_site(), "hall {$site_id} rerun is idempotent" );
 			restore_current_blog();
@@ -186,7 +187,7 @@ final class SessionIncrementOneTest {
 		// New-hall provisioning happened automatically when the disposable hall
 		// was created through wp_insert_site().
 		switch_to_blog( $hall );
-		$this->same( 1, (int) get_option( Migrations::VERSION_OPTION, 0 ), 'a newly created hall provisions to version 1 automatically' );
+		$this->same( 2, (int) get_option( Migrations::VERSION_OPTION, 0 ), 'a newly created hall provisions to version 2 automatically' );
 		$this->ok( true === Migrations::verify_current_site_schema(), '  and its schema verifies' );
 
 		$sessions  = Migrations::sessions_table();
@@ -231,13 +232,13 @@ final class SessionIncrementOneTest {
 		// the Catalog suite does for the same class of damage.
 		$this->disposable_ddl( $hall, "DROP TABLE IF EXISTS `{$relations}`" );
 		$this->disposable_ddl( $hall, "DROP TABLE IF EXISTS `{$sessions}`" );
-		$this->ok( true === Migrations::migrate_current_site(), 'migrate recreates both tables and verifies' );
-		$this->same( 1, (int) get_option( Migrations::VERSION_OPTION ), 'version persisted only after every schema verified' );
+		$this->ok( true === Migrations::migrate_current_site(), 'migrate recreates the dated Session tables and verifies all three Session tables' );
+		$this->same( 2, (int) get_option( Migrations::VERSION_OPTION ), 'version persisted only after every schema verified' );
 
 		// Existing-hall self-heal through the registered admin_init path.
 		update_option( Migrations::VERSION_OPTION, 0, false );
 		$this->ok( true === Migrations::maybe_migrate_current_site(), 'a stale hall self-heals' );
-		$this->same( 1, (int) get_option( Migrations::VERSION_OPTION ), '  and reaches version 1' );
+		$this->same( 2, (int) get_option( Migrations::VERSION_OPTION ), '  and reaches version 2' );
 		restore_current_blog();
 
 		$this->ok( false !== has_action( 'admin_init', [ Migrations::class, 'maybe_migrate_current_site' ] ), 'admin_init self-heal is registered' );
@@ -1403,6 +1404,7 @@ final class SessionIncrementOneTest {
 
 		switch_to_blog( $site_id );
 		$tables = [
+			Migrations::portal_session_templates_table(),
 			Migrations::session_packages_table(),
 			Migrations::sessions_table(),
 			\BingoCommerce\Catalog\Migrations::package_components_table(),
@@ -1416,7 +1418,7 @@ final class SessionIncrementOneTest {
 		wp_delete_site( $site_id );
 
 		foreach ( $tables as $table ) {
-			if ( 1 === preg_match( '/^bc_' . $site_id . '_bingo_(session_packages|sessions|package_components|packages|play_products|game_types)$/', $table ) ) {
+			if ( 1 === preg_match( '/^bc_' . $site_id . '_bingo_(portal_session_templates|session_packages|sessions|package_components|packages|play_products|game_types)$/', $table ) ) {
 				$wpdb->query( "DROP TABLE IF EXISTS `{$table}`" );
 			}
 		}
@@ -1548,7 +1550,7 @@ final class SessionIncrementOneTest {
 		// PRESERVATION, not emptiness.
 		foreach ( [ self::SUNRISE, self::TAMPA, self::ORLANDO ] as $site_id ) {
 			switch_to_blog( $site_id );
-			$this->same( 1, (int) get_option( Migrations::VERSION_OPTION, 0 ), "hall {$site_id} remains at Session v1" );
+			$this->same( 2, (int) get_option( Migrations::VERSION_OPTION, 0 ), "hall {$site_id} remains at Session v2" );
 			$this->ok( true === Migrations::verify_current_site_schema(), "hall {$site_id} Session schema verifies after cleanup" );
 			$snapshot = $this->session_snapshot( $site_id );
 			$this->same( $this->baseline_sessions[ $site_id ]['sessions'], $snapshot['sessions'], "hall {$site_id}: the bingo_sessions baseline is unchanged" );

@@ -11,18 +11,18 @@ if ( ! defined( 'ABSPATH' ) ) {
 /**
  * Owns the hall-local Session schema and its per-site version state.
  *
- * ADR-026 and the persistence design assign `bingo_sessions` and
- * `bingo_session_packages` — and their migrations — to this plugin. They are
- * deliberately NOT added to Catalog\Migrations: Sessions never own Catalog
- * entities, and Catalog never owns Session tables.
+ * This plugin owns `bingo_sessions`, `bingo_session_packages`, and the local
+ * Session-domain replica table `bingo_portal_session_templates`. Catalog and
+ * the Portal integration plugin do not own Session-domain persistence.
  */
 final class Migrations {
 
-	public const DB_VERSION = 1;
+	public const DB_VERSION = 2;
 	public const VERSION_OPTION = 'bc_sessions_db_version';
 	public const NETWORK_SWEEP_OPTION = 'bc_sessions_network_migration_sweep_version';
 	public const SESSIONS_TABLE = 'bingo_sessions';
 	public const SESSION_PACKAGES_TABLE = 'bingo_session_packages';
+	public const PORTAL_SESSION_TEMPLATES_TABLE = 'bingo_portal_session_templates';
 
 	/** @return true|\WP_Error */
 	public static function maybe_migrate_current_site() {
@@ -162,8 +162,26 @@ final class Migrations {
 ) ENGINE=InnoDB {$charset_collate};"
 		);
 
-		// The version is the hall's promise that BOTH Session schemas are usable,
-		// so it is persisted only after every required structure verifies.
+		$portal_session_templates = self::portal_session_templates_table();
+		// portal_status preserves the Portal source attribute. is_current records
+		// replica presence/currentness only. Neither is Commerce selection.
+		dbDelta(
+			"CREATE TABLE {$portal_session_templates} (
+	session_template_id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+	portal_session_id bigint(20) unsigned NOT NULL,
+	name text NOT NULL,
+	portal_status varchar(32) NOT NULL,
+	is_current tinyint(1) unsigned NOT NULL DEFAULT 1,
+	created_at datetime NOT NULL,
+	updated_at datetime NOT NULL,
+	not_current_at datetime DEFAULT NULL,
+	PRIMARY KEY  (session_template_id),
+	UNIQUE KEY portal_session_unique (portal_session_id)
+) ENGINE=InnoDB {$charset_collate};"
+		);
+
+		// The version is the hall's promise that ALL THREE Session schemas are
+		// usable, so it is persisted only after every required structure verifies.
 		$verified = self::verify_current_site_schema();
 		if ( is_wp_error( $verified ) ) {
 			return $verified;
@@ -196,6 +214,12 @@ final class Migrations {
 		return $wpdb->prefix . self::SESSION_PACKAGES_TABLE;
 	}
 
+	public static function portal_session_templates_table(): string {
+		global $wpdb;
+
+		return $wpdb->prefix . self::PORTAL_SESSION_TEMPLATES_TABLE;
+	}
+
 	/** @return true|\WP_Error */
 	public static function verify_current_site_schema() {
 		$sessions = self::verify_sessions_schema();
@@ -203,7 +227,12 @@ final class Migrations {
 			return $sessions;
 		}
 
-		return self::verify_session_packages_schema();
+		$session_packages = self::verify_session_packages_schema();
+		if ( is_wp_error( $session_packages ) ) {
+			return $session_packages;
+		}
+
+		return self::verify_portal_session_templates_schema();
 	}
 
 	/** @return true|\WP_Error */
@@ -299,6 +328,53 @@ final class Migrations {
 		}
 
 		return self::assert_engine_and_charset( $table, 'Session Package assignment' );
+	}
+
+	/** @return true|\WP_Error */
+	public static function verify_portal_session_templates_schema() {
+		$table = self::portal_session_templates_table();
+
+		if ( ! self::table_exists( $table ) ) {
+			return self::verification_error( 'The Portal Session Template replica table is missing.' );
+		}
+
+		$by_name = self::columns_by_name( $table );
+		if ( ! is_array( $by_name ) ) {
+			return self::verification_error( 'The Portal Session Template replica columns could not be inspected.' );
+		}
+
+		$expected_columns = [
+			'session_template_id' => [ '/^bigint(?:\(20\))? unsigned$/', 'NO', null, 'auto_increment' ],
+			'portal_session_id'   => [ '/^bigint(?:\(20\))? unsigned$/', 'NO', null, '' ],
+			'name'                => [ '/^text$/', 'NO', null, '' ],
+			'portal_status'       => [ '/^varchar\(32\)$/', 'NO', null, '' ],
+			'is_current'          => [ '/^tinyint(?:\(1\))? unsigned$/', 'NO', '1', '' ],
+			'created_at'          => [ '/^datetime$/', 'NO', null, '' ],
+			'updated_at'          => [ '/^datetime$/', 'NO', null, '' ],
+			'not_current_at'      => [ '/^datetime$/', 'YES', null, '' ],
+		];
+		if ( array_keys( $expected_columns ) !== array_keys( $by_name ) ) {
+			return self::verification_error( 'The Portal Session Template replica columns are missing or incompatible.' );
+		}
+
+		$columns = self::assert_columns( $by_name, $expected_columns, 'Portal Session Template replica' );
+		if ( is_wp_error( $columns ) ) {
+			return $columns;
+		}
+
+		$indexes = self::assert_indexes(
+			$table,
+			[
+				'PRIMARY'               => [ true, [ 'session_template_id' ] ],
+				'portal_session_unique' => [ true, [ 'portal_session_id' ] ],
+			],
+			'Portal Session Template replica'
+		);
+		if ( is_wp_error( $indexes ) ) {
+			return $indexes;
+		}
+
+		return self::assert_engine_and_charset( $table, 'Portal Session Template replica' );
 	}
 
 	private static function table_exists( string $table ): bool {

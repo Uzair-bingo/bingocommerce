@@ -952,8 +952,20 @@
   `GameTypeService` creation still fabricates no Portal identity. No Portal
   client/call, import, reconciliation, or Session-template persistence was
   added.
-- **NEXT after Phase 3C1 approval: Phase 3C2 — separate per-site Portal
-  Session-template replica persistence.** Phase 3C2 is not implemented.
+- **Phase 3C2 — Portal Session-template replica persistence: COMPLETE.**
+  Sessions schema v2 adds the separate
+  hall-local `bingo_portal_session_templates` replica table without changing
+  existing dated Commerce Sessions or Session/Package assignments. All Portal
+  Session Templates may be replicated. Hall Manager Commerce selection remains
+  separate BingoCommerce-owned configuration; no selection configuration or UI
+  is implemented in Phase 3C2. The focused Phase 3C2 harness passes 98/98
+  assertions, and Session Increment 1 passes 344/344 assertions on schema v2.
+  Portal `updated_at` validation/normalization and any `portal_updated_at`
+  persistence decision remain deferred to Phase 3D snapshot validation/import.
+  No Portal HTTP client/call, import, reconciliation, webhook, or scheduler was
+  added.
+- **NEXT Portal-integration checkpoint: Phase 3D — Portal HTTP client + strict
+  snapshot validation.** Phase 3D is not implemented.
 - No Hall Staff Management work currently in progress.
 - No other Catalog or Session implementation work is in progress. Package
   Increment 1 and Session Increment 1 remain COMPLETE and are recorded under
@@ -965,11 +977,12 @@
 1. **Package Increment 1** — **COMPLETE.** Stage A and Stage B are implemented,
    source reviewed, automated-verified and interactively verified in wp-admin.
 2. **Session Increment 1** — **COMPLETE.** Implemented, source reviewed,
-   automated-verified (343/343) and interactively verified in wp-admin on a
+   automated-verified (344/344) and interactively verified in wp-admin on a
    Network Active plugin, including tenant isolation and Game Operator denial.
-3. **Phase 3C1 — Portal Game Type identity persistence: COMPLETE.** The next
-   checkpoint is **Phase 3C2 — separate per-site Portal Session-template
-   replica persistence**, which is not implemented.
+3. **Phase 3C1 — Portal Game Type identity persistence: COMPLETE. Phase 3C2 —
+   Portal Session-template replica persistence: COMPLETE.** The next checkpoint
+   is **Phase 3D — Portal HTTP client + strict snapshot validation**, which is
+   not implemented. Commerce selection remains separate and is not implemented.
 
 Everything below is tracked work that is NOT a blocker to that demo.
 
@@ -1080,7 +1093,7 @@ Everything below is tracked work that is NOT a blocker to that demo.
   §"Catalog lock-order review" is accurate as written. ADR-033 locks
   `bingo_packages` then `bingo_play_products` ascending, and locks no component
   rows at all.
-- Latest run: Session Increment 1 **343/343 PASS**; Package Stage B **258/258
+- Latest run: Session Increment 1 **344/344 PASS**; Package Stage B **258/258
   PASS**; Package Stage A **313/313 PASS**; Game Type **164/164 PASS**. The
   Play Product suite reports **461/461 functional/regression assertions PASS**
   with zero functional/regression failures; the selector regression passes;
@@ -1117,6 +1130,8 @@ Everything below is tracked work that is NOT a blocker to that demo.
   (`bingo_game_types`, `bingo_play_products`, `bingo_packages`,
   `bingo_package_components`); v4 adds nullable, unique
   `bingo_game_types.portal_game_type_id`
-- **Session schema:** per-site `bc_sessions_db_version` = 1
-  (`bingo_sessions`, `bingo_session_packages`)
+- **Session schema:** per-site `bc_sessions_db_version` = 2
+  (`bingo_sessions`, `bingo_session_packages`,
+  `bingo_portal_session_templates`); v2 adds the Portal Session-template replica
+  table
 - **Rule for AI agents:** Read `AGENTS.md`, `docs/architecture/plugin-architecture.md`, and this file before coding. Do not re-scaffold Multisite, WooCommerce, or core bootstrap.
