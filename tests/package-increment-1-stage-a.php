@@ -182,7 +182,7 @@ final class PackageStageATest {
 		global $wpdb;
 		$this->group( 'Migration' );
 
-		$this->same( 3, Migrations::DB_VERSION, 'Catalog DB_VERSION is 3' );
+		$this->same( 4, Migrations::DB_VERSION, 'Catalog DB_VERSION is 4' );
 
 		// Persistent halls run ONLY the production self-heal path, which is the
 		// same idempotent dbDelta + verify that admin_init runs. Nothing here
@@ -190,10 +190,10 @@ final class PackageStageATest {
 		// tables; every destructive schema case below runs on the disposable hall.
 		foreach ( [ self::SUNRISE, self::TAMPA, self::ORLANDO ] as $site_id ) {
 			switch_to_blog( $site_id );
-			$this->ok( true === Migrations::migrate_current_site(), "persistent hall {$site_id} migrates to v3" );
-			$this->same( 3, (int) get_option( Migrations::VERSION_OPTION ), "hall {$site_id} records version 3" );
-			$this->ok( true === Migrations::verify_current_site_schema(), "hall {$site_id} full v3 schema verifies" );
-			$this->ok( true === Migrations::migrate_current_site(), "hall {$site_id} v3 rerun is idempotent" );
+			$this->ok( true === Migrations::migrate_current_site(), "persistent hall {$site_id} migrates to the current Catalog version" );
+			$this->same( Migrations::DB_VERSION, (int) get_option( Migrations::VERSION_OPTION ), "hall {$site_id} records the current Catalog version" );
+			$this->ok( true === Migrations::verify_current_site_schema(), "hall {$site_id} full current Catalog schema verifies" );
+			$this->ok( true === Migrations::migrate_current_site(), "hall {$site_id} current-version rerun is idempotent" );
 			restore_current_blog();
 		}
 
@@ -216,16 +216,16 @@ final class PackageStageATest {
 		$packages   = Migrations::packages_table();
 		$components = Migrations::package_components_table();
 
-		$this->same( 3, (int) get_option( Migrations::VERSION_OPTION, 0 ), 'new hall provisions straight to v3' );
-		$this->ok( true === Migrations::verify_current_site_schema(), 'new hall v3 schema verifies' );
+		$this->same( Migrations::DB_VERSION, (int) get_option( Migrations::VERSION_OPTION, 0 ), 'new hall provisions straight to the current Catalog version' );
+		$this->ok( true === Migrations::verify_current_site_schema(), 'new hall current Catalog schema verifies' );
 
-		// Genuine v2 -> v3.
+		// Genuine upgrade from the v2 shape through the current schema.
 		$this->disposable_ddl( $disposable, "DROP TABLE IF EXISTS `{$components}`" );
 		$this->disposable_ddl( $disposable, "DROP TABLE IF EXISTS `{$packages}`" );
 		update_option( Migrations::VERSION_OPTION, 2, false );
-		$this->is_error( 'catalog_migration_verification_failed', Migrations::verify_current_site_schema(), 'a v2 hall fails v3 verification' );
-		$this->ok( true === Migrations::migrate_current_site(), 'v2 -> v3 migration succeeds' );
-		$this->same( 3, (int) get_option( Migrations::VERSION_OPTION ), 'v2 -> v3 records version 3' );
+		$this->is_error( 'catalog_migration_verification_failed', Migrations::verify_current_site_schema(), 'a v2 hall fails current-version verification' );
+		$this->ok( true === Migrations::migrate_current_site(), 'migration from v2 through the current schema succeeds' );
+		$this->same( Migrations::DB_VERSION, (int) get_option( Migrations::VERSION_OPTION ), 'migration from v2 records the current Catalog version' );
 
 		// Exact index-shape verification.
 		$create = (string) ( $wpdb->get_row( "SHOW CREATE TABLE `{$packages}`", ARRAY_N )[1] ?? '' );
@@ -272,14 +272,14 @@ final class PackageStageATest {
 			$this->same( 0, (int) get_option( Migrations::VERSION_OPTION, 0 ), "  version not advanced ({$label})" );
 		}
 
-		// A full migrate() repairs everything and only then persists v3.
+		// A full migrate() repairs everything and only then persists the current version.
 		$this->ok( true === Migrations::migrate_current_site(), 'migrate repairs both malformed tables' );
-		$this->same( 3, (int) get_option( Migrations::VERSION_OPTION ), 'version 3 persisted only after every schema verified' );
+		$this->same( Migrations::DB_VERSION, (int) get_option( Migrations::VERSION_OPTION ), 'current version persisted only after every schema verified' );
 
 		// Existing-hall self-heal from a stale version.
 		update_option( Migrations::VERSION_OPTION, 2, false );
 		$this->ok( true === Migrations::maybe_migrate_current_site(), 'stale hall self-heals through the existing admin_init path' );
-		$this->same( 3, (int) get_option( Migrations::VERSION_OPTION ), 'self-heal reaches v3' );
+		$this->same( Migrations::DB_VERSION, (int) get_option( Migrations::VERSION_OPTION ), 'self-heal reaches the current Catalog version' );
 		restore_current_blog();
 
 		// Exactly one migration trigger per lifecycle hook: no second registration.
@@ -1719,7 +1719,7 @@ final class PackageStageATest {
 
 		foreach ( [ self::SUNRISE, self::TAMPA, self::ORLANDO ] as $site_id ) {
 			switch_to_blog( $site_id );
-			$this->same( 3, (int) get_option( Migrations::VERSION_OPTION, 0 ), "hall {$site_id} remains at Catalog v3" );
+			$this->same( Migrations::DB_VERSION, (int) get_option( Migrations::VERSION_OPTION, 0 ), "hall {$site_id} remains at the current Catalog version" );
 			$this->ok( true === Migrations::verify_current_site_schema(), "hall {$site_id} schema verifies after cleanup" );
 			$this->same( 0, (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM `{$wpdb->postmeta}` WHERE meta_key = %s", self::OWNER_META ) ), "hall {$site_id}: no marker-owned products remain" );
 			$this->same(

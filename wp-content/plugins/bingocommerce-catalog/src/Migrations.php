@@ -11,7 +11,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 /** Owns the hall-local Catalog schema and its per-site version state. */
 final class Migrations {
 
-	public const DB_VERSION = 3;
+	public const DB_VERSION = 4;
 	public const VERSION_OPTION = 'bc_catalog_db_version';
 	public const NETWORK_SWEEP_OPTION = 'bc_catalog_network_migration_sweep_version';
 	public const GAME_TYPES_TABLE = 'bingo_game_types';
@@ -138,6 +138,7 @@ final class Migrations {
 		dbDelta(
 			"CREATE TABLE {$game_types} (
 	game_type_id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+	portal_game_type_id bigint(20) unsigned DEFAULT NULL,
 	code varchar(64) NOT NULL,
 	name varchar(160) NOT NULL,
 	status varchar(16) NOT NULL DEFAULT 'active',
@@ -145,6 +146,7 @@ final class Migrations {
 	updated_at datetime NOT NULL,
 	archived_at datetime DEFAULT NULL,
 	PRIMARY KEY  (game_type_id),
+	UNIQUE KEY portal_game_type_unique (portal_game_type_id),
 	UNIQUE KEY code_unique (code),
 	UNIQUE KEY name_unique (name),
 	KEY status_name (status,name)
@@ -204,7 +206,7 @@ final class Migrations {
 ) ENGINE=InnoDB {$charset_collate};"
 		);
 
-		// The version is the hall's promise that EVERY Catalog schema through v3
+		// The version is the hall's promise that EVERY Catalog schema through v4
 		// is usable, so it is persisted only after every required structure
 		// verifies.
 		$verified = self::verify_current_site_schema();
@@ -288,13 +290,14 @@ final class Migrations {
 		$columns = self::assert_columns(
 			$by_name,
 			[
-				'game_type_id' => [ '/^bigint(?:\(20\))? unsigned$/', 'NO', null, 'auto_increment' ],
-				'code'         => [ '/^varchar\(64\)$/', 'NO', null, '' ],
-				'name'         => [ '/^varchar\(160\)$/', 'NO', null, '' ],
-				'status'       => [ '/^varchar\(16\)$/', 'NO', 'active', '' ],
-				'created_at'   => [ '/^datetime$/', 'NO', null, '' ],
-				'updated_at'   => [ '/^datetime$/', 'NO', null, '' ],
-				'archived_at'  => [ '/^datetime$/', 'YES', null, '' ],
+				'game_type_id'        => [ '/^bigint(?:\(20\))? unsigned$/', 'NO', null, 'auto_increment' ],
+				'portal_game_type_id' => [ '/^bigint(?:\(20\))? unsigned$/', 'YES', null, '' ],
+				'code'                => [ '/^varchar\(64\)$/', 'NO', null, '' ],
+				'name'                => [ '/^varchar\(160\)$/', 'NO', null, '' ],
+				'status'              => [ '/^varchar\(16\)$/', 'NO', 'active', '' ],
+				'created_at'          => [ '/^datetime$/', 'NO', null, '' ],
+				'updated_at'          => [ '/^datetime$/', 'NO', null, '' ],
+				'archived_at'         => [ '/^datetime$/', 'YES', null, '' ],
 			],
 			'Game Type'
 		);
@@ -305,10 +308,11 @@ final class Migrations {
 		$indexes = self::assert_indexes(
 			$table,
 			[
-				'PRIMARY'     => [ true, [ 'game_type_id' ] ],
-				'code_unique' => [ true, [ 'code' ] ],
-				'name_unique' => [ true, [ 'name' ] ],
-				'status_name' => [ false, [ 'status', 'name' ] ],
+				'PRIMARY'                 => [ true, [ 'game_type_id' ] ],
+				'portal_game_type_unique' => [ true, [ 'portal_game_type_id' ] ],
+				'code_unique'             => [ true, [ 'code' ] ],
+				'name_unique'             => [ true, [ 'name' ] ],
+				'status_name'             => [ false, [ 'status', 'name' ] ],
 			],
 			'Game Type'
 		);

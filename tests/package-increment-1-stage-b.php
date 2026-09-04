@@ -1539,7 +1539,7 @@ final class PackageStageBTest {
 
 		foreach ( [ self::SUNRISE, self::TAMPA, self::ORLANDO ] as $site_id ) {
 			switch_to_blog( $site_id );
-			$this->same( 3, (int) get_option( Migrations::VERSION_OPTION, 0 ), "hall {$site_id} remains at Catalog v3" );
+			$this->same( Migrations::DB_VERSION, (int) get_option( Migrations::VERSION_OPTION, 0 ), "hall {$site_id} remains at the current Catalog version" );
 			$this->ok( true === Migrations::verify_current_site_schema(), "hall {$site_id} schema verifies after cleanup" );
 			$this->same( 0, (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM `{$wpdb->postmeta}` WHERE meta_key = %s", self::OWNER_META ) ), "hall {$site_id}: no marker-owned products remain" );
 			// PRESERVATION, not emptiness. Pre-existing Package data — including

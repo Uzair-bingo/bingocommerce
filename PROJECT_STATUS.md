@@ -944,13 +944,19 @@
 ---
 
 ## In Progress
-- **NEXT: Phase 3C — local replica persistence design/implementation.** This
-  phase is not implemented. Its scope is limited to Portal Game Type identity
-  support in the existing per-site Game Type domain and separate per-site
-  Portal Session-template replica persistence.
+- **Phase 3C1 — Portal Game Type identity persistence: COMPLETE.** Catalog
+  schema v4 adds only nullable
+  `bingo_game_types.portal_game_type_id` with the single-column
+  `portal_game_type_unique` index. The focused v3 -> v4/new-site harness passes
+  66/66 assertions. Existing rows remain unlinked (`NULL`), and local
+  `GameTypeService` creation still fabricates no Portal identity. No Portal
+  client/call, import, reconciliation, or Session-template persistence was
+  added.
+- **NEXT after Phase 3C1 approval: Phase 3C2 — separate per-site Portal
+  Session-template replica persistence.** Phase 3C2 is not implemented.
 - No Hall Staff Management work currently in progress.
-- No Catalog or Session implementation work currently in progress. Package
-  Increment 1 and Session Increment 1 are both COMPLETE and are recorded under
+- No other Catalog or Session implementation work is in progress. Package
+  Increment 1 and Session Increment 1 remain COMPLETE and are recorded under
   Done.
 
 ---
@@ -961,10 +967,9 @@
 2. **Session Increment 1** — **COMPLETE.** Implemented, source reviewed,
    automated-verified (343/343) and interactively verified in wp-admin on a
    Network Active plugin, including tenant isolation and Game Operator denial.
-3. **NEXT: Phase 3C — local replica persistence design/implementation** —
-   limited to Portal Game Type identity support in the existing per-site Game
-   Type domain and separate per-site Portal Session-template replica
-   persistence. Phase 3C is not implemented.
+3. **Phase 3C1 — Portal Game Type identity persistence: COMPLETE.** The next
+   checkpoint is **Phase 3C2 — separate per-site Portal Session-template
+   replica persistence**, which is not implemented.
 
 Everything below is tracked work that is NOT a blocker to that demo.
 
@@ -1108,9 +1113,10 @@ Everything below is tracked work that is NOT a blocker to that demo.
   `wp-content/plugins/bingocommerce-sessions/` (all three Network Active);
   `wp-content/plugins/bingocommerce-portal-integration/` is the Phase 3B
   foundation (declared network-only)
-- **Catalog schema:** per-site `bc_catalog_db_version` = 3
+- **Catalog schema:** per-site `bc_catalog_db_version` = 4
   (`bingo_game_types`, `bingo_play_products`, `bingo_packages`,
-  `bingo_package_components`)
+  `bingo_package_components`); v4 adds nullable, unique
+  `bingo_game_types.portal_game_type_id`
 - **Session schema:** per-site `bc_sessions_db_version` = 1
   (`bingo_sessions`, `bingo_session_packages`)
 - **Rule for AI agents:** Read `AGENTS.md`, `docs/architecture/plugin-architecture.md`, and this file before coding. Do not re-scaffold Multisite, WooCommerce, or core bootstrap.
