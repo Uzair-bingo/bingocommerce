@@ -947,8 +947,10 @@
 - **Phase 3C1 — Portal Game Type identity persistence: COMPLETE.** Catalog
   schema v4 adds only nullable
   `bingo_game_types.portal_game_type_id` with the single-column
-  `portal_game_type_unique` index. The focused v3 -> v4/new-site harness passes
-  66/66 assertions. Existing rows remain unlinked (`NULL`), and local
+  `portal_game_type_unique` index. The focused v3 -> v4/new-site harness passed
+  66/66 assertions when Phase 3C1 landed and passes 70/70 after the 2026-09-07
+  stale-precondition harness maintenance recorded under Latest verified
+  results. Existing rows remain unlinked (`NULL`), and local
   `GameTypeService` creation still fabricates no Portal identity. No Portal
   client/call, import, reconciliation, or Session-template persistence was
   added.
@@ -1178,23 +1180,27 @@ Everything below is tracked work that is NOT a blocker to that demo.
   PASS**; Phase 3D1 Portal HTTP transport **67/67 PASS**; Phase
   3B Portal integration foundation regression **75/75 PASS**; Phase 3C2 Portal
   Session-template replica persistence **98/98 PASS**; Phase 3C1 Portal Game
-  Type identity persistence **66/66 PASS**; Session Increment 1 **344/344
+  Type identity persistence **70/70 PASS**; Session Increment 1 **344/344
   PASS**; Package Stage B **258/258 PASS**; Package Stage A **313/313 PASS**;
   Game Type **164/164 PASS**. The Play Product suite reports **461/461
   functional/regression assertions PASS** with zero functional/regression
   failures; the selector
   regression passes; and current-run disposable-hall cleanup reports **5/5
-  PASS** with zero cleanup failures. **Caveat on the Phase 3C1 figure:** that
-  66/66 result is the historical result recorded when Phase 3C1 landed. On the
-  current local environment `tests/portal-game-type-identity-persistence.php`
-  now stops at its fourth assertion, `no Portal Session-template table exists
-  before the suite` (expected `0`, actual `3`). The precondition was written
-  before Phase 3C2 existed and is stale: the three tables are
+  PASS** with zero cleanup failures. **Phase 3C1 stale-harness caveat —
+  RESOLVED on 2026-09-07.** `tests/portal-game-type-identity-persistence.php`
+  had stopped at its fourth assertion, `no Portal Session-template table exists
+  before the suite` (expected `0`, actual `3`), because that precondition was
+  written before Phase 3C2 existed: the three tables are
   `bc_2_/bc_3_/bc_4_bingo_portal_session_templates`, created by Phase 3C2's
-  committed migration on Sunrise/Tampa/Orlando. This was verified failing at
-  commit `f50fb09` before any Phase 3D2 change and is NOT a Phase 3D2
-  regression. The harness was deliberately left unmodified; correcting that
-  stale precondition is separate, reviewable work. Tampa Game Type `#39 "PPI1 Tampa Only
+  committed migration on Sunrise/Tampa/Orlando. It was verified failing at
+  commit `f50fb09` before any Phase 3D2 change and was never a Phase 3D2
+  regression. Test-only maintenance replaced that obsolete absence precondition
+  with a baseline of the already-existing replicas plus scoped after-suite
+  assertions that Phase 3C1 creates, removes, and mutates none of them, and
+  extended the harness's own disposable-hall cleanup to drop the replica that
+  live Sessions provisioning now gives every hall the run itself creates. The
+  historical 66/66 landing figure stands; the corrected harness passes 70/70.
+  No production code, schema, or hall data was changed. Tampa Game Type `#39 "PPI1 Tampa Only
   89AUU"` remains an unproven, undeleted residue detection only, not a
   functional failure. The persistent Sunrise protected-row snapshot was
   byte-identical before and after the run.

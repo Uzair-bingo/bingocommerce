@@ -53,6 +53,15 @@ final class PortalGameTypeIdentityPersistenceTest {
 	/** @var array<int,array<string,mixed>> */
 	private array $mapping_snapshot = [];
 
+	/** @var array<int,string> */
+	private array $portal_session_template_baseline = [];
+
+	/** @var array<string,string> */
+	private array $portal_session_template_row_baseline = [];
+
+	/** @var array<string,string> */
+	private array $portal_session_template_schema_baseline = [];
+
 	public function run(): void {
 		$this->assert_true( is_multisite(), 'WordPress Multisite is enabled' );
 		$this->assert_same( 4, Migrations::DB_VERSION, 'Catalog advances exactly one version from v3 to v4' );
@@ -62,7 +71,18 @@ final class PortalGameTypeIdentityPersistenceTest {
 		$this->persistent_domain_snapshot = $this->snapshot_tables( self::PERSISTENT_HALLS, $this->domain_table_suffixes() );
 		$this->persistent_woo_snapshot    = $this->snapshot_tables( self::PERSISTENT_HALLS, $this->woo_table_suffixes() );
 		$this->mapping_snapshot           = $this->snapshot_mappings();
-		$this->assert_same( 0, $this->portal_session_template_table_count(), 'no Portal Session-template table exists before the suite' );
+
+		// Phase 3C2 legitimately owns per-site Portal Session-template replicas, so
+		// this suite baselines the replicas that already exist instead of asserting
+		// their absence. Phase 3C1 still owns nothing in that table.
+		$this->portal_session_template_baseline        = $this->portal_session_template_tables();
+		$this->portal_session_template_row_baseline    = $this->hash_tables( $this->portal_session_template_baseline );
+		$this->portal_session_template_schema_baseline = $this->schema_snapshot( $this->portal_session_template_baseline );
+		$this->assert_same(
+			$this->portal_session_template_baseline,
+			array_keys( $this->portal_session_template_row_baseline ),
+			'every pre-existing Portal Session-template table is captured in the baseline'
+		);
 
 		try {
 			$this->upgrade_existing_v3_hall();
@@ -82,7 +102,9 @@ final class PortalGameTypeIdentityPersistenceTest {
 			'Sunrise, Tampa, and Orlando WooCommerce product/order data is byte-identical after the suite'
 		);
 		$this->assert_same( $this->mapping_snapshot, $this->snapshot_mappings(), 'Portal Hall mapping rows are byte-identical after the suite' );
-		$this->assert_same( 0, $this->portal_session_template_table_count(), 'no Portal Session-template table was created' );
+		$this->assert_same( $this->portal_session_template_baseline, $this->portal_session_template_tables(), 'Phase 3C1 creates and removes no Portal Session-template table' );
+		$this->assert_same( $this->portal_session_template_row_baseline, $this->hash_tables( $this->portal_session_template_baseline ), 'pre-existing Portal Session-template rows are byte-identical after the suite' );
+		$this->assert_same( $this->portal_session_template_schema_baseline, $this->schema_snapshot( $this->portal_session_template_baseline ), 'pre-existing Portal Session-template schemas are unchanged after the suite' );
 		$this->assert_same( [], $this->disposable_sites, 'every disposable hall created by this run was destroyed' );
 		$this->verify_disposable_cleanup();
 
@@ -291,21 +313,34 @@ final class PortalGameTypeIdentityPersistenceTest {
 	private function snapshot_tables( array $site_ids, array $suffixes ): array {
 		global $wpdb;
 
-		$snapshot = [];
+		$tables = [];
 		foreach ( $site_ids as $site_id ) {
 			$prefix = $wpdb->get_blog_prefix( (int) $site_id );
 			foreach ( $suffixes as $suffix ) {
-				$table = $prefix . $suffix;
-				if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $wpdb->esc_like( $table ) ) ) !== $table ) {
-					continue;
-				}
-				$rows = $wpdb->get_results( "SELECT * FROM `{$table}`", ARRAY_A );
-				usort(
-					$rows,
-					static fn( array $left, array $right ): int => strcmp( serialize( $left ), serialize( $right ) )
-				);
-				$snapshot[ $table ] = hash( 'sha256', serialize( $rows ) );
+				$tables[] = $prefix . $suffix;
 			}
+		}
+
+		return $this->hash_tables( $tables );
+	}
+
+	/** @param array<int,string> $tables
+	 *  @return array<string,string>
+	 */
+	private function hash_tables( array $tables ): array {
+		global $wpdb;
+
+		$snapshot = [];
+		foreach ( $tables as $table ) {
+			if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $wpdb->esc_like( $table ) ) ) !== $table ) {
+				continue;
+			}
+			$rows = $wpdb->get_results( "SELECT * FROM `{$table}`", ARRAY_A );
+			usort(
+				$rows,
+				static fn( array $left, array $right ): int => strcmp( serialize( $left ), serialize( $right ) )
+			);
+			$snapshot[ $table ] = hash( 'sha256', serialize( $rows ) );
 		}
 		ksort( $snapshot );
 
@@ -350,6 +385,18 @@ final class PortalGameTypeIdentityPersistenceTest {
 		];
 	}
 
+	/**
+	 * Disposable halls are provisioned by the live plugin stack, so a hall created
+	 * by this run also receives the Phase 3C2 Session-template replica. Only the
+	 * current-run disposable halls are destroyed here; pre-existing hall replicas
+	 * are never dropped or modified.
+	 *
+	 * @return array<int,string>
+	 */
+	private function disposable_table_suffixes(): array {
+		return array_merge( $this->domain_table_suffixes(), [ 'bingo_portal_session_templates' ] );
+	}
+
 	/** @return array<int,string> */
 	private function woo_table_suffixes(): array {
 		return [
@@ -375,16 +422,23 @@ final class PortalGameTypeIdentityPersistenceTest {
 		return (array) $wpdb->get_results( "SELECT * FROM `{$table}` ORDER BY portal_hall_id", ARRAY_A );
 	}
 
-	private function portal_session_template_table_count(): int {
+	/** @return array<int,string> */
+	private function portal_session_template_tables(): array {
 		global $wpdb;
 
-		return (int) $wpdb->get_var(
-			$wpdb->prepare(
-				'SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = %s AND table_name LIKE %s',
-				DB_NAME,
-				$wpdb->esc_like( $wpdb->base_prefix ) . '%bingo_portal_session_templates'
+		$tables = array_map(
+			'strval',
+			(array) $wpdb->get_col(
+				$wpdb->prepare(
+					'SELECT table_name FROM information_schema.tables WHERE table_schema = %s AND table_name LIKE %s',
+					DB_NAME,
+					$wpdb->esc_like( $wpdb->base_prefix ) . '%bingo_portal_session_templates'
+				)
 			)
 		);
+		sort( $tables );
+
+		return $tables;
 	}
 
 	private function cleanup(): void {
@@ -397,10 +451,10 @@ final class PortalGameTypeIdentityPersistenceTest {
 		foreach ( array_keys( $this->disposable_sites ) as $site_id ) {
 			$site_id = (int) $site_id;
 			$prefix  = $wpdb->get_blog_prefix( $site_id );
-			$tables  = array_map( static fn( string $suffix ): string => $prefix . $suffix, $this->domain_table_suffixes() );
+			$tables  = array_map( static fn( string $suffix ): string => $prefix . $suffix, $this->disposable_table_suffixes() );
 
 			wp_delete_site( $site_id );
-			$allowed = '/^' . preg_quote( $wpdb->base_prefix, '/' ) . $site_id . '_bingo_(game_types|play_products|packages|package_components|package_addons|sessions|session_packages)$/';
+			$allowed = '/^' . preg_quote( $wpdb->base_prefix, '/' ) . $site_id . '_bingo_(game_types|play_products|packages|package_components|package_addons|sessions|session_packages|portal_session_templates)$/';
 			foreach ( $tables as $table ) {
 				if ( 1 === preg_match( $allowed, $table ) ) {
 					$wpdb->query( "DROP TABLE IF EXISTS `{$table}`" );
