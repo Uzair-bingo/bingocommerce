@@ -7,9 +7,10 @@ This document expands ADR-035 and BR-071 through BR-075. It defines the
 integration boundary between the existing Laravel Bingo Innovation Portal and
 the WordPress Multisite/WooCommerce BingoCommerce platform. Except for
 ADR-036's narrow Hall snapshot transport URL contract, ADR-037's Hall snapshot
-v1 validation contract, and ADR-038's completeness and Game Type absence
-decision, it is not an API, webhook, persistence, provisioning, or SSO
-implementation design.
+v1 validation contract, ADR-038's completeness and Game Type absence decision,
+and ADR-039's approved name/code, validation-amendment, and Catalog v5 migration
+design, it is not an API, webhook, persistence, provisioning, or SSO
+implementation design. ADR-039's source changes remain unimplemented.
 
 All Portal identities below belong to the single authoritative Bingo Innovation
 Portal environment:
@@ -257,8 +258,14 @@ supplied by trusted mapping context, and never derives tenancy from a name,
 domain, host, request URL, or ordering. Collections may be empty, input order is
 preserved without any sorting requirement, and a duplicate `id` within either
 collection rejects the snapshot. Hall names and Session names allow 255 Unicode
-characters, Game Type names 50, counted as characters rather than bytes; empty
-or whitespace-only names are rejected and valid names are returned unchanged.
+characters, Game Type names 50, counted as characters rather than bytes. The
+implemented blank-name check uses PHP `trim()`; it does not reject all Unicode
+separator-only names. ADR-039 requires a narrow amendment before Phase 3E to
+reject Unicode control/format characters, line/paragraph separators, and names
+containing only whitespace or Unicode separators, including NBSP-only names.
+That amendment is not implemented here. Accepted names remain unchanged: no
+normalization, trimming, rewriting, or escaping of the stored value. Reuse
+`portal_snapshot_invalid_contract` with a safe generated name-field path.
 Hall `state` is `active` or `inactive` and Session `status` is `active` or
 `draft`, matched case-sensitively. Inactive Halls and draft Sessions are valid
 and retained.
@@ -320,6 +327,37 @@ product/order authority and implements no Phase 3E behavior. Session-template
 application behavior beyond already-frozen decisions remains open; the Game
 Type absence rule does not decide it.
 
+### Pre-Phase 3E: Game Type names and internal codes
+
+ADR-039 approves Catalog v4 -> v5: keep `name varchar(160)` as the actual
+display/source name; add nullable `local_name_key varchar(160)` with the same
+charset and collation as `name`. Local rows store their exact stored name in
+the key; Portal-linked rows store SQL `NULL`. Remove `UNIQUE name_unique(name)`;
+add `UNIQUE local_name_unique(local_name_key)` and nonunique
+`name_id(name, game_type_id)`. Preserve accepted Portal names unchanged and
+retain separate rows for duplicate/collation-equivalent names with different
+Portal IDs. Never link, merge, or overwrite rows using names.
+
+Imported codes try `portal-gt-<portal_game_type_id>`, then
+`portal-gt-<id>-2` through `portal-gt-<id>-32`. Existing local codes stay
+unchanged; the namespace is not reserved. Database `code_unique` is the
+collision authority. Existing imported rows are found only through
+`portal_game_type_id` within the trusted mapped Hall, never by code or name.
+Never adopt or overwrite a row because its code matches. Once allocated, the
+code is immutable, including on Portal rename. Exhausting all 32 candidates
+rejects the complete application without partial domain changes.
+
+The approved migration backfills the key from `name` for rows with
+`portal_game_type_id IS NULL` and sets/retains `NULL` for linked rows, preserving
+existing names, codes, IDs, statuses, references, and timestamps. No existing
+local row is automatically linked. `dbDelta()` remains the normal mechanism;
+ADR-039 authorizes one idempotent, allowlisted `DROP INDEX name_unique`
+operation on the trusted Hall's Game Type table because `dbDelta()` cannot
+remove it. Verify the target table/index before and after removal and the
+replacement key/backfill before dropping the old index. Advance the Catalog
+version only after complete verification; new sites receive final v5 directly.
+The migration, name-validator amendment, and Phase 3E remain unimplemented.
+
 Approved shape:
 
 ```text
@@ -347,15 +385,15 @@ and idempotent mapping establish the recovery baseline that later webhook and
 reconciliation work depend on.
 
 Except for ADR-036's Hall snapshot transport URL and header-only credential
-placement, ADR-037's Hall snapshot v1 validation contract, and ADR-038's
-completeness and Game Type absence decision, the following details remain
-undecided until their dedicated reviews:
+placement, ADR-037's Hall snapshot v1 validation contract, ADR-038's
+completeness and Game Type absence decision, and ADR-039's name/code design,
+name-validation amendment, and narrow migration exception, the following
+details remain undecided until their dedicated reviews:
 
 - Portal API authentication and authorization lifecycle;
 - other endpoint paths, versions, filters, pagination, and payloads;
-- remaining pre-Phase 3E design work: exact duplicate-name persistence/index
-  design, imported internal-code allocation, snapshot replay/stale-order
-  protection, Phase 3E transaction and locking mechanics, local writer
+- remaining pre-Phase 3E design work: snapshot replay/stale-order handling,
+  Phase 3E transaction and locking mechanics, local writer
   restrictions after synchronization, and Session-template application behavior
   beyond already-frozen decisions;
 - webhook event types, signatures, ordering, retry, replay, and delivery logs;

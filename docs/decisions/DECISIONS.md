@@ -1103,6 +1103,93 @@ Game Type deletion makes a missing linked identity an integrity violation,
 not a local lifecycle transition. Rejecting the entire application with zero
 writes preserves existing commerce identities and relationships.
 
+- **ADR-039 — [2026-09-07] — Portal Game Type Names, Imported Internal Codes, and Catalog v5 Design:**
+
+**Status and scope.** Approved design, not implemented. Catalog schema will
+advance from v4 to v5 in a separately reviewed implementation. This entry
+resolves ADR-038's duplicate-name persistence/index and imported-code questions
+and narrowly amends ADR-037's name boundary before Phase 3E. Earlier ADRs are
+not rewritten; ADR-038's completeness and zero-write absence rules remain in
+force. No Commerce scheduling or product/order authority changes.
+
+**Name storage.** Keep `name varchar(160) NOT NULL` as the actual display/source
+name. Add ordinary nullable `local_name_key varchar(160) NULL`, using the same
+charset and collation as `name`. Locally created rows whose
+`portal_game_type_id IS NULL` store their exact stored name in this key;
+Portal-linked rows store SQL `NULL`. Writers must maintain this invariant on
+creation and rename. The unique key protects local-versus-local names,
+including archived local rows; it does not itself enforce key population.
+
+Remove `UNIQUE name_unique(name)`. Add
+`UNIQUE local_name_unique(local_name_key)` and nonunique
+`name_id(name, game_type_id)`. Preserve the existing primary key,
+`portal_game_type_unique`, `code_unique`, and `status_name` indexes. Valid Portal
+names remain unchanged. Duplicate and collation-equivalent Portal names with
+different Portal IDs remain separate rows. Never link, merge, or overwrite
+rows using names; trusted Hall context and Portal `game_types.id` establish
+cross-system identity.
+
+**Portal name validation prerequisite.** Before Phase 3E, narrowly strengthen
+the Phase 3D2 name boundary to reject Unicode control and format characters
+(`Cc`/`Cf`), Unicode line and paragraph separators (`Zl`/`Zp`), and names
+containing only whitespace or Unicode separators, including NBSP-only names.
+This applies to the snapshot name boundary; existing UTF-8 and character-limit
+requirements remain unchanged. Accepted names remain unchanged: do not
+normalize, trim, rewrite, or escape the stored value. Escaping belongs to
+presentation. Reuse `portal_snapshot_invalid_contract` with a safe generated
+name-field path; do not expose source names in errors or logs. This task does
+not implement the validator amendment.
+
+**Imported internal codes.** For a new imported Game Type, the first candidate
+is `portal-gt-<portal_game_type_id>`, using the validated ID in decimal form.
+Collision candidates are `portal-gt-<id>-2` through `portal-gt-<id>-32`, tried
+in order, with at most 32 candidates per new row. The family fits the existing
+64-character limit and code grammar. Existing local codes remain unchanged;
+the namespace is not reserved. Database `code_unique` remains the collision
+authority, including collisions with existing local codes or concurrent local
+creation. Never adopt or overwrite a row because its code matches.
+
+Existing imported rows are found only through `portal_game_type_id` within
+the trusted mapped Hall and retain their local ID and allocated code. Once
+allocated, a code is immutable; Portal rename and re-import do not change it.
+Allocation follows the ordered candidate family and the Hall's occupied codes,
+not a pure function of Portal ID. Exhausting all 32 candidates rejects the
+complete application without partial domain changes. A previously rejected
+snapshot does not reserve a code; a later valid snapshot resolves Portal
+identity normally. This defines failure requirements, not transaction or
+locking mechanics.
+
+**Migration contract.** Backfill `local_name_key` from `name` for rows where
+`portal_game_type_id IS NULL`; set or retain the key as SQL `NULL` for linked
+rows. Do not change existing names, codes, IDs, statuses, references, or
+timestamps, and do not automatically link existing local rows.
+
+`dbDelta()` remains the normal migration mechanism. Because it cannot remove
+`name_unique`, this decision authorizes one narrowly scoped, idempotent,
+allowlisted `DROP INDEX` operation for that index on the trusted Hall's
+resolved `bingo_game_types` table. This is the sole exception to the existing
+`dbDelta()`-only migration rule; it authorizes no general-purpose DDL facility
+or new database transport. Verify the target table and exact index definition
+before removal, verify the replacement key/backfill before dropping the old
+index, and verify the target table and index absence afterward. On an
+idempotent rerun, verify the final state rather than dropping an absent index.
+Catalog version advances only after complete schema and backfill verification.
+New sites receive the final v5 schema directly. Implementation must account for
+writers that do not yet maintain the nullable key; this does not decide local
+writer permissions after synchronization.
+
+**Still open.** Snapshot replay/stale-order handling; Phase 3E transaction and
+locking mechanics; Session-template application; local writer restrictions
+after synchronization; Commerce scheduling; webhooks, SSO, and provisioning
+remain outside this slice. No PHP, tests, migrations, plugins, database data,
+or Phase 3E implementation are changed by this documentation task.
+
+*Rationale:* A nullable local-name key preserves local name uniqueness while
+allowing exact Portal names to repeat across distinct identities. Bounded
+ID-derived code allocation preserves existing local rows and immutable codes.
+The explicit name-validation prerequisite and index-removal exception make
+the later implementation boundaries reviewable without implementing them.
+
 
 ---
 
@@ -2516,18 +2603,21 @@ delete_users.
 ## Still Open / TBD Items (Unresolved)
 
 - Portal integration persistence and contract details deferred by ADR-035 and
-  not yet resolved by ADR-036/ADR-037/ADR-038: Portal API authentication lifecycle;
+  not yet resolved by ADR-036/ADR-037/ADR-038/ADR-039: Portal API authentication
+  lifecycle;
   other endpoint paths and payloads; webhook signing, retry, replay and
   ordering; snapshot application/import writers; reconciliation and transitional
   conflict policy; commerce-schedule recurrence horizon, timezone/DST and
   regeneration rules; enablement/provisioning lifecycle; and SSO
   protocol/account/tenant mapping. ADR-036 fixed the Hall snapshot transport URL
   and ADR-037 froze the Hall snapshot v1 validation contract. ADR-038 freezes
-  completeness and zero-write rejection of missing linked Game Types. None of
-  these decisions authorizes Phase 3E implementation.
-- Remaining pre-Phase 3E design work after ADR-038: exact duplicate-name
-  persistence/index design; imported internal-code allocation; snapshot
-  replay/stale-order protection; Phase 3E transaction and locking mechanics;
+  completeness and zero-write rejection of missing linked Game Types. ADR-039
+  approves the Catalog v5 name/index and imported-code design, a narrow name-
+  validation amendment, and the allowlisted index-removal exception; these
+  remain unimplemented. None of these decisions authorizes Phase 3E
+  implementation.
+- Remaining pre-Phase 3E design work after ADR-039: snapshot replay/stale-order
+  protection; Phase 3E transaction and locking mechanics;
   local writer restrictions after synchronization; and Session-template
   application behavior beyond already-frozen decisions. Game Type
   `portal_is_current` / `portal_not_current_at` fields are not required for v1;

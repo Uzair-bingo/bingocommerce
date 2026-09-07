@@ -1030,9 +1030,10 @@
     byte-identical before and after the run.
 - **NEXT Portal-integration checkpoint: Phase 3E — snapshot
   application/import.** Phase 3E is not implemented. Overall Phase 3D is
-  COMPLETE.
+  COMPLETE against ADR-037; ADR-039's name-validation amendment is pending
+  before Phase 3E.
   - **[2026-09-07] Pre-Phase 3E Design Slice 1 — snapshot completeness:
-    documented in ADR-038; ready for source review.** A successful Portal v1
+    documented in ADR-038; COMPLETE.** A successful Portal v1
     snapshot is complete, non-paginated, and non-delta for one trusted mapped
     Hall. `game_types` contains every owned Portal Game Type; `sessions`
     contains every qualifying owner-only Portal Session template, excluding
@@ -1058,11 +1059,33 @@
     names with different IDs remain valid and distinct. No Commerce scheduling
     or product/order authority changes. This slice changes documentation only;
     no PHP, tests, migrations, plugins, schemas, or Phase 3E implementation.
-  - **Remaining pre-Phase 3E design work:** exact duplicate-name
-    persistence/index design; imported internal-code allocation; snapshot
-    replay/stale-order protection; Phase 3E transaction and locking mechanics;
+  - **[2026-09-07] Pre-Phase 3E Design Slice 2 — names and internal codes:
+    approved design documented in ADR-039; COMPLETE; implementation pending.** Catalog
+    v4 -> v5 will retain exact names in `name varchar(160)`, add nullable
+    `local_name_key varchar(160)` with the same charset/collation, replace
+    `name_unique(name)` with `local_name_unique(local_name_key)`, and add
+    nonunique `name_id(name, game_type_id)`. Local keys copy stored names;
+    linked keys are SQL `NULL`. Distinct Portal IDs retain separate rows even
+    with duplicate/collation-equivalent names; no name-based linking or merging.
+    Imported codes try `portal-gt-<id>`, then suffixes `-2` through `-32`;
+    `code_unique` governs collisions in the unreserved namespace. No code-based
+    adoption/overwrite; allocated codes stay immutable, including on rename.
+    Exhaustion rejects the complete application without partial domain changes.
+    Backfill preserves names, codes, IDs, statuses, references, and timestamps;
+    no automatic linking. `dbDelta()` remains normal, with one allowlisted,
+    idempotent `DROP INDEX name_unique` exception, target verification before
+    and after removal, replacement-key/backfill verification, and version
+    advancement only after complete verification. New sites receive final v5.
+  - **Required before Phase 3E, not implemented:** narrowly strengthen Phase
+    3D2 name validation to reject Unicode control/format characters, line/
+    paragraph separators, and whitespace/Unicode-separator-only names. Accepted
+    names remain unchanged; reuse the safe name-validation error vocabulary.
+    The v5 migration also remains unimplemented. This slice changes documentation and the database guardrail only; no production source, tests, migrations, plugins, schemas, or database data.
+  - **Remaining pre-Phase 3E design work:** snapshot replay/stale-order
+    handling; Phase 3E transaction and locking mechanics;
     local writer restrictions after synchronization; and Session-template
-    application behavior beyond already-frozen decisions.
+    application behavior beyond already-frozen decisions. Commerce scheduling,
+    webhooks, SSO, and provisioning are not decided or implemented by this slice.
 - No Hall Staff Management work currently in progress.
 - No other Catalog or Session implementation work is in progress. Package
   Increment 1 and Session Increment 1 remain COMPLETE and are recorded under
@@ -1079,9 +1102,10 @@
 3. **Phase 3C1 — Portal Game Type identity persistence: COMPLETE. Phase 3C2 —
    Portal Session-template replica persistence: COMPLETE. Phase 3D1 — Portal
    HTTP transport: COMPLETE. Phase 3D2 — strict Portal snapshot validation:
-   COMPLETE.** Overall Phase 3D is complete. ADR-038 records snapshot
-   completeness and Game Type absence; remaining pre-Phase 3E design work is
-   listed above. Phase 3E snapshot application/import is not implemented.
+   COMPLETE against ADR-037.** ADR-038 records snapshot completeness and Game
+   Type absence. ADR-039's approved name/code design, Catalog v5 migration, and
+   required name-validation amendment remain unimplemented; remaining design
+   work is listed above. Phase 3E snapshot application/import is not implemented.
    Commerce selection remains separate and is not implemented.
 
 Everything below is tracked work that is NOT a blocker to that demo.
@@ -1091,7 +1115,8 @@ Everything below is tracked work that is NOT a blocker to that demo.
    Hall mapping/config, Phase 3C1 Game Type identity persistence, Phase 3C2
    Session-template replica persistence, Phase 3D1 read-only HTTP transport,
    and Phase 3D2 strict snapshot validation are complete. Remaining work begins
-   with the pre-Phase 3E design questions preserved by ADR-038, followed by
+   with ADR-039's pending name-validation amendment and Catalog v5 migration,
+   plus the remaining pre-Phase 3E design questions listed above, followed by
    Phase 3E snapshot application/full-pull idempotent
    synchronization, followed by a separate second-mapped-Hall tenant-isolation
    proof, then the separately reviewed webhook, reconciliation, and tenant-

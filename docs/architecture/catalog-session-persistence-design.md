@@ -18,6 +18,10 @@ model requires a schema-specific review before implementation. Nothing in
 ADR-035 authorizes changing this schema, deleting these tables, or discarding
 existing relationships.
 
+ADR-039 approves the Game Type name/index and imported-code design below for
+Catalog v4 -> v5. The v5 migration and prerequisite Phase 3D2 name-validation
+amendment remain unimplemented; this document does not implement Phase 3E.
+
 ## 1. Authority and Scope
 
 BingoCommerce uses a hybrid authority split:
@@ -67,8 +71,10 @@ Hall-local first-class Game Type replica and commerce relationship identity.
 | Column | Nullability/default intent | Meaning |
 |---|---|---|
 | `game_type_id` | Non-null | Unsigned numeric surrogate primary key |
+| `portal_game_type_id` | Nullable | Unique Portal identity link implemented in Catalog v4 |
 | `code` | Non-null | Stable immutable machine code |
-| `name` | Non-null | Editable display name |
+| `name` | Non-null, `varchar(160)` | Actual display/source name; accepted Portal names stay unchanged |
+| `local_name_key` | Nullable, `varchar(160)`; approved for v5 | Exact stored name for local rows; SQL `NULL` for Portal-linked rows; same charset/collation as `name` |
 | `status` | Non-null; `active` initially | Lifecycle state: `active` or `archived` |
 | `created_at` | Non-null | Creation timestamp |
 | `updated_at` | Non-null | Last-change timestamp |
@@ -78,22 +84,51 @@ Constraints and indexes:
 
 - Primary key: `game_type_id`.
 - Unique per hall: `code`.
-- Unique per hall: `name`.
+- Unique per hall: non-null `portal_game_type_id`.
+- Catalog v5 removes `UNIQUE name_unique(name)` and adds
+  `UNIQUE local_name_unique(local_name_key)`, protecting local-versus-local
+  names, including archived local rows. Writers must maintain the key.
+- Add nonunique `name_id(name, game_type_id)` in v5.
 - Index: `(status, name)` for active administrative/builder selection.
 - `code` is immutable after creation; changing `name` does not change identity.
 - Under ADR-035, neither `code` nor `name` is cross-system identity. Portal
-  `game_types.id` supplies that identity; exact replica-link persistence is
-  deferred to the compatibility/refactoring review.
+  `game_types.id` supplies that identity through `portal_game_type_id`.
+- Duplicate and collation-equivalent Portal names with different Portal IDs
+  remain separate rows. Never link, merge, or overwrite rows using names.
 - Portal Game Types may be created and renamed; rename preserves
   `game_types.id`; deletion is prohibited once created; Portal Archive/Restore
-  is not required in v1. Existing local lifecycle behavior remains transitional
+  is not part of v1 (ADR-038). Existing local lifecycle behavior remains transitional
   and is not the Portal lifecycle contract.
 - Runtime behavior is never inferred from `name`, a WooCommerce product title,
   SKU, tag, or category.
 
-The exact Game Type code syntax, maximum length, normalization, and generation
-rules remain an implementation-slice decision that MUST be finalized before
-the first Catalog migration is written.
+ADR-039's imported-code candidates are `portal-gt-<portal_game_type_id>`, then
+`portal-gt-<id>-2` through `portal-gt-<id>-32`, in order. They fit the existing
+64-character code limit and grammar. Existing local codes remain unchanged;
+the namespace is not reserved and database `code_unique` is the collision
+authority. Find existing imported rows only by `portal_game_type_id` within
+the trusted Hall; never adopt or overwrite a row because its code matches.
+Allocated codes are immutable across rename and re-import. Exhausting all 32
+candidates rejects the complete application without partial domain changes.
+
+Before Phase 3E, amend the Phase 3D2 name boundary to reject Unicode control
+and format characters, line and paragraph separators, and names containing
+only whitespace or Unicode separators. Accepted names remain unchanged; do
+not normalize, trim, rewrite, or escape the stored value. Reuse the existing
+safe name-validation error vocabulary. This amendment is not implemented here.
+
+For the v4 -> v5 migration, backfill `local_name_key = name` where
+`portal_game_type_id IS NULL` and set/retain a `NULL` key for linked rows.
+Preserve existing names, codes, IDs, statuses, references, and timestamps;
+do not automatically link local rows. `dbDelta()` remains the normal mechanism.
+ADR-039 authorizes only the narrowly scoped, idempotent, allowlisted
+`DROP INDEX name_unique` exception on the trusted Hall's Game Type table.
+Verify the table/index before removal, the replacement key/backfill before
+dropping it, and the table/index state afterward. Advance the Catalog version
+only after complete verification; new sites receive the final v5 schema
+directly. Transaction/locking mechanics, replay/stale-order handling,
+Session-template application, local writer restrictions after synchronization,
+Commerce scheduling, webhooks, SSO, and provisioning remain open.
 
 ### 2.2 `$wpdb->prefix . 'bingo_play_products'`
 

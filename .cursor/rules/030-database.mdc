@@ -92,7 +92,14 @@ current model.
   `bc_<plugin>_db_version`); network-wide schema/artifacts use a
   network-scope version option (e.g. `bc_core_network_db_version`, per
   ADR-025 item 8) — do not assume every plugin/table schema version is
-  necessarily per-site. Create/update via `dbDelta()`; migrations must be
+  necessarily per-site. Create/update via `dbDelta()` as the required default;
+  an explicit ADR may authorize an operation `dbDelta()` cannot perform.
+  The current sole exception is ADR-039's removal of `name_unique` from the
+  trusted Hall-local `bingo_game_types` table. It must use the fixed allowlisted
+  table suffix `bingo_game_types` and index name `name_unique`, verify the exact
+  index before removal, be idempotent, and verify the final schema afterward.
+  The schema version must not advance until verification succeeds. This does
+  not permit general-purpose or user-controlled structural SQL. Migrations must be
   idempotent, backward-aware, and safe to run at network scale, for both
   existing sites and newly created Multisite sites.
 - Table names must be distinctive — never reuse WP core or WooCommerce table
