@@ -6,9 +6,10 @@ reviewed increments tracked in `PROJECT_STATUS.md`.
 This document expands ADR-035 and BR-071 through BR-075. It defines the
 integration boundary between the existing Laravel Bingo Innovation Portal and
 the WordPress Multisite/WooCommerce BingoCommerce platform. Except for
-ADR-036's narrow Hall snapshot transport URL contract and ADR-037's Hall
-snapshot v1 validation contract, it is not an API, webhook, persistence,
-provisioning, or SSO implementation design.
+ADR-036's narrow Hall snapshot transport URL contract, ADR-037's Hall snapshot
+v1 validation contract, and ADR-038's completeness and Game Type absence
+decision, it is not an API, webhook, persistence, provisioning, or SSO
+implementation design.
 
 All Portal identities below belong to the single authoritative Bingo Innovation
 Portal environment:
@@ -60,7 +61,7 @@ beyond that mapping foundation, remain deferred.
 Portal `game_types.id` is the trusted Game Type identity. Portal Game Type
 creation and rename are allowed. Its name is editable, and rename preserves
 `game_types.id`. Once created, a Portal Game Type cannot be deleted. Archive and
-Restore are not required in Portal v1.
+Restore are not part of Portal v1 (ADR-038).
 
 `device_group_id` and XML GameGroup IDs remain hardware/XML/device concerns and
 MUST NEVER be used as BingoCommerce integration identities. XML-generated
@@ -280,10 +281,44 @@ The public error vocabulary is limited to `invalid_portal_hall_id`,
 validator-generated structural path. Raw bodies, Portal names, credentials, and
 upstream responses never reach an error or a log.
 
-This contract authorizes validation only. Snapshot application/import,
-missing-record handling, replica currentness, reconciliation, Hall mapping
-mutation, Commerce scheduling, webhooks, SSO, and provisioning remain Phase 3E
-or later.
+This contract authorizes validation only. Snapshot application/import and
+persistence remain Phase 3E or later; ADR-038 below freezes the specific v1
+Game Type absence rule without implementing it. Reconciliation, Hall mapping
+mutation, Commerce scheduling, webhooks, SSO, and provisioning remain deferred.
+
+### Pre-Phase 3E: snapshot completeness and Game Type absence
+
+ADR-038 guarantees that a successful Portal v1 snapshot is complete,
+non-paginated, and non-delta for one trusted mapped Hall. `game_types` contains
+every Portal Game Type owned by that Hall. `sessions` contains every qualifying
+owner-only Portal Session template; shared and received Sessions remain
+excluded. Empty collections are authoritative. Snapshot membership represents
+one logically consistent source boundary. Phase 3D2 validates structure but
+cannot independently prove completeness; the Portal snapshot endpoint
+contract guarantees it. Phase 3E must consume only Phase 3D2 validated data.
+
+Portal Game Type deletion is prohibited in v1, and Portal Game Type
+Archive/Restore is not part of v1. A previously linked Portal Game Type missing
+from a later successful complete snapshot for that Hall is therefore a
+contract/integrity violation. Phase 3E MUST reject the entire application
+attempt and perform zero writes. The local Game Type row, ID, code, name,
+status, references, and timestamps remain unchanged. Missing Game Types MUST
+NOT be deleted, archived, unlinked, or marked not-current. Game Type
+`portal_is_current` or `portal_not_current_at` fields are not required for v1.
+An empty `game_types` collection also requires zero-write rejection when that
+Hall has a previously linked Portal Game Type.
+
+A later valid snapshot containing the same Portal ID may be processed
+normally; identity matching remains based only on Portal `game_types.id`
+within the trusted mapped Hall. Names and codes never determine disappearance.
+Duplicate Portal names with different IDs remain valid and distinct. HTTP
+failure, validation failure, wrong-Hall data, incomplete responses, or
+application failure never create missing-record meaning.
+
+This documentation-only decision changes no Commerce scheduling or
+product/order authority and implements no Phase 3E behavior. Session-template
+application behavior beyond already-frozen decisions remains open; the Game
+Type absence rule does not decide it.
 
 Approved shape:
 
@@ -312,13 +347,17 @@ and idempotent mapping establish the recovery baseline that later webhook and
 reconciliation work depend on.
 
 Except for ADR-036's Hall snapshot transport URL and header-only credential
-placement and ADR-037's Hall snapshot v1 validation contract, the following
-details remain undecided until their dedicated reviews:
+placement, ADR-037's Hall snapshot v1 validation contract, and ADR-038's
+completeness and Game Type absence decision, the following details remain
+undecided until their dedicated reviews:
 
 - Portal API authentication and authorization lifecycle;
 - other endpoint paths, versions, filters, pagination, and payloads;
-- Portal Game Type replica currentness and missing-record lifecycle, which must
-  be frozen before Phase 3E writers are implemented;
+- remaining pre-Phase 3E design work: exact duplicate-name persistence/index
+  design, imported internal-code allocation, snapshot replay/stale-order
+  protection, Phase 3E transaction and locking mechanics, local writer
+  restrictions after synchronization, and Session-template application behavior
+  beyond already-frozen decisions;
 - webhook event types, signatures, ordering, retry, replay, and delivery logs;
 - any additional sync-state/cursor persistence, reconciliation state, and
   future snapshot-application/import writer details;

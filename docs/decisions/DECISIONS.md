@@ -1039,6 +1039,70 @@ leakage — the platform's highest-severity bug class — out of the first
 increment. Freezing this contract before any writer exists means Phase 3E can be
 reviewed as a persistence decision alone, on data already proven trustworthy.
 
+- **ADR-038 — [2026-09-07] — Portal v1 Snapshot Completeness and Game Type Absence:**
+
+**Completeness.** A successful Portal v1 snapshot is a complete, non-paginated,
+non-delta snapshot for one trusted mapped Hall. `game_types` contains every
+Portal Game Type owned by that Hall. `sessions` contains every qualifying
+owner-only Portal Session template; shared and received Sessions remain
+excluded. Empty collections are authoritative. Snapshot membership represents
+one logically consistent source boundary.
+
+Phase 3D2 validates structure but cannot independently prove completeness.
+Completeness is guaranteed by the Portal snapshot endpoint contract. This
+decision adds no payload fields and does not change ADR-037's validation rules.
+Phase 3E must consume only Phase 3D2 validated data.
+
+**Game Type absence.** Portal Game Type deletion is prohibited in v1. Portal
+Game Type Archive/Restore is not part of v1. Therefore, a previously linked
+Portal Game Type missing from a later successful complete snapshot for the
+same trusted mapped Hall is a contract/integrity violation. Phase 3E MUST
+reject the entire application attempt and perform zero writes. The local Game
+Type row, ID, code, name, status, references, and timestamps remain unchanged.
+Missing Game Types MUST NOT be deleted, archived, unlinked, or marked
+not-current. Game Type `portal_is_current` or `portal_not_current_at` fields
+are not required for v1.
+
+An authoritative empty `game_types` collection does not override this rule:
+if that Hall has a previously linked Portal Game Type, the empty collection
+requires rejection of the entire application attempt with zero writes. A later
+valid snapshot containing the same Portal ID may be processed normally;
+identity matching remains based only on Portal `game_types.id` within the
+trusted mapped Hall.
+
+**Absence safety.** HTTP failure, validation failure, wrong-Hall data,
+incomplete responses, or application failure never create missing-record
+meaning. Names and codes are never used to determine whether a record
+disappeared. Duplicate Portal names with different IDs remain valid and
+distinct.
+
+**Authority and scope.** No Commerce scheduling or product/order authority
+changes. Portal Session `days` remain excluded from Commerce scheduling,
+occurrence generation, and scheduling constraints or validation. This is a
+documentation-only decision; it does not implement Phase 3E or authorize PHP,
+test, migration, plugin, or schema changes.
+
+**Remaining pre-Phase 3E design work.** This slice does not decide:
+
+- exact duplicate-name persistence/index design;
+- imported internal-code allocation;
+- snapshot replay/stale-order protection;
+- Phase 3E transaction and locking mechanics;
+- local writer restrictions after synchronization; or
+- Session-template application behavior beyond already-frozen decisions.
+
+**Relationship to earlier decisions.** This entry resolves snapshot
+completeness and the previously open Game Type absence/currentness questions
+for v1. It narrows ADR-035's Portal Game Type Archive/Restore wording from
+not required to not part of v1. ADR-035's authority, identity, and delivery
+sequence and ADR-036/ADR-037's transport and validation boundaries remain in
+force. Existing ADRs are not rewritten.
+
+*Rationale:* A complete source collection combined with the v1 prohibition on
+Game Type deletion makes a missing linked identity an integrity violation,
+not a local lifecycle transition. Rejecting the entire application with zero
+writes preserves existing commerce identities and relationships.
+
 
 ---
 
@@ -2452,25 +2516,22 @@ delete_users.
 ## Still Open / TBD Items (Unresolved)
 
 - Portal integration persistence and contract details deferred by ADR-035 and
-  not yet resolved by ADR-036/ADR-037: Portal API authentication lifecycle;
+  not yet resolved by ADR-036/ADR-037/ADR-038: Portal API authentication lifecycle;
   other endpoint paths and payloads; webhook signing, retry, replay and
   ordering; snapshot application/import writers; reconciliation and transitional
   conflict policy; commerce-schedule recurrence horizon, timezone/DST and
   regeneration rules; enablement/provisioning lifecycle; and SSO
   protocol/account/tenant mapping. ADR-036 fixed the Hall snapshot transport URL
-  and ADR-037 froze the Hall snapshot v1 validation contract; both are limited
-  to reading and validating, and neither authorizes persistence.
-- Portal Game Type replica currentness and missing-record lifecycle. Phase 3C1
-  added `bingo_game_types.portal_game_type_id` but no Portal replica-currentness
-  state, and the local `status = active | archived` column must NOT be reused as
-  Portal snapshot currentness without a reviewed decision. What happens when a
-  previously synced Portal Game Type disappears, whether `portal_is_current` /
-  `portal_not_current_at` are added, how a reappearing Portal Game Type is
-  restored, how the transitional local lifecycle interacts with replica
-  currentness, the deterministic internal `code` strategy for a newly imported
-  Portal Game Type, and name/collation collision handling during import all
-  remain open. This MUST be frozen before Phase 3E writers are implemented;
-  ADR-037 deliberately does not resolve it.
+  and ADR-037 froze the Hall snapshot v1 validation contract. ADR-038 freezes
+  completeness and zero-write rejection of missing linked Game Types. None of
+  these decisions authorizes Phase 3E implementation.
+- Remaining pre-Phase 3E design work after ADR-038: exact duplicate-name
+  persistence/index design; imported internal-code allocation; snapshot
+  replay/stale-order protection; Phase 3E transaction and locking mechanics;
+  local writer restrictions after synchronization; and Session-template
+  application behavior beyond already-frozen decisions. Game Type
+  `portal_is_current` / `portal_not_current_at` fields are not required for v1;
+  missing linked Game Types are integrity violations, not currentness changes.
 - Schema-specific compatibility/refactoring review for the implemented local
   Game Type and Session models. The review must not assume either domain or the
   existing Session tables are deleted or replaced.

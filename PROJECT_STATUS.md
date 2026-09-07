@@ -1031,17 +1031,38 @@
 - **NEXT Portal-integration checkpoint: Phase 3E — snapshot
   application/import.** Phase 3E is not implemented. Overall Phase 3D is
   COMPLETE.
-  - **Phase 3E prerequisite that MUST be frozen first: Portal Game Type replica
-    currentness / missing-record lifecycle.** Phase 3C1 added
-    `portal_game_type_id` but no Portal replica-currentness state, and the local
-    `status = active | archived` column must NOT be reused as Portal snapshot
-    currentness without a reviewed decision. Still unresolved: what happens when
-    a previously synced Portal Game Type disappears; whether
-    `portal_is_current` / `portal_not_current_at` are added; how a reappearing
-    Portal Game Type is restored; how the transitional local lifecycle interacts
-    with replica currentness; the deterministic internal `code` strategy for a
-    newly imported Portal Game Type; and name/collation collision handling
-    during import. ADR-037 deliberately does not resolve any of it.
+  - **[2026-09-07] Pre-Phase 3E Design Slice 1 — snapshot completeness:
+    documented in ADR-038; ready for source review.** A successful Portal v1
+    snapshot is complete, non-paginated, and non-delta for one trusted mapped
+    Hall. `game_types` contains every owned Portal Game Type; `sessions`
+    contains every qualifying owner-only Portal Session template, excluding
+    shared and received Sessions. Empty collections are authoritative, and
+    membership represents one logically consistent source boundary. Phase 3D2
+    validates structure but cannot independently prove completeness; the Portal
+    snapshot endpoint contract guarantees it.
+  - **Game Type absence is a contract/integrity violation.** Portal Game Type
+    deletion is prohibited in v1; Portal Game Type Archive/Restore is not part
+    of v1. A previously linked Portal Game Type missing from a later successful
+    complete snapshot requires Phase 3E to reject the entire application
+    attempt and perform zero writes. The local row, ID, code, name, status,
+    references, and timestamps remain unchanged. Missing Game Types must not be
+    deleted, archived, unlinked, or marked not-current; Game Type
+    `portal_is_current` / `portal_not_current_at` fields are not required for v1.
+    This also applies to an empty `game_types` collection when a previously
+    linked Portal Game Type exists in that Hall. A later valid snapshot with
+    the same Portal ID may be processed normally, matching only by Portal
+    `game_types.id` within the trusted mapped Hall.
+  - **Absence safety:** HTTP failure, validation failure, wrong-Hall data,
+    incomplete responses, or application failure never create missing-record
+    meaning. Names and codes never determine disappearance; duplicate Portal
+    names with different IDs remain valid and distinct. No Commerce scheduling
+    or product/order authority changes. This slice changes documentation only;
+    no PHP, tests, migrations, plugins, schemas, or Phase 3E implementation.
+  - **Remaining pre-Phase 3E design work:** exact duplicate-name
+    persistence/index design; imported internal-code allocation; snapshot
+    replay/stale-order protection; Phase 3E transaction and locking mechanics;
+    local writer restrictions after synchronization; and Session-template
+    application behavior beyond already-frozen decisions.
 - No Hall Staff Management work currently in progress.
 - No other Catalog or Session implementation work is in progress. Package
   Increment 1 and Session Increment 1 remain COMPLETE and are recorded under
@@ -1057,19 +1078,21 @@
    Network Active plugin, including tenant isolation and Game Operator denial.
 3. **Phase 3C1 — Portal Game Type identity persistence: COMPLETE. Phase 3C2 —
    Portal Session-template replica persistence: COMPLETE. Phase 3D1 — Portal
-   HTTP transport: COMPLETE.** The next checkpoint is **Phase 3D2 — strict
-   Portal snapshot validation**, which is not implemented; overall Phase 3D is
-   not complete. Snapshot application/import remains Phase 3E. Commerce
-   selection remains separate and is not implemented.
+   HTTP transport: COMPLETE. Phase 3D2 — strict Portal snapshot validation:
+   COMPLETE.** Overall Phase 3D is complete. ADR-038 records snapshot
+   completeness and Game Type absence; remaining pre-Phase 3E design work is
+   listed above. Phase 3E snapshot application/import is not implemented.
+   Commerce selection remains separate and is not implemented.
 
 Everything below is tracked work that is NOT a blocker to that demo.
 
 ## Before Customer-Facing Digital Launch
 1. Complete the remaining Portal integration delivery increments. Phase 3B
    Hall mapping/config, Phase 3C1 Game Type identity persistence, Phase 3C2
-   Session-template replica persistence, and Phase 3D1 read-only HTTP transport
-   are complete. Remaining work begins with Phase 3D2 strict snapshot
-   validation, followed by Phase 3E snapshot application/full-pull idempotent
+   Session-template replica persistence, Phase 3D1 read-only HTTP transport,
+   and Phase 3D2 strict snapshot validation are complete. Remaining work begins
+   with the pre-Phase 3E design questions preserved by ADR-038, followed by
+   Phase 3E snapshot application/full-pull idempotent
    synchronization, followed by a separate second-mapped-Hall tenant-isolation
    proof, then the separately reviewed webhook, reconciliation, and tenant-
    provisioning increments. Any further Game Type/Session schema or writer
