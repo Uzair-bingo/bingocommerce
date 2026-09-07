@@ -928,6 +928,117 @@ versioned integration route to the client that owns that operation. Excluding
 the API prefix prevents ambiguous or duplicated paths such as
 `/integration/integration/v1/...`.
 
+- **ADR-037 — [2026-09-04] — Portal Hall Snapshot v1 Validation Contract:**
+
+The Portal Hall snapshot v1 payload contract and its BingoCommerce validation
+boundary are decided. `PortalSnapshotValidator` converts the raw HTTP 200 body
+returned by ADR-036's transport into a trusted, reconstructed in-memory array or
+a `WP_Error`. It is deterministic, read-only, and side-effect-free.
+
+**Exact v1 allowlist.** The envelope carries exactly `api_version`,
+`generated_at`, `hall`, `game_types`, and `sessions`. The Hall object carries
+exactly `id`, `name`, `state`, and `updated_at`. Each Game Type carries exactly
+`id`, `hall_id`, `name`, and `updated_at`. Each Session template carries exactly
+`id`, `hall_id`, `name`, `status`, and `updated_at`.
+
+**Strict rejection.** A missing required member and an unknown member are both
+fatal at every level, and the complete snapshot is rejected. Partial acceptance
+is prohibited. Operational Portal fields — including `days`, `type`,
+`paper_type`, `allow_sleeper`, `notes`, `sort_order`, `created_by`, `games`,
+`patterns`, `caller`, `device_group_id`, XML GameGroup identifiers, `deleted_at`
+and `game_type_ids` — are never accepted and reject the snapshot if present.
+Duplicate JSON object member names are not separately detected: PHP's native
+decoder is the approved parser, and no custom JSON parser is introduced.
+
+**Version.** `api_version` must be exactly the string `v1`.
+
+**Timestamps.** Portal timestamps are serialized as `YYYY-MM-DDTHH:MM:SS±HH:MM`
+with no fractional seconds and an explicit numeric offset; a `Z` suffix is not
+accepted. `generated_at` is required and non-null. `hall.updated_at`,
+`game_types[*].updated_at` and `sessions[*].updated_at` are required keys whose
+value may be null. A non-null value is validated by anchored shape matching,
+strict parsing, parse warning/error inspection, and exact round-trip equality,
+so a silently normalized impossible date or time is rejected. The UTC offset is
+additionally range-checked structurally — offset hour `00`-`23` and offset
+minute `00`-`59` — because PHP's parser accepts and round-trips impossible
+offsets such as `+25:00` without raising a warning. That bound is the numeric
+shape of an Atom offset and is deliberately NOT a Portal-specific
+`-12:00`..`+14:00` timezone range: `+23:59` is structurally valid, while
+`+24:00`, `+25:00` and `+10:60` are rejected. A valid timestamp string is
+preserved verbatim; no timezone conversion, UTC normalization, or MySQL
+`DATETIME` conversion happens here.
+
+**Identity and tenancy.** Every Portal identity must be a native integer `>= 1`
+after safe decoding; numeric strings, floats, booleans, and oversized JSON
+integers are contract violations, never values to coerce. The validator receives
+the expected Portal Hall ID from trusted mapping/orchestration context and
+requires `hall.id`, every `game_types[*].hall_id`, and every
+`sessions[*].hall_id` to equal it. Tenant identity is never derived from a name,
+domain, host, request URL, or list ordering. Any mismatch rejects the complete
+snapshot.
+
+**Collections.** `game_types` and `sessions` may be empty. Input order is
+preserved exactly and sorting is never required or applied. Within each
+collection every `id` must be unique; duplicates reject the snapshot and are
+never deduplicated or merged. The same numeric value may legitimately appear
+once in each independent identity domain. Names are never uniqueness keys.
+
+**Names and enums.** Hall and Session names allow at most 255 Unicode
+characters, Game Type names at most 50, counted as characters and never as
+bytes. A name that is empty or whitespace-only is rejected, matching Portal
+validation semantics. Valid names are returned unchanged — never trimmed,
+sanitized, escaped, or normalized; escaping belongs to presentation boundaries.
+Hall `state` is exactly `active` or `inactive`; Session `status` is exactly
+`active` or `draft`. Enum matching is case-sensitive and an unknown value is
+never mapped into a known one.
+
+**Retention.** An inactive Hall snapshot is valid and retained. A draft Session
+is valid and retained.
+
+**Decoding.** Decoding uses PHP's native JSON decoder with `JSON_THROW_ON_ERROR`
+and `JSON_BIGINT_AS_STRING`, and objects decoded as objects so `{}` and `[]`
+remain distinguishable. The invalid-UTF-8 tolerance flags are prohibited. The
+implementation explicitly passes PHP's standard decoder depth of `512`, because
+the flags argument follows the depth argument positionally. That `512` is a
+technical decoder safety bound only: it carries NO Portal v1 business or API
+meaning, BingoCommerce derives no domain semantics from it, and no
+BingoCommerce domain constant is introduced for it. Changing this technical
+bound later requires implementation review, but does NOT by itself require a
+Portal API-version change. A body nested beyond the configured decoder depth
+fails safely as invalid JSON. No raw-body byte-size limit is introduced here,
+because the body has already been received by the transport; any HTTP
+response-size cap belongs to a separately reviewed transport hardening change.
+
+**Error surface.** The public error vocabulary is exactly
+`invalid_portal_hall_id`, `portal_snapshot_invalid_json`,
+`portal_snapshot_invalid_contract`, `portal_snapshot_unsupported_version`,
+`portal_snapshot_hall_mismatch`, and `portal_snapshot_duplicate_identity`. Error
+data may carry only a validator-generated structural path such as
+`sessions[2].hall_id`. Raw bodies, decoded structures, invalid rows, Portal
+names, credentials, request arguments, and upstream responses must never appear
+in an error message, error data, or a log.
+
+**Boundary.** This decision authorizes validation only. It does NOT authorize
+database writes, snapshot application or import, missing-record handling,
+currentness mutation, `portal_updated_at` persistence, reconciliation, Hall
+mapping mutation, Commerce scheduling, webhooks, SSO, or provisioning. Phase 3E
+remains responsible for snapshot application/import, currentness, and
+reconciliation.
+
+**Relationship to earlier decisions.** This entry resolves only ADR-035's
+deferred Hall snapshot payload/validation contract and builds on ADR-036's
+transport. ADR-035's and ADR-036's authority, identity, sequencing, tenant-
+isolation, and future-phase boundaries remain unchanged, and neither entry is
+edited. Other Portal endpoints and payloads remain deferred.
+
+*Rationale:* An exact allowlist with strict unknown-field rejection means a
+field the Portal adds later cannot silently reach commerce code, and a partial
+or foreign-tenant document cannot be half-accepted. Validating identity as
+native integers and tenancy against trusted context keeps cross-hall data
+leakage — the platform's highest-severity bug class — out of the first
+increment. Freezing this contract before any writer exists means Phase 3E can be
+reviewed as a persistence decision alone, on data already proven trustworthy.
+
 
 ---
 
@@ -2340,12 +2451,26 @@ delete_users.
 
 ## Still Open / TBD Items (Unresolved)
 
-- Portal integration persistence and contract details deferred by ADR-035:
-  Hall/Game-Type/Session-template mappings; Portal API authentication and
-  payloads; webhook signing, retry, replay and ordering; reconciliation and
-  transitional conflict policy; commerce-schedule recurrence horizon,
-  timezone/DST and regeneration rules; enablement/provisioning lifecycle; and
-  SSO protocol/account/tenant mapping.
+- Portal integration persistence and contract details deferred by ADR-035 and
+  not yet resolved by ADR-036/ADR-037: Portal API authentication lifecycle;
+  other endpoint paths and payloads; webhook signing, retry, replay and
+  ordering; snapshot application/import writers; reconciliation and transitional
+  conflict policy; commerce-schedule recurrence horizon, timezone/DST and
+  regeneration rules; enablement/provisioning lifecycle; and SSO
+  protocol/account/tenant mapping. ADR-036 fixed the Hall snapshot transport URL
+  and ADR-037 froze the Hall snapshot v1 validation contract; both are limited
+  to reading and validating, and neither authorizes persistence.
+- Portal Game Type replica currentness and missing-record lifecycle. Phase 3C1
+  added `bingo_game_types.portal_game_type_id` but no Portal replica-currentness
+  state, and the local `status = active | archived` column must NOT be reused as
+  Portal snapshot currentness without a reviewed decision. What happens when a
+  previously synced Portal Game Type disappears, whether `portal_is_current` /
+  `portal_not_current_at` are added, how a reappearing Portal Game Type is
+  restored, how the transitional local lifecycle interacts with replica
+  currentness, the deterministic internal `code` strategy for a newly imported
+  Portal Game Type, and name/collation collision handling during import all
+  remain open. This MUST be frozen before Phase 3E writers are implemented;
+  ADR-037 deliberately does not resolve it.
 - Schema-specific compatibility/refactoring review for the implemented local
   Game Type and Session models. The review must not assume either domain or the
   existing Session tables are deleted or replaced.

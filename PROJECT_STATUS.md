@@ -970,11 +970,76 @@
   and excludes the `/integration` API prefix. The server-only
   `PortalHttpClient` appends `/integration/v1/halls/{id}/snapshot`, performs a
   blocking, read-only GET, and does not follow redirects. The focused harness
-  passes 67/67 assertions. No snapshot validation or Portal data import/write
-  exists yet.
-- **NEXT Portal-integration checkpoint: Phase 3D2 — strict Portal snapshot
-  validation.** Phase 3D2 is not implemented, and overall Phase 3D is not
-  complete. Snapshot application/import is Phase 3E and is not implemented.
+  passes 67/67 assertions. Phase 3D1 itself performs no snapshot validation
+  and no Portal data import/write.
+- **Phase 3D2 — strict Portal snapshot validation: COMPLETE.** ADR-037
+  freezes the Hall snapshot v1 validation contract. The new
+  `PortalSnapshotValidator` turns a raw HTTP 200 body into a trusted,
+  reconstructed in-memory array or a `WP_Error`. The focused harness passes
+  **1443/1443 assertions**.
+  - **Exact v1 allowlist.** Envelope `api_version`, `generated_at`, `hall`,
+    `game_types`, `sessions`; Hall `id`, `name`, `state`, `updated_at`; Game
+    Type `id`, `hall_id`, `name`, `updated_at`; Session `id`, `hall_id`,
+    `name`, `status`, `updated_at`.
+  - **Strict unknown-field rejection.** A missing required member and an
+    unknown member are both fatal at every level and reject the complete
+    snapshot; forbidden operational fields (`days`, `games`, `patterns`,
+    `caller`, `device_group_id`, `deleted_at`, `game_type_ids` and similar)
+    cannot enter the commerce boundary. `api_version` must be exactly `v1`.
+  - **Exact timestamp validation.** `YYYY-MM-DDTHH:MM:SS±HH:MM` only — no
+    fractional seconds, no `Z` suffix, no offset-free form — enforced by
+    anchored shape matching, strict parsing, parse warning/error inspection,
+    and exact round-trip equality, so silently normalized impossible dates and
+    times are rejected. The UTC offset is additionally range-checked
+    structurally (hour `00`-`23`, minute `00`-`59`), because PHP's parser
+    round-trips impossible offsets such as `+25:00` without a warning; that is
+    the numeric shape of an Atom offset, not a Portal timezone range. Valid
+    strings are preserved verbatim.
+  - **JSON decoding depth.** The implementation explicitly passes PHP's
+    standard decoder depth of `512`, because the flags argument follows the
+    depth argument positionally. That number is a technical decoder safety
+    bound only: it carries no Portal v1 business or API meaning, BingoCommerce
+    derives no domain semantics from it, and no BingoCommerce domain constant
+    is introduced for it. Changing this technical bound later requires
+    implementation review, but does not by itself require a Portal API-version
+    change. A body nested beyond the configured decoder depth fails safely as
+    invalid JSON.
+  - **Nullable `updated_at`.** `hall.updated_at`, `game_types[*].updated_at`
+    and `sessions[*].updated_at` are required keys whose value may be null;
+    `generated_at` is required and non-null.
+  - **Hall mismatch rejection and child Hall mismatch rejection.** `hall.id`
+    and every child `hall_id` must equal the expected Portal Hall ID supplied
+    by trusted mapping context; any mismatch rejects the complete snapshot and
+    returns no partial rows. Tenancy is never derived from a name, domain,
+    host, URL, or ordering.
+  - **Duplicate identity rejection.** A repeated `id` within `game_types` or
+    within `sessions` rejects the snapshot; nothing is deduplicated or merged.
+    The same number may appear once in each independent identity domain, and
+    names are never uniqueness keys.
+  - **Draft Session preservation and inactive Hall preservation.** Both are
+    valid, retained, and never rewritten. Collection input order is preserved
+    exactly with no sorting requirement. Names are validated by Unicode
+    character count (Hall/Session 255, Game Type 50) and returned unchanged.
+  - **Boundary proven by the harness:** no HTTP (zero requests counted through
+    a `pre_http_request` seam), no persistence, no import/application, no
+    reconciliation, no currentness behavior, no Hall mapping mutation, and no
+    webhook/scheduler/SSO/provisioning. Catalog, Session, Portal replica,
+    WooCommerce, Hall mapping, and schema/version option state were all
+    byte-identical before and after the run.
+- **NEXT Portal-integration checkpoint: Phase 3E — snapshot
+  application/import.** Phase 3E is not implemented. Overall Phase 3D is
+  COMPLETE.
+  - **Phase 3E prerequisite that MUST be frozen first: Portal Game Type replica
+    currentness / missing-record lifecycle.** Phase 3C1 added
+    `portal_game_type_id` but no Portal replica-currentness state, and the local
+    `status = active | archived` column must NOT be reused as Portal snapshot
+    currentness without a reviewed decision. Still unresolved: what happens when
+    a previously synced Portal Game Type disappears; whether
+    `portal_is_current` / `portal_not_current_at` are added; how a reappearing
+    Portal Game Type is restored; how the transitional local lifecycle interacts
+    with replica currentness; the deterministic internal `code` strategy for a
+    newly imported Portal Game Type; and name/collation collision handling
+    during import. ADR-037 deliberately does not resolve any of it.
 - No Hall Staff Management work currently in progress.
 - No other Catalog or Session implementation work is in progress. Package
   Increment 1 and Session Increment 1 remain COMPLETE and are recorded under
@@ -1109,7 +1174,8 @@ Everything below is tracked work that is NOT a blocker to that demo.
   §"Catalog lock-order review" is accurate as written. ADR-033 locks
   `bingo_packages` then `bingo_play_products` ascending, and locks no component
   rows at all.
-- Latest verified results: Phase 3D1 Portal HTTP transport **67/67 PASS**; Phase
+- Latest verified results: Phase 3D2 Portal snapshot validation **1443/1443
+  PASS**; Phase 3D1 Portal HTTP transport **67/67 PASS**; Phase
   3B Portal integration foundation regression **75/75 PASS**; Phase 3C2 Portal
   Session-template replica persistence **98/98 PASS**; Phase 3C1 Portal Game
   Type identity persistence **66/66 PASS**; Session Increment 1 **344/344
@@ -1118,7 +1184,17 @@ Everything below is tracked work that is NOT a blocker to that demo.
   functional/regression assertions PASS** with zero functional/regression
   failures; the selector
   regression passes; and current-run disposable-hall cleanup reports **5/5
-  PASS** with zero cleanup failures. Tampa Game Type `#39 "PPI1 Tampa Only
+  PASS** with zero cleanup failures. **Caveat on the Phase 3C1 figure:** that
+  66/66 result is the historical result recorded when Phase 3C1 landed. On the
+  current local environment `tests/portal-game-type-identity-persistence.php`
+  now stops at its fourth assertion, `no Portal Session-template table exists
+  before the suite` (expected `0`, actual `3`). The precondition was written
+  before Phase 3C2 existed and is stale: the three tables are
+  `bc_2_/bc_3_/bc_4_bingo_portal_session_templates`, created by Phase 3C2's
+  committed migration on Sunrise/Tampa/Orlando. This was verified failing at
+  commit `f50fb09` before any Phase 3D2 change and is NOT a Phase 3D2
+  regression. The harness was deliberately left unmodified; correcting that
+  stale precondition is separate, reviewable work. Tampa Game Type `#39 "PPI1 Tampa Only
   89AUU"` remains an unproven, undeleted residue detection only, not a
   functional failure. The persistent Sunrise protected-row snapshot was
   byte-identical before and after the run.
@@ -1146,9 +1222,10 @@ Everything below is tracked work that is NOT a blocker to that demo.
   `wp-content/plugins/bingocommerce-catalog/` and
   `wp-content/plugins/bingocommerce-sessions/` (all three Network Active);
   `wp-content/plugins/bingocommerce-portal-integration/` is declared
-  network-only and contains the Phase 3B Hall mapping/config foundation plus
-  the Phase 3D1 read-only Portal HTTP transport; Phase 3D2 strict snapshot
-  validation and Phase 3E snapshot application/import are not implemented
+  network-only and contains the Phase 3B Hall mapping/config foundation, the
+  Phase 3D1 read-only Portal HTTP transport, and the Phase 3D2 strict
+  `PortalSnapshotValidator`; Phase 3E snapshot application/import is not
+  implemented
 - **Catalog schema:** per-site `bc_catalog_db_version` = 4
   (`bingo_game_types`, `bingo_play_products`, `bingo_packages`,
   `bingo_package_components`); v4 adds nullable, unique

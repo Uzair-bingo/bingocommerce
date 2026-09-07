@@ -6,8 +6,9 @@ reviewed increments tracked in `PROJECT_STATUS.md`.
 This document expands ADR-035 and BR-071 through BR-075. It defines the
 integration boundary between the existing Laravel Bingo Innovation Portal and
 the WordPress Multisite/WooCommerce BingoCommerce platform. Except for
-ADR-036's narrow Hall snapshot transport URL contract, it is not an API,
-webhook, persistence, provisioning, or SSO implementation design.
+ADR-036's narrow Hall snapshot transport URL contract and ADR-037's Hall
+snapshot v1 validation contract, it is not an API, webhook, persistence,
+provisioning, or SSO implementation design.
 
 All Portal identities below belong to the single authoritative Bingo Innovation
 Portal environment:
@@ -208,8 +209,81 @@ For example, `https://portal.example.com` produces
 `https://example.com/portal` produces
 `https://example.com/portal/integration/v1/halls/42/snapshot`. Credentials
 remain server-side and are carried only in the HTTP `Authorization` header.
-This contract does not authorize snapshot validation, persistence,
+This contract does not authorize snapshot persistence,
 synchronization/import, webhooks, SSO, or provisioning.
+
+### Phase 3D2 Hall snapshot v1 validation
+
+ADR-037 resolves the Hall snapshot v1 payload and validation contract, which
+this document previously left undecided. `PortalSnapshotValidator` turns the raw
+HTTP 200 body into a trusted, reconstructed in-memory array or a `WP_Error`. It
+is deterministic, read-only, and side-effect-free: no HTTP, no database access,
+no site switching, and no option, metadata, Catalog, Session, replica, or Hall
+mapping write.
+
+```text
+raw HTTP 200 body -> strict v1 validator -> trusted reconstructed snapshot
+```
+
+The exact accepted v1 payload is:
+
+| Object | Exact fields |
+|---|---|
+| envelope | `api_version`, `generated_at`, `hall`, `game_types`, `sessions` |
+| `hall` | `id`, `name`, `state`, `updated_at` |
+| `game_types[*]` | `id`, `hall_id`, `name`, `updated_at` |
+| `sessions[*]` | `id`, `hall_id`, `name`, `status`, `updated_at` |
+
+A missing required member and an unknown member are both fatal at every level,
+and either rejects the complete snapshot rather than being ignored. The
+operational Portal fields excluded in §8 — `days`, `games`, patterns, caller,
+`device_group_id`, XML GameGroup identifiers, `deleted_at`, `game_type_ids` and
+similar — therefore cannot enter the commerce boundary even by accident.
+
+`api_version` must be exactly `v1`. Portal timestamps are
+`YYYY-MM-DDTHH:MM:SS±HH:MM` with no fractional seconds and an explicit numeric
+offset whose hour is `00`-`23` and minute `00`-`59`, checked structurally
+because PHP's own parser round-trips impossible offsets such as `+25:00`. That
+is the numeric shape of an Atom offset, not a Portal timezone range.
+`generated_at` is required and non-null, while each `updated_at` is a required
+key whose value may be null. Valid timestamp strings are preserved verbatim —
+timezone conversion, UTC normalization, MySQL `DATETIME` conversion, and
+`portal_updated_at` persistence semantics all remain Phase 3E concerns.
+
+Portal identities must be native integers `>= 1`; the validator requires
+`hall.id` and every child `hall_id` to equal the expected Portal Hall ID
+supplied by trusted mapping context, and never derives tenancy from a name,
+domain, host, request URL, or ordering. Collections may be empty, input order is
+preserved without any sorting requirement, and a duplicate `id` within either
+collection rejects the snapshot. Hall names and Session names allow 255 Unicode
+characters, Game Type names 50, counted as characters rather than bytes; empty
+or whitespace-only names are rejected and valid names are returned unchanged.
+Hall `state` is `active` or `inactive` and Session `status` is `active` or
+`draft`, matched case-sensitively. Inactive Halls and draft Sessions are valid
+and retained.
+
+Decoding uses PHP's native JSON decoder with `JSON_THROW_ON_ERROR` and
+`JSON_BIGINT_AS_STRING`, objects decoded as objects so `{}` and `[]` stay
+distinguishable, and the invalid-UTF-8 tolerance flags prohibited. The
+implementation explicitly passes PHP's standard decoder depth of `512`, because
+the flags argument follows the depth argument positionally. That number is a
+technical decoder safety bound with no Portal v1 business or API meaning;
+BingoCommerce derives no domain semantics from it and introduces no domain
+constant for it. Changing this technical bound later requires implementation
+review, but does not by itself require a Portal API-version change. A body
+nested beyond the configured decoder depth fails safely as invalid JSON.
+
+The public error vocabulary is limited to `invalid_portal_hall_id`,
+`portal_snapshot_invalid_json`, `portal_snapshot_invalid_contract`,
+`portal_snapshot_unsupported_version`, `portal_snapshot_hall_mismatch`, and
+`portal_snapshot_duplicate_identity`, and error data may carry only a
+validator-generated structural path. Raw bodies, Portal names, credentials, and
+upstream responses never reach an error or a log.
+
+This contract authorizes validation only. Snapshot application/import,
+missing-record handling, replica currentness, reconciliation, Hall mapping
+mutation, Commerce scheduling, webhooks, SSO, and provisioning remain Phase 3E
+or later.
 
 Approved shape:
 
@@ -238,11 +312,13 @@ and idempotent mapping establish the recovery baseline that later webhook and
 reconciliation work depend on.
 
 Except for ADR-036's Hall snapshot transport URL and header-only credential
-placement, the following details remain undecided until their dedicated
-reviews:
+placement and ADR-037's Hall snapshot v1 validation contract, the following
+details remain undecided until their dedicated reviews:
 
 - Portal API authentication and authorization lifecycle;
 - other endpoint paths, versions, filters, pagination, and payloads;
+- Portal Game Type replica currentness and missing-record lifecycle, which must
+  be frozen before Phase 3E writers are implemented;
 - webhook event types, signatures, ordering, retry, replay, and delivery logs;
 - any additional sync-state/cursor persistence, reconciliation state, and
   future snapshot-application/import writer details;
