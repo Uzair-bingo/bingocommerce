@@ -19,8 +19,9 @@ ADR-035 authorizes changing this schema, deleting these tables, or discarding
 existing relationships.
 
 ADR-039 approves the Game Type name/index and imported-code design below for
-Catalog v4 -> v5. The v5 migration and prerequisite Phase 3D2 name-validation
-amendment remain unimplemented; this document does not implement Phase 3E.
+Catalog v4 -> v5. The prerequisite Phase 3D2 name-validation amendment is
+implemented and tested; COMPLETE. Catalog v5 and Phase 3E remain
+unimplemented.
 
 ## 1. Authority and Scope
 
@@ -111,11 +112,12 @@ the trusted Hall; never adopt or overwrite a row because its code matches.
 Allocated codes are immutable across rename and re-import. Exhausting all 32
 candidates rejects the complete application without partial domain changes.
 
-Before Phase 3E, amend the Phase 3D2 name boundary to reject Unicode control
-and format characters, line and paragraph separators, and names containing
-only whitespace or Unicode separators. Accepted names remain unchanged; do
+The ADR-039 Phase 3D2 name-validation amendment is implemented and tested;
+COMPLETE. Hall, Game Type, and Session names reject Unicode
+control and format characters, line and paragraph separators, and names
+containing only whitespace or Unicode separators. Accepted names remain unchanged; do
 not normalize, trim, rewrite, or escape the stored value. Reuse the existing
-safe name-validation error vocabulary. This amendment is not implemented here.
+safe name-validation error vocabulary and structural field paths.
 
 For the v4 -> v5 migration, backfill `local_name_key = name` where
 `portal_game_type_id IS NULL` and set/retain a `NULL` key for linked rows.

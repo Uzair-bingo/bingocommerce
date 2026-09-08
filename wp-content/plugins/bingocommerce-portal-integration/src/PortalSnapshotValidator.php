@@ -336,10 +336,13 @@ final class PortalSnapshotValidator {
 			return false;
 		}
 
-		// Portal names are validated with Laravel's `required` rule, which
-		// rejects a string that is empty once trimmed. The value itself is
-		// never trimmed here — validation must not rewrite Portal data.
-		if ( '' === trim( $value ) ) {
+		// ADR-039 rejects control/format characters and line/paragraph
+		// separators, and requires a non-whitespace, non-separator character.
+		// Inspect the original value only; accepted Portal names stay unchanged.
+		if (
+			0 !== preg_match( '/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u', $value )
+			|| 1 !== preg_match( '/[^\s\p{Z}]/u', $value )
+		) {
 			return false;
 		}
 

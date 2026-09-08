@@ -85,6 +85,7 @@ final class PortalSnapshotValidatorTest {
 			$this->duplicate_failures();
 			$this->enum_failures();
 			$this->name_failures();
+			$this->unicode_name_boundary();
 			$this->failure_safety();
 			$this->callback_free_validation();
 		} );
@@ -904,6 +905,59 @@ final class PortalSnapshotValidatorTest {
 	}
 
 	// =================================================================
+	// ADR-039 UNICODE NAME BOUNDARY
+	// =================================================================
+
+	private function unicode_name_boundary(): void {
+		$invalid_names = [
+			'embedded NUL (Cc)'              => "Name\u{0000}Sentinel",
+			'embedded tab (Cc)'              => "Name\tSentinel",
+			'embedded next line (Cc)'        => "Name\u{0085}Sentinel",
+			'embedded zero-width space (Cf)' => "Name\u{200B}Sentinel",
+			'embedded bidi override (Cf)'    => "Name\u{202E}Sentinel",
+			'embedded line separator (Zl)'   => "Name\u{2028}Sentinel",
+			'embedded paragraph separator (Zp)' => "Name\u{2029}Sentinel",
+			'NBSP only'                     => "\u{00A0}\u{00A0}",
+			'em space only'                 => "\u{2003}\u{2003}",
+			'mixed Unicode separators only' => " \u{00A0}\u{2003}\u{3000} ",
+		];
+		$valid_names = [
+			'ordinary Unicode'       => 'Café 日本 🎲',
+			'decomposed Unicode'     => "Cafe\u{0301}",
+			'ordinary spacing'       => '  Café  Bingo  ',
+			'mixed Unicode spacing'  => "\u{00A0}日本\u{2003} Café \u{3000}",
+			'presentation characters' => '<Bingo> & "Friends"',
+		];
+
+		foreach ( [ 'hall' => 'hall.name', 'game_types' => 'game_types[0].name', 'sessions' => 'sessions[0].name' ] as $field => $path ) {
+			foreach ( $invalid_names as $label => $name ) {
+				$payload = $this->payload();
+				if ( 'hall' === $field ) {
+					$payload['hall']['name'] = $name;
+				} else {
+					$payload[ $field ][0]['name'] = $name;
+				}
+				$error = $this->validate_payload( $payload );
+				$this->assert_error( 'portal_snapshot_invalid_contract', $error, "{$path}: {$label} is rejected" );
+				$this->assert_same( [ 'path' => $path ], $error->get_error_data(), "{$path}: {$label} exposes only the exact structural path" );
+				$this->assert_same( [ 'The Portal snapshot does not match the supported contract.' ], $error->get_error_messages(), "{$path}: {$label} exposes no source name in error messages" );
+			}
+
+			foreach ( $valid_names as $label => $name ) {
+				$payload = $this->payload();
+				if ( 'hall' === $field ) {
+					$payload['hall']['name'] = $name;
+				} else {
+					$payload[ $field ][0]['name'] = $name;
+				}
+				$result = $this->validate_payload( $payload );
+				$this->assert_ok( $result, "{$path}: {$label} is accepted" );
+				$this->assert_same( $payload, $result, "{$path}: {$label} and the entire snapshot remain byte-for-byte unchanged" );
+			}
+		}
+	}
+
+	// =================================================================
 	// FAILURE SAFETY
 	// =================================================================
 
@@ -1003,12 +1057,27 @@ final class PortalSnapshotValidatorTest {
 		// builds, so construction and propagation are both observed.
 		$payload = $this->payload();
 		$payload['sessions'][0]['hall_id'] = 99;
+		$name_payloads = [];
+		foreach ( [ 'hall', 'game_types', 'sessions' ] as $field ) {
+			$name_payload = $this->payload();
+			if ( 'hall' === $field ) {
+				$name_payload['hall']['name'] = "Name\u{200B}Sentinel";
+			} else {
+				$name_payload[ $field ][0]['name'] = "Name\u{200B}Sentinel";
+			}
+			$path = 'hall' === $field ? 'hall.name' : $field . '[0].name';
+			$name_payloads[ $path ] = $name_payload;
+		}
+		$name_errors = [];
 
 		add_action( 'is_wp_error_instance', $wp_error_observer, 10, 1 );
 		add_filter( 'gettext', $gettext_observer, 10, 3 );
 		add_filter( 'gettext_bingocommerce-portal-integration', $domain_observer, 10, 3 );
 		try {
 			$result = $this->validate_payload( $payload );
+			foreach ( $name_payloads as $path => $name_payload ) {
+				$name_errors[ $path ] = $this->validate_payload( $name_payload );
+			}
 		} finally {
 			remove_action( 'is_wp_error_instance', $wp_error_observer, 10 );
 			remove_filter( 'gettext', $gettext_observer, 10 );
@@ -1024,6 +1093,10 @@ final class PortalSnapshotValidatorTest {
 
 		$this->assert_error( 'portal_snapshot_hall_mismatch', $result, 'the callback-free scenario still reports the Hall mismatch' );
 		$this->assert_same( [ 'path' => 'sessions[0].hall_id' ], $result->get_error_data(), 'the callback-free scenario still reports the exact child Hall path' );
+		foreach ( $name_errors as $path => $error ) {
+			$this->assert_error( 'portal_snapshot_invalid_contract', $error, "{$path}: name rejection is callback-free" );
+			$this->assert_same( [ 'path' => $path ], $error->get_error_data(), "{$path}: callback-free rejection returns only the structural path" );
+		}
 	}
 
 	private function error_vocabulary(): void {
@@ -1086,6 +1159,7 @@ final class PortalSnapshotValidatorTest {
 			// the gettext filters.
 			'is_wp_error(', '__(', '_x(', 'translate(', '_e(',
 			'esc_html__(', 'esc_attr__(',
+			'apply_filters(', 'do_action(', 'error_log(',
 		];
 		foreach ( $forbidden as $needle ) {
 			$this->assert_true( false === strpos( $source, $needle ), "the validator source contains no {$needle}" );

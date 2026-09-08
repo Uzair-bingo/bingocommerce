@@ -10,7 +10,8 @@ ADR-036's narrow Hall snapshot transport URL contract, ADR-037's Hall snapshot
 v1 validation contract, ADR-038's completeness and Game Type absence decision,
 and ADR-039's approved name/code, validation-amendment, and Catalog v5 migration
 design, it is not an API, webhook, persistence, provisioning, or SSO
-implementation design. ADR-039's source changes remain unimplemented.
+implementation design. ADR-039's name-validation amendment is implemented and
+tested; COMPLETE. Catalog v5 and Phase 3E remain unimplemented.
 
 All Portal identities below belong to the single authoritative Bingo Innovation
 Portal environment:
@@ -258,12 +259,12 @@ supplied by trusted mapping context, and never derives tenancy from a name,
 domain, host, request URL, or ordering. Collections may be empty, input order is
 preserved without any sorting requirement, and a duplicate `id` within either
 collection rejects the snapshot. Hall names and Session names allow 255 Unicode
-characters, Game Type names 50, counted as characters rather than bytes. The
-implemented blank-name check uses PHP `trim()`; it does not reject all Unicode
-separator-only names. ADR-039 requires a narrow amendment before Phase 3E to
-reject Unicode control/format characters, line/paragraph separators, and names
-containing only whitespace or Unicode separators, including NBSP-only names.
-That amendment is not implemented here. Accepted names remain unchanged: no
+characters, Game Type names 50, counted as characters rather than bytes.
+ADR-039's name-validation amendment is implemented and tested; COMPLETE.
+Hall, Game Type, and Session names reject Unicode control/format
+characters (`Cc`/`Cf`), line/paragraph separators (`Zl`/`Zp`), and names containing
+only whitespace or Unicode separators, including NBSP-only names.
+Accepted names remain byte-for-byte unchanged: no
 normalization, trimming, rewriting, or escaping of the stored value. Reuse
 `portal_snapshot_invalid_contract` with a safe generated name-field path.
 Hall `state` is `active` or `inactive` and Session `status` is `active` or
@@ -356,7 +357,8 @@ operation on the trusted Hall's Game Type table because `dbDelta()` cannot
 remove it. Verify the target table/index before and after removal and the
 replacement key/backfill before dropping the old index. Advance the Catalog
 version only after complete verification; new sites receive final v5 directly.
-The migration, name-validator amendment, and Phase 3E remain unimplemented.
+The name-validation amendment is implemented and tested; COMPLETE.
+The Catalog v5 migration and Phase 3E remain unimplemented.
 
 Approved shape:
 

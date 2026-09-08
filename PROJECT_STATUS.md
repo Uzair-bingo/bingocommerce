@@ -1030,8 +1030,8 @@
     byte-identical before and after the run.
 - **NEXT Portal-integration checkpoint: Phase 3E — snapshot
   application/import.** Phase 3E is not implemented. Overall Phase 3D is
-  COMPLETE against ADR-037; ADR-039's name-validation amendment is pending
-  before Phase 3E.
+  COMPLETE against ADR-037; ADR-039's name-validation amendment is implemented
+  and tested; COMPLETE. Catalog v5 remains unimplemented.
   - **[2026-09-07] Pre-Phase 3E Design Slice 1 — snapshot completeness:
     documented in ADR-038; COMPLETE.** A successful Portal v1
     snapshot is complete, non-paginated, and non-delta for one trusted mapped
@@ -1076,11 +1076,14 @@
     idempotent `DROP INDEX name_unique` exception, target verification before
     and after removal, replacement-key/backfill verification, and version
     advancement only after complete verification. New sites receive final v5.
-  - **Required before Phase 3E, not implemented:** narrowly strengthen Phase
-    3D2 name validation to reject Unicode control/format characters, line/
-    paragraph separators, and whitespace/Unicode-separator-only names. Accepted
-    names remain unchanged; reuse the safe name-validation error vocabulary.
-    The v5 migration also remains unimplemented. This slice changes documentation and the database guardrail only; no production source, tests, migrations, plugins, schemas, or database data.
+  - **[2026-09-07] ADR-039 name-validation amendment: implemented and tested;
+    COMPLETE.** Hall, Game Type, and Session names reject Unicode
+    `Cc`/`Cf`, `Zl`/`Zp`, and whitespace/Unicode-separator-only names. Accepted
+    names remain byte-for-byte unchanged with existing length limits. Errors
+    reuse `portal_snapshot_invalid_contract` and only the safe structural path.
+    Focused Unicode, callback-free, zero-HTTP, source-boundary, and persistent-
+    state checks pass. Catalog v5 and Phase 3E remain unimplemented; no migration,
+    schema, imported-code allocation, or snapshot application was added.
   - **Remaining pre-Phase 3E design work:** snapshot replay/stale-order
     handling; Phase 3E transaction and locking mechanics;
     local writer restrictions after synchronization; and Session-template
@@ -1103,9 +1106,9 @@
    Portal Session-template replica persistence: COMPLETE. Phase 3D1 — Portal
    HTTP transport: COMPLETE. Phase 3D2 — strict Portal snapshot validation:
    COMPLETE against ADR-037.** ADR-038 records snapshot completeness and Game
-   Type absence. ADR-039's approved name/code design, Catalog v5 migration, and
-   required name-validation amendment remain unimplemented; remaining design
-   work is listed above. Phase 3E snapshot application/import is not implemented.
+   Type absence. ADR-039's name-validation amendment is implemented and tested;
+   COMPLETE. Catalog v5 and Phase 3E snapshot application/import
+   remain unimplemented; remaining design work is listed above.
    Commerce selection remains separate and is not implemented.
 
 Everything below is tracked work that is NOT a blocker to that demo.
@@ -1114,8 +1117,9 @@ Everything below is tracked work that is NOT a blocker to that demo.
 1. Complete the remaining Portal integration delivery increments. Phase 3B
    Hall mapping/config, Phase 3C1 Game Type identity persistence, Phase 3C2
    Session-template replica persistence, Phase 3D1 read-only HTTP transport,
-   and Phase 3D2 strict snapshot validation are complete. Remaining work begins
-   with ADR-039's pending name-validation amendment and Catalog v5 migration,
+   and Phase 3D2 strict snapshot validation are complete. ADR-039's tested
+   name-validation amendment is COMPLETE. Remaining work begins with the
+   unimplemented Catalog v5 migration,
    plus the remaining pre-Phase 3E design questions listed above, followed by
    Phase 3E snapshot application/full-pull idempotent
    synchronization, followed by a separate second-mapped-Hall tenant-isolation
@@ -1224,7 +1228,7 @@ Everything below is tracked work that is NOT a blocker to that demo.
   §"Catalog lock-order review" is accurate as written. ADR-033 locks
   `bingo_packages` then `bingo_play_products` ascending, and locks no component
   rows at all.
-- Latest verified results: Phase 3D2 Portal snapshot validation **1443/1443
+- Latest verified results: Phase 3D2 Portal snapshot validation **1638/1638
   PASS**; Phase 3D1 Portal HTTP transport **67/67 PASS**; Phase
   3B Portal integration foundation regression **75/75 PASS**; Phase 3C2 Portal
   Session-template replica persistence **98/98 PASS**; Phase 3C1 Portal Game
