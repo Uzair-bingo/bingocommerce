@@ -20,8 +20,8 @@ existing relationships.
 
 ADR-039 approves the Game Type name/index and imported-code design below for
 Catalog v4 -> v5. The prerequisite Phase 3D2 name-validation amendment is
-implemented and tested; COMPLETE. Catalog v5 and Phase 3E remain
-unimplemented.
+implemented and tested; COMPLETE. Catalog v5 is implemented and tested;
+COMPLETE. Phase 3E and Portal importing remain unimplemented.
 
 ## 1. Authority and Scope
 

@@ -33,6 +33,7 @@ if ( 'cli' !== PHP_SAPI ) {
 $_SERVER['HTTP_HOST']      = 'bingocommerce.test';
 $_SERVER['REQUEST_URI']    = '/';
 $_SERVER['REQUEST_METHOD'] = 'GET';
+$_SERVER['REMOTE_ADDR']    = '127.0.0.1';
 
 require dirname( __DIR__ ) . '/wp-load.php';
 require_once ABSPATH . 'wp-admin/includes/ms.php';
@@ -1435,13 +1436,15 @@ final class PackageStageBTest {
 		foreach ( self::SUITE_TRIGGERS as $trigger ) {
 			$wpdb->query( "DROP TRIGGER IF EXISTS {$trigger}" );
 		}
-		// ALL FOUR hall-local Catalog v3 tables. WordPress does not know these
-		// custom tables, so wp_delete_site() leaves every one of them behind.
+		// Include every Catalog/Session table provisioned for this run's own hall.
 		$catalog_tables = [
 			Migrations::package_components_table(),
 			Migrations::packages_table(),
 			Migrations::play_products_table(),
 			Migrations::game_types_table(),
+			$wpdb->prefix . 'bingo_sessions',
+			$wpdb->prefix . 'bingo_session_packages',
+			$wpdb->prefix . 'bingo_portal_session_templates',
 		];
 		$wpdb->query( $wpdb->prepare( 'DELETE FROM ' . CoreMigrations::audit_log_table() . ' WHERE blog_id = %d', $site_id ) );
 		restore_current_blog();
@@ -1450,7 +1453,7 @@ final class PackageStageBTest {
 
 		foreach ( $catalog_tables as $table ) {
 			// Exact, site-scoped identifier. Anything else is refused.
-			if ( 1 === preg_match( '/^bc_' . $site_id . '_bingo_(package_components|packages|play_products|game_types)$/', $table ) ) {
+			if ( 1 === preg_match( '/^bc_' . $site_id . '_bingo_(package_components|packages|play_products|game_types|sessions|session_packages|portal_session_templates)$/', $table ) ) {
 				$wpdb->query( "DROP TABLE IF EXISTS `{$table}`" );
 			}
 		}

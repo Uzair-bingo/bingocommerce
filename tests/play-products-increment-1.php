@@ -19,6 +19,7 @@ if ( 'cli' !== PHP_SAPI ) {
 $_SERVER['HTTP_HOST']      = 'bingocommerce.test';
 $_SERVER['REQUEST_URI']    = '/';
 $_SERVER['REQUEST_METHOD'] = 'GET';
+$_SERVER['REMOTE_ADDR']    = '127.0.0.1';
 
 require dirname( __DIR__ ) . '/wp-load.php';
 require_once ABSPATH . 'wp-admin/includes/ms.php';
@@ -3045,7 +3046,7 @@ final class PlayProductIncrementOneTest {
 
 	/**
 	 * WordPress drops only the tables it knows about, so the hall-local Catalog
-	 * tables and the two tables provisioned by the Network-Active Sessions plugin
+	 * tables and the three tables provisioned by the Network-Active Sessions plugin
 	 * are removed explicitly. All belong to a site this PHP process created and
 	 * recorded in $disposable_sites, so this is provably safe.
 	 */
@@ -3075,7 +3076,7 @@ final class PlayProductIncrementOneTest {
 			Migrations::game_types_table(),
 		];
 
-		// The Network-Active Sessions plugin provisions these two tables when this
+		// The Network-Active Sessions plugin provisions these three tables when this
 		// process creates the disposable hall. Refuse to derive or drop anything
 		// unless WordPress returns this exact disposable-site prefix.
 		$expected_prefix = $wpdb->base_prefix . $site_id . '_';
@@ -3087,6 +3088,7 @@ final class PlayProductIncrementOneTest {
 		$session_tables = [
 			$expected_prefix . 'bingo_session_packages',
 			$expected_prefix . 'bingo_sessions',
+			$expected_prefix . 'bingo_portal_session_templates',
 		];
 		$wpdb->query( $wpdb->prepare( "DELETE FROM " . CoreMigrations::audit_log_table() . " WHERE blog_id = %d", $site_id ) );
 		restore_current_blog();
@@ -3101,7 +3103,7 @@ final class PlayProductIncrementOneTest {
 			}
 		}
 		foreach ( $session_tables as $table ) {
-			if ( in_array( $table, [ $expected_prefix . 'bingo_session_packages', $expected_prefix . 'bingo_sessions' ], true ) ) {
+			if ( in_array( $table, [ $expected_prefix . 'bingo_session_packages', $expected_prefix . 'bingo_sessions', $expected_prefix . 'bingo_portal_session_templates' ], true ) ) {
 				$this->disposable_ddl( $site_id, "DROP TABLE IF EXISTS `{$table}`" );
 			}
 		}

@@ -64,12 +64,13 @@ final class GameTypeService {
 				[
 					'code'        => $code,
 					'name'        => $canonical_name,
+					'local_name_key' => $canonical_name,
 					'status'      => 'active',
 					'created_at'  => $now,
 					'updated_at'  => $now,
 					'archived_at' => null,
 				],
-				[ '%s', '%s', '%s', '%s', '%s', null ]
+				[ '%s', '%s', '%s', '%s', '%s', '%s', null ]
 			);
 			$db_error = (string) $wpdb->last_error;
 			$wpdb->suppress_errors( $previous );
@@ -84,7 +85,7 @@ final class GameTypeService {
 				return $this->record_audit( $result, 'catalog.game_type.created', $context, null, $game_type );
 			}
 
-			if ( $this->is_duplicate_key( $db_error, 'name_unique' ) ) {
+			if ( $this->is_duplicate_key( $db_error, 'local_name_unique' ) ) {
 				return $this->error( 'duplicate_name', 'A Game Type with that name already exists.' );
 			}
 
@@ -131,31 +132,32 @@ final class GameTypeService {
 			return new GameTypeResult( 'game_type_name_unchanged', $before );
 		}
 
-		$duplicate = $this->find_by_name( $canonical_name, $game_type_id );
-		if ( is_wp_error( $duplicate ) ) {
-			return $duplicate;
-		}
-		if ( null !== $duplicate ) {
-			return $this->error( 'duplicate_name', 'A Game Type with that name already exists.' );
+		if ( null === $before['portal_game_type_id'] ) {
+			$duplicate = $this->find_by_name( $canonical_name, $game_type_id );
+			if ( is_wp_error( $duplicate ) ) {
+				return $duplicate;
+			}
+			if ( null !== $duplicate ) {
+				return $this->error( 'duplicate_name', 'A Game Type with that name already exists.' );
+			}
 		}
 
 		global $wpdb;
 		$previous = $wpdb->suppress_errors( true );
-		$updated  = $wpdb->update(
+		// Derive the key from the row's identity in the same statement as the name.
+		$updated = $wpdb->query( $wpdb->prepare(
+			'UPDATE %i SET name = %s, local_name_key = CASE WHEN portal_game_type_id IS NULL THEN %s ELSE NULL END, updated_at = %s WHERE game_type_id = %d',
 			Migrations::game_types_table(),
-			[
-				'name'       => $canonical_name,
-				'updated_at' => current_time( 'mysql', true ),
-			],
-			[ 'game_type_id' => $game_type_id ],
-			[ '%s', '%s' ],
-			[ '%d' ]
-		);
+			$canonical_name,
+			$canonical_name,
+			current_time( 'mysql', true ),
+			$game_type_id
+		) );
 		$db_error = (string) $wpdb->last_error;
 		$wpdb->suppress_errors( $previous );
 
 		if ( false === $updated ) {
-			if ( $this->is_duplicate_key( $db_error, 'name_unique' ) ) {
+			if ( $this->is_duplicate_key( $db_error, 'local_name_unique' ) ) {
 				return $this->error( 'duplicate_name', 'A Game Type with that name already exists.' );
 			}
 
@@ -209,7 +211,7 @@ final class GameTypeService {
 		global $wpdb;
 		$row = $wpdb->get_row(
 			$wpdb->prepare(
-				'SELECT game_type_id, code, name, status, created_at, updated_at, archived_at FROM ' . Migrations::game_types_table() . ' WHERE code = %s',
+				'SELECT game_type_id, portal_game_type_id, code, name, status, created_at, updated_at, archived_at FROM ' . Migrations::game_types_table() . ' WHERE code = %s',
 				$code
 			),
 			ARRAY_A
@@ -448,10 +450,10 @@ final class GameTypeService {
 		return $this->error( 'code_allocation_conflict', 'The Game Type code namespace is exhausted.' );
 	}
 
-	/** @return array<string,mixed>|null|\WP_Error */
+	/** Local-only duplicate lookup; Portal names are not unique. @return array<string,mixed>|null|\WP_Error */
 	private function find_by_name( string $name, int $exclude_id = 0 ) {
 		global $wpdb;
-		$sql = 'SELECT game_type_id, code, name, status, created_at, updated_at, archived_at FROM ' . Migrations::game_types_table() . ' WHERE name = %s';
+		$sql = 'SELECT game_type_id, portal_game_type_id, code, name, status, created_at, updated_at, archived_at FROM ' . Migrations::game_types_table() . ' WHERE portal_game_type_id IS NULL AND local_name_key = %s';
 		$args = [ $name ];
 		if ( $exclude_id > 0 ) {
 			$sql   .= ' AND game_type_id <> %d';
@@ -472,7 +474,7 @@ final class GameTypeService {
 		global $wpdb;
 		$row = $wpdb->get_row(
 			$wpdb->prepare(
-				'SELECT game_type_id, code, name, status, created_at, updated_at, archived_at FROM ' . Migrations::game_types_table() . ' WHERE game_type_id = %d',
+				'SELECT game_type_id, portal_game_type_id, code, name, status, created_at, updated_at, archived_at FROM ' . Migrations::game_types_table() . ' WHERE game_type_id = %d',
 				$game_type_id
 			),
 			ARRAY_A
@@ -497,13 +499,13 @@ final class GameTypeService {
 		$table = Migrations::game_types_table();
 		if ( null === $status ) {
 			$sql = $wpdb->prepare(
-				"SELECT game_type_id, code, name, status, created_at, updated_at, archived_at FROM {$table} ORDER BY name, game_type_id LIMIT %d OFFSET %d",
+				"SELECT game_type_id, portal_game_type_id, code, name, status, created_at, updated_at, archived_at FROM {$table} ORDER BY name, game_type_id LIMIT %d OFFSET %d",
 				$per_page,
 				$offset
 			);
 		} else {
 			$sql = $wpdb->prepare(
-				"SELECT game_type_id, code, name, status, created_at, updated_at, archived_at FROM {$table} WHERE status = %s ORDER BY name, game_type_id LIMIT %d OFFSET %d",
+				"SELECT game_type_id, portal_game_type_id, code, name, status, created_at, updated_at, archived_at FROM {$table} WHERE status = %s ORDER BY name, game_type_id LIMIT %d OFFSET %d",
 				$status,
 				$per_page,
 				$offset
@@ -524,6 +526,7 @@ final class GameTypeService {
 	 */
 	private function map_row( array $row ): array {
 		$row['game_type_id'] = (int) $row['game_type_id'];
+		$row['portal_game_type_id'] = null === $row['portal_game_type_id'] ? null : (int) $row['portal_game_type_id'];
 
 		return $row;
 	}

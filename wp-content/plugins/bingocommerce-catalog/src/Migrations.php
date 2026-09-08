@@ -11,11 +11,13 @@ if ( ! defined( 'ABSPATH' ) ) {
 /** Owns the hall-local Catalog schema and its per-site version state. */
 final class Migrations {
 
-	public const DB_VERSION = 4;
+	public const DB_VERSION = 5;
 	public const VERSION_OPTION = 'bc_catalog_db_version';
 	public const NETWORK_SWEEP_OPTION = 'bc_catalog_network_migration_sweep_version';
 	public const GAME_TYPES_TABLE = 'bingo_game_types';
 	public const PLAY_PRODUCTS_TABLE = 'bingo_play_products';
+	private const NAME_KEY_MISMATCH = '(portal_game_type_id IS NULL AND NOT (CAST(local_name_key AS BINARY) <=> CAST(name AS BINARY)))'
+		. ' OR (portal_game_type_id IS NOT NULL AND local_name_key IS NOT NULL)';
 
 	/**
 	 * ADR-031 Package identity, created by Catalog v3. Play Product creation
@@ -135,12 +137,26 @@ final class Migrations {
 		$charset_collate = $wpdb->get_charset_collate();
 
 		$game_types = self::game_types_table();
+		if ( $game_types !== $wpdb->get_blog_prefix( get_current_blog_id() ) . 'bingo_game_types' || 1 !== preg_match( '/^[A-Za-z0-9_]+$/D', $game_types ) ) {
+			return self::verification_error( 'The Game Type migration table does not match the current hall.' );
+		}
+		$local_name_collation = '';
+		if ( self::table_exists( $game_types ) ) {
+			$columns = self::columns_by_name( $game_types );
+			$collation = (string) ( $columns['name']['Collation'] ?? '' );
+			if ( 1 !== preg_match( '/^utf8mb4_[a-z0-9_]+$/iD', $collation ) ) {
+				return self::verification_error( 'The existing Game Type name collation is incompatible.' );
+			}
+			// Preserve the column's collation even when it differs from the table default.
+			$local_name_collation = " CHARACTER SET utf8mb4 COLLATE {$collation}";
+		}
 		dbDelta(
 			"CREATE TABLE {$game_types} (
 	game_type_id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
 	portal_game_type_id bigint(20) unsigned DEFAULT NULL,
 	code varchar(64) NOT NULL,
 	name varchar(160) NOT NULL,
+	local_name_key varchar(160){$local_name_collation} DEFAULT NULL,
 	status varchar(16) NOT NULL DEFAULT 'active',
 	created_at datetime NOT NULL,
 	updated_at datetime NOT NULL,
@@ -148,10 +164,16 @@ final class Migrations {
 	PRIMARY KEY  (game_type_id),
 	UNIQUE KEY portal_game_type_unique (portal_game_type_id),
 	UNIQUE KEY code_unique (code),
-	UNIQUE KEY name_unique (name),
+	UNIQUE KEY local_name_unique (local_name_key),
+	KEY name_id (name,game_type_id),
 	KEY status_name (status,name)
 ) ENGINE=InnoDB {$charset_collate};"
 		);
+
+		$names = self::migrate_game_type_names();
+		if ( is_wp_error( $names ) ) {
+			return $names;
+		}
 
 		$play_products = self::play_products_table();
 		dbDelta(
@@ -206,7 +228,7 @@ final class Migrations {
 ) ENGINE=InnoDB {$charset_collate};"
 		);
 
-		// The version is the hall's promise that EVERY Catalog schema through v4
+		// The version is the hall's promise that EVERY Catalog schema through v5
 		// is usable, so it is persisted only after every required structure
 		// verifies.
 		$verified = self::verify_current_site_schema();
@@ -275,6 +297,23 @@ final class Migrations {
 
 	/** @return true|\WP_Error */
 	public static function verify_game_types_schema() {
+		$structure = self::verify_game_types_structure();
+		if ( is_wp_error( $structure ) ) {
+			return $structure;
+		}
+		$legacy_index = self::legacy_game_type_name_index();
+		if ( is_wp_error( $legacy_index ) ) {
+			return $legacy_index;
+		}
+		if ( [] !== $legacy_index ) {
+			return self::verification_error( 'The obsolete Game Type name_unique index remains.' );
+		}
+
+		return self::verify_local_name_keys();
+	}
+
+	/** Verify replacement structure before touching data or the old index. @return true|\WP_Error */
+	private static function verify_game_types_structure() {
 		global $wpdb;
 		$table = self::game_types_table();
 
@@ -294,6 +333,7 @@ final class Migrations {
 				'portal_game_type_id' => [ '/^bigint(?:\(20\))? unsigned$/', 'YES', null, '' ],
 				'code'                => [ '/^varchar\(64\)$/', 'NO', null, '' ],
 				'name'                => [ '/^varchar\(160\)$/', 'NO', null, '' ],
+				'local_name_key'      => [ '/^varchar\(160\)$/', 'YES', null, '' ],
 				'status'              => [ '/^varchar\(16\)$/', 'NO', 'active', '' ],
 				'created_at'          => [ '/^datetime$/', 'NO', null, '' ],
 				'updated_at'          => [ '/^datetime$/', 'NO', null, '' ],
@@ -311,7 +351,8 @@ final class Migrations {
 				'PRIMARY'                 => [ true, [ 'game_type_id' ] ],
 				'portal_game_type_unique' => [ true, [ 'portal_game_type_id' ] ],
 				'code_unique'             => [ true, [ 'code' ] ],
-				'name_unique'             => [ true, [ 'name' ] ],
+				'local_name_unique'       => [ true, [ 'local_name_key' ] ],
+				'name_id'                 => [ false, [ 'name', 'game_type_id' ] ],
 				'status_name'             => [ false, [ 'status', 'name' ] ],
 			],
 			'Game Type'
@@ -321,7 +362,7 @@ final class Migrations {
 		}
 
 		$name_collation = (string) ( $by_name['name']['Collation'] ?? '' );
-		if ( ! preg_match( '/^[a-z0-9_]+$/i', $name_collation ) ) {
+		if ( 1 !== preg_match( '/^utf8mb4_[a-z0-9_]+$/iD', $name_collation ) || $name_collation !== ( $by_name['local_name_key']['Collation'] ?? null ) ) {
 			return self::verification_error( 'The Game Type name collation is missing or unsafe.' );
 		}
 
@@ -344,6 +385,84 @@ final class Migrations {
 		}
 
 		return self::assert_engine_and_charset( $table, 'Game Type' );
+	}
+
+	/** ADR-039's sole allowlisted structural exception. @return true|\WP_Error */
+	private static function migrate_game_type_names() {
+		global $wpdb;
+		$structure = self::verify_game_types_structure();
+		if ( is_wp_error( $structure ) ) {
+			return $structure;
+		}
+		$legacy_index = self::legacy_game_type_name_index();
+		if ( is_wp_error( $legacy_index ) ) {
+			return $legacy_index;
+		}
+		$table = self::game_types_table();
+		$updated = $wpdb->query( $wpdb->prepare(
+			'UPDATE %i SET local_name_key = CASE WHEN portal_game_type_id IS NULL THEN name ELSE NULL END WHERE ' . self::NAME_KEY_MISMATCH,
+			$table
+		) );
+		if ( false === $updated ) {
+			return self::verification_error( 'The Game Type local-name backfill failed.' );
+		}
+		$keys = self::verify_local_name_keys();
+		if ( is_wp_error( $keys ) ) {
+			return $keys;
+		}
+
+		// Recheck the exact target immediately before the one permitted DROP.
+		$legacy_index = self::legacy_game_type_name_index();
+		if ( is_wp_error( $legacy_index ) ) {
+			return $legacy_index;
+		}
+		if ( $table !== self::game_types_table() ) {
+			return self::verification_error( 'The Game Type migration hall changed.' );
+		}
+		if ( [] !== $legacy_index && false === $wpdb->query( $wpdb->prepare( 'ALTER TABLE %i DROP INDEX `name_unique`', $table ) ) ) {
+			return self::verification_error( 'The obsolete Game Type name index could not be removed.' );
+		}
+
+		return self::verify_game_types_schema();
+	}
+
+	/** @return array<int,array<string,mixed>>|\WP_Error */
+	private static function legacy_game_type_name_index() {
+		global $wpdb;
+		$table = self::game_types_table();
+		if ( ! HallContext::is_hall() || $table !== $wpdb->get_blog_prefix( get_current_blog_id() ) . 'bingo_game_types' || ! self::table_exists( $table ) ) {
+			return self::verification_error( 'The Game Type index target is not the current hall table.' );
+		}
+		$rows = $wpdb->get_results( $wpdb->prepare( 'SHOW INDEX FROM %i WHERE Key_name = %s', $table, 'name_unique' ), ARRAY_A );
+		if ( ! is_array( $rows ) || '' !== (string) $wpdb->last_error ) {
+			return self::verification_error( 'The Game Type name index could not be inspected.' );
+		}
+		if ( [] === $rows ) {
+			return [];
+		}
+		$index = $rows[0];
+		if (
+			1 !== count( $rows ) || $table !== $index['Table']
+			|| 'name_unique' !== $index['Key_name'] || 0 !== (int) $index['Non_unique']
+			|| 1 !== (int) $index['Seq_in_index'] || 'name' !== $index['Column_name']
+			|| null !== $index['Sub_part'] || 'BTREE' !== $index['Index_type']
+			|| 'A' !== $index['Collation'] || null !== ( $index['Expression'] ?? null )
+		) {
+			return self::verification_error( 'The name_unique index is not the exact allowlisted legacy index.' );
+		}
+
+		return $rows;
+	}
+
+	/** @return true|\WP_Error */
+	private static function verify_local_name_keys() {
+		global $wpdb;
+		$count = $wpdb->get_var( $wpdb->prepare( 'SELECT COUNT(*) FROM %i WHERE ' . self::NAME_KEY_MISMATCH, self::game_types_table() ) );
+		if ( '0' !== (string) $count || '' !== (string) $wpdb->last_error ) {
+			return self::verification_error( 'The Game Type local-name keys do not match their row identities.' );
+		}
+
+		return true;
 	}
 
 	/** @return true|\WP_Error */
@@ -561,6 +680,7 @@ final class Migrations {
 			$key = (string) $index['Key_name'];
 			$actual_indexes[ $key ]['unique'] = 0 === (int) $index['Non_unique'];
 			$actual_indexes[ $key ]['columns'][ (int) $index['Seq_in_index'] ] = (string) $index['Column_name'];
+			$actual_indexes[ $key ]['full_length'] = ( $actual_indexes[ $key ]['full_length'] ?? true ) && null === $index['Sub_part'];
 		}
 		foreach ( $actual_indexes as &$index ) {
 			ksort( $index['columns'] );
@@ -573,6 +693,7 @@ final class Migrations {
 				! isset( $actual_indexes[ $name ] )
 				|| $unique !== $actual_indexes[ $name ]['unique']
 				|| $index_columns !== $actual_indexes[ $name ]['columns']
+				|| ! $actual_indexes[ $name ]['full_length']
 			) {
 				return self::verification_error( sprintf( 'The %s %s index is missing or incompatible.', $label, $name ) );
 			}

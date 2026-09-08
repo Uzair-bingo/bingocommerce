@@ -30,6 +30,7 @@ if ( 'cli' !== PHP_SAPI ) {
 $_SERVER['HTTP_HOST']      = 'bingocommerce.test';
 $_SERVER['REQUEST_URI']    = '/';
 $_SERVER['REQUEST_METHOD'] = 'GET';
+$_SERVER['REMOTE_ADDR']    = '127.0.0.1';
 
 require dirname( __DIR__ ) . '/wp-load.php';
 require_once ABSPATH . 'wp-admin/includes/ms.php';
@@ -182,7 +183,7 @@ final class PackageStageATest {
 		global $wpdb;
 		$this->group( 'Migration' );
 
-		$this->same( 4, Migrations::DB_VERSION, 'Catalog DB_VERSION is 4' );
+		$this->same( 5, Migrations::DB_VERSION, 'Catalog DB_VERSION is 5' );
 
 		// Persistent halls run ONLY the production self-heal path, which is the
 		// same idempotent dbDelta + verify that admin_init runs. Nothing here
@@ -1458,9 +1459,8 @@ final class PackageStageATest {
 		foreach ( self::SUITE_TRIGGERS as $trigger ) {
 			$wpdb->query( "DROP TRIGGER IF EXISTS {$trigger}" );
 		}
-		// All FOUR hall-local Catalog v3 tables. WordPress does not know these
-		// custom tables, so wp_delete_site() leaves every one of them behind.
-		$tables = [ Migrations::package_components_table(), Migrations::packages_table(), Migrations::play_products_table(), Migrations::game_types_table() ];
+		// Include every Catalog/Session table provisioned for this run's own hall.
+		$tables = [ Migrations::package_components_table(), Migrations::packages_table(), Migrations::play_products_table(), Migrations::game_types_table(), $wpdb->prefix . 'bingo_sessions', $wpdb->prefix . 'bingo_session_packages', $wpdb->prefix . 'bingo_portal_session_templates' ];
 		$this->disposable_tables[ $site_id ] = $tables;
 		$wpdb->query( $wpdb->prepare( 'DELETE FROM ' . CoreMigrations::audit_log_table() . ' WHERE blog_id = %d', $site_id ) );
 		restore_current_blog();

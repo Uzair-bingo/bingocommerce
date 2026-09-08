@@ -1107,8 +1107,9 @@
    HTTP transport: COMPLETE. Phase 3D2 — strict Portal snapshot validation:
    COMPLETE against ADR-037.** ADR-038 records snapshot completeness and Game
    Type absence. ADR-039's name-validation amendment is implemented and tested;
-   COMPLETE. Catalog v5 and Phase 3E snapshot application/import
-   remain unimplemented; remaining design work is listed above.
+   COMPLETE. Catalog v5 is implemented and tested; COMPLETE.
+   Phase 3E snapshot application/import remains unimplemented; remaining design
+   work is listed above.
    Commerce selection remains separate and is not implemented.
 
 Everything below is tracked work that is NOT a blocker to that demo.

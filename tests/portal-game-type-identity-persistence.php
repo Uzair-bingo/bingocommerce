@@ -64,7 +64,7 @@ final class PortalGameTypeIdentityPersistenceTest {
 
 	public function run(): void {
 		$this->assert_true( is_multisite(), 'WordPress Multisite is enabled' );
-		$this->assert_same( 4, Migrations::DB_VERSION, 'Catalog advances exactly one version from v3 to v4' );
+		$this->assert_same( 5, Migrations::DB_VERSION, 'Catalog v5 name compatibility is current' );
 		$this->super_admin_id = $this->find_super_admin_id();
 		$this->assert_true( $this->super_admin_id > 0, 'native Super Admin fixture exists' );
 
@@ -85,6 +85,7 @@ final class PortalGameTypeIdentityPersistenceTest {
 		);
 
 		try {
+			$this->upgrade_existing_v4_names();
 			$this->upgrade_existing_v3_hall();
 			$this->new_site_provisioning();
 		} finally {
@@ -111,6 +112,116 @@ final class PortalGameTypeIdentityPersistenceTest {
 		echo "PASS: {$this->assertions} Phase 3C1 Portal Game Type identity persistence assertions.\n";
 	}
 
+	/** Catalog v5 fixtures are explicit SQL setup, not Portal importing. */
+	private function upgrade_existing_v4_names(): void {
+		global $wpdb;
+		$site_id = $this->create_disposable_site( 'Names v4' );
+		switch_to_blog( $site_id );
+		try {
+			$table = Migrations::game_types_table();
+			$this->disposable_ddl( $site_id, "ALTER TABLE `{$table}` DROP INDEX local_name_unique, DROP INDEX name_id, DROP COLUMN local_name_key, ADD UNIQUE KEY name_unique (name), ADD KEY preserved_status (status), MODIFY name varchar(160) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL" );
+			update_option( Migrations::VERSION_OPTION, 4, false );
+			$now = '2026-09-01 12:00:00';
+			foreach ( [ [ null, 'Local Reserved', 'active' ], [ null, '  Café  Archived  ', 'archived' ], [ 17, 'Portal Original', 'active' ] ] as $i => [ $portal_id, $name, $status ] ) {
+				$this->assert_same( 1, $wpdb->insert( $table, [
+					'portal_game_type_id' => $portal_id, 'code' => 'v4-name-' . $i,
+					'name' => $name, 'status' => $status, 'created_at' => $now,
+					'updated_at' => $now, 'archived_at' => 'archived' === $status ? $now : null,
+				] ), 'v4 local/linked fixture inserted' );
+			}
+			$before = $wpdb->get_results( "SELECT * FROM `{$table}` ORDER BY game_type_id", ARRAY_A );
+			$play = Migrations::play_products_table();
+			$this->assert_same( 1, $wpdb->insert( $play, [
+				'wc_product_id' => 987654321, 'medium' => 'digital', 'faces_per_unit' => 6,
+				'game_type_id' => $before[0]['game_type_id'], 'status' => 'active',
+				'created_at' => $now, 'updated_at' => $now,
+			] ), 'existing Play Product references the v4 local ID' );
+			$protected = $this->snapshot_current_site_tables( [ 'bingo_play_products', 'bingo_packages', 'bingo_package_components', 'bingo_sessions', 'bingo_session_packages' ] );
+
+			// Simulate a DROP that did not take effect: version advancement must fail.
+			$block_drop = static fn( string $sql ): string => str_contains( $sql, "ALTER TABLE `{$table}` DROP INDEX `name_unique`" ) ? 'SELECT 1' : $sql;
+			add_filter( 'query', $block_drop );
+			try {
+				$failed = Migrations::migrate_current_site();
+			} finally {
+				remove_filter( 'query', $block_drop );
+			}
+			$this->assert_true( is_wp_error( $failed ), 'a retained legacy index fails final verification' );
+			$this->assert_same( 4, (int) get_option( Migrations::VERSION_OPTION ), 'failed final verification does not advance v4' );
+			$this->assert_same( $before[0]['name'], $wpdb->get_var( "SELECT local_name_key FROM `{$table}` WHERE code = 'v4-name-0'" ), 'replacement key is backfilled before legacy index removal' );
+			$this->assert_same( 1, count( $this->name_index( $table, 'name_unique' ) ), 'failed DROP leaves the legacy index intact' );
+			$this->assert_true( true === Migrations::migrate_current_site(), 'interrupted v4 upgrade resumes successfully' );
+			$this->assert_same( 5, (int) get_option( Migrations::VERSION_OPTION ), 'v5 advances after complete verification' );
+			$this->assert_v5_names( $table );
+			$after = $wpdb->get_results( "SELECT * FROM `{$table}` ORDER BY game_type_id", ARRAY_A );
+			foreach ( $after as &$row ) {
+				$this->assert_same( null === $row['portal_game_type_id'] ? $row['name'] : null, $row['local_name_key'], 'local names backfill exactly and linked keys remain NULL' );
+				unset( $row['local_name_key'] );
+			}
+			unset( $row );
+			$this->assert_same( $before, $after, 'all existing names, codes, IDs, statuses and timestamps survive byte-identically' );
+			$this->assert_same( $protected, $this->snapshot_current_site_tables( [ 'bingo_play_products', 'bingo_packages', 'bingo_package_components', 'bingo_sessions', 'bingo_session_packages' ] ), 'all existing records and relationships remain unchanged' );
+			$this->assert_same( 'status', $this->name_index( $table, 'preserved_status' )[0]['Column_name'], 'an unrelated existing index is preserved' );
+
+			wp_set_current_user( $this->super_admin_id );
+			$service = new GameTypeService( static fn( array $event ): int => 1 );
+			$this->assert_same( 1, $wpdb->insert( $table, [
+				'portal_game_type_id' => 18, 'code' => 'linked-second', 'name' => 'Portal Original',
+				'local_name_key' => null, 'status' => 'active', 'created_at' => $now, 'updated_at' => $now,
+			] ), 'two distinct Portal IDs can have identical names' );
+			$linked_id = (int) $wpdb->insert_id;
+			$local = $service->create( 'Portal Original' );
+			$this->assert_true( $local instanceof GameTypeResult, 'local creation ignores duplicate linked names' );
+			$this->assert_same( 'duplicate_name', $service->create( 'portal original' )->get_error_code(), 'local case-equivalent duplicates remain rejected' );
+			$this->assert_same( 'duplicate_name', $service->create( 'Local Reserved' )->get_error_code(), 'backfilled local names remain reserved' );
+			$this->assert_true( $service->rename( (int) $before[1]['game_type_id'], 'Café Archived' ) instanceof GameTypeResult, 'archived local rename remains supported' );
+			$this->assert_same( 'duplicate_name', $service->create( 'Cafe Archived' )->get_error_code(), 'archived local names reserve accent-equivalent names' );
+			$this->assert_same( 'duplicate_name', $service->rename( (int) $before[1]['game_type_id'], 'local reserved' )->get_error_code(), 'local rename cannot take another local name' );
+			$this->assert_true( $service->rename( $linked_id, 'local reserved' ) instanceof GameTypeResult, 'linked rename can use a collation-equivalent local name' );
+			$linked = $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM %i WHERE game_type_id = %d', $table, $linked_id ), ARRAY_A );
+			$this->assert_same( null, $linked['local_name_key'], 'linked rename keeps its key NULL' );
+			$this->assert_same( 'linked-second', $linked['code'], 'linked rename does not allocate or change a code' );
+			$this->assert_true( true === Migrations::verify_game_types_schema(), 'create and rename maintain all v5 name-key invariants' );
+			$rows = $this->snapshot_current_site_tables( [ 'bingo_game_types' ] );
+			$schema = $this->schema_snapshot( [ $table ] );
+			$this->assert_true( true === Migrations::migrate_current_site(), 'v5 rerun succeeds with duplicate linked/local names' );
+			$this->assert_same( $rows, $this->snapshot_current_site_tables( [ 'bingo_game_types' ] ), 'v5 rerun preserves every row byte-for-byte' );
+			$this->assert_same( $schema, $this->schema_snapshot( [ $table ] ), 'v5 rerun preserves all indexes and column definitions' );
+
+			$this->disposable_ddl( $site_id, "ALTER TABLE `{$table}` ADD UNIQUE KEY name_unique (code)" );
+			update_option( Migrations::VERSION_OPTION, 4, false );
+			$this->assert_true( is_wp_error( Migrations::migrate_current_site() ), 'a name_unique index on the wrong column is never dropped' );
+			$this->assert_same( 'code', $this->name_index( $table, 'name_unique' )[0]['Column_name'], 'the unexpected index remains intact' );
+			$this->assert_same( 4, (int) get_option( Migrations::VERSION_OPTION ), 'unexpected index definition prevents version advancement' );
+			$this->disposable_ddl( $site_id, "ALTER TABLE `{$table}` DROP INDEX name_unique" );
+			$this->assert_true( true === Migrations::migrate_current_site(), 'migration recovers after disposable index repair' );
+		} finally {
+			restore_current_blog();
+		}
+	}
+
+	private function assert_v5_names( string $table ): void {
+		$column = $this->column( $table, 'local_name_key' );
+		$this->assert_same( 'varchar(160)', $column['Type'], 'v5 local-name key has the exact width' );
+		$this->assert_same( 'YES', $column['Null'], 'v5 local-name key is nullable' );
+		$this->assert_same( null, $column['Default'], 'v5 local-name key defaults to NULL' );
+		$this->assert_same( $this->column( $table, 'name' )['Collation'], $column['Collation'], 'local-name key inherits the name column collation' );
+		$unique = $this->name_index( $table, 'local_name_unique' );
+		$this->assert_same( [ 'local_name_key' ], array_column( $unique, 'Column_name' ), 'local-name uniqueness covers only its key' );
+		$this->assert_same( 0, (int) $unique[0]['Non_unique'], 'local-name index is unique' );
+		$this->assert_same( null, $unique[0]['Sub_part'], 'local-name uniqueness uses the full key' );
+		$this->assert_same( [], $this->name_index( $table, 'name_unique' ), 'global name uniqueness is absent' );
+		$names = $this->name_index( $table, 'name_id' );
+		$this->assert_same( [ 'name', 'game_type_id' ], array_column( $names, 'Column_name' ), 'name ordering index has the exact ordered columns' );
+		$this->assert_same( 1, (int) $names[0]['Non_unique'], 'name ordering index is nonunique' );
+	}
+
+	/** @return array<int,array<string,mixed>> */
+	private function name_index( string $table, string $index ): array {
+		global $wpdb;
+		return $wpdb->get_results( $wpdb->prepare( 'SHOW INDEX FROM %i WHERE Key_name = %s', $table, $index ), ARRAY_A );
+	}
+
 	private function upgrade_existing_v3_hall(): void {
 		global $wpdb;
 
@@ -125,7 +236,7 @@ final class PortalGameTypeIdentityPersistenceTest {
 			$game_types   = Migrations::game_types_table();
 			$play_products = Migrations::play_products_table();
 
-			$this->disposable_ddl( $site_id, "ALTER TABLE `{$game_types}` DROP INDEX `portal_game_type_unique`, DROP COLUMN `portal_game_type_id`" );
+			$this->disposable_ddl( $site_id, "ALTER TABLE `{$game_types}` DROP INDEX `portal_game_type_unique`, DROP COLUMN `portal_game_type_id`, DROP INDEX `local_name_unique`, DROP INDEX `name_id`, DROP COLUMN `local_name_key`, ADD UNIQUE KEY `name_unique` (`name`)" );
 			update_option( Migrations::VERSION_OPTION, 3, false );
 			$this->assert_same( 3, (int) get_option( Migrations::VERSION_OPTION, 0 ), 'fixture represents the prior Catalog v3 state' );
 			$this->assert_same( null, $this->column( $game_types, 'portal_game_type_id' ), 'prior v3 fixture has no Portal identity column' );
@@ -168,9 +279,9 @@ final class PortalGameTypeIdentityPersistenceTest {
 			$protected_rows = $this->snapshot_current_site_tables( [ 'bingo_packages', 'bingo_package_components', 'bingo_sessions', 'bingo_session_packages' ] );
 			$protected_ddl  = $this->schema_snapshot( [ Migrations::packages_table(), Migrations::package_components_table(), $wpdb->prefix . 'bingo_sessions', $wpdb->prefix . 'bingo_session_packages' ] );
 
-			$this->assert_true( true === Migrations::migrate_current_site(), 'existing disposable hall upgrades from Catalog v3 to v4' );
-			$this->assert_same( 4, (int) get_option( Migrations::VERSION_OPTION, 0 ), 'v4 is recorded only after migration verification' );
-			$this->assert_true( true === Migrations::verify_current_site_schema(), 'complete Catalog v4 schema verifies' );
+			$this->assert_true( true === Migrations::migrate_current_site(), 'existing disposable hall upgrades from Catalog v3 to v5' );
+			$this->assert_same( 5, (int) get_option( Migrations::VERSION_OPTION, 0 ), 'v5 is recorded only after migration verification' );
+			$this->assert_true( true === Migrations::verify_current_site_schema(), 'complete Catalog v5 schema verifies' );
 			$this->assert_portal_column_and_index( $game_types, 'upgraded hall' );
 
 			$game_after = $wpdb->get_row( $wpdb->prepare( "SELECT game_type_id, code, name, status, created_at, updated_at, archived_at, portal_game_type_id FROM `{$game_types}` WHERE game_type_id = %d", $game_type_id ), ARRAY_A );
@@ -191,11 +302,12 @@ final class PortalGameTypeIdentityPersistenceTest {
 				[
 					'code'       => 'phase-3c1-second',
 					'name'       => 'Phase 3C1 Second',
+					'local_name_key' => 'Phase 3C1 Second',
 					'status'     => 'active',
 					'created_at' => $now,
 					'updated_at' => $now,
 				],
-				[ '%s', '%s', '%s', '%s', '%s' ]
+				[ '%s', '%s', '%s', '%s', '%s', '%s' ]
 			);
 			$this->assert_same( 1, $second, 'a second local Game Type with null Portal identity is allowed' );
 			$second_id = (int) $wpdb->insert_id;
@@ -203,8 +315,8 @@ final class PortalGameTypeIdentityPersistenceTest {
 
 			$portal_a = random_int( 2000000001, 3000000000 );
 			$portal_b = random_int( 3000000001, 4000000000 );
-			$this->assert_same( 1, $wpdb->update( $game_types, [ 'portal_game_type_id' => $portal_a ], [ 'game_type_id' => $game_type_id ], [ '%d' ], [ '%d' ] ), 'first non-null Portal identity is accepted' );
-			$this->assert_same( 1, $wpdb->update( $game_types, [ 'portal_game_type_id' => $portal_b ], [ 'game_type_id' => $second_id ], [ '%d' ], [ '%d' ] ), 'a distinct non-null Portal identity is accepted' );
+			$this->assert_same( 1, $wpdb->update( $game_types, [ 'portal_game_type_id' => $portal_a, 'local_name_key' => null ], [ 'game_type_id' => $game_type_id ], [ '%d', null ], [ '%d' ] ), 'first non-null Portal identity is accepted' );
+			$this->assert_same( 1, $wpdb->update( $game_types, [ 'portal_game_type_id' => $portal_b, 'local_name_key' => null ], [ 'game_type_id' => $second_id ], [ '%d', null ], [ '%d' ] ), 'a distinct non-null Portal identity is accepted' );
 
 			$previous  = $wpdb->suppress_errors( true );
 			$duplicate = $wpdb->update( $game_types, [ 'portal_game_type_id' => $portal_a ], [ 'game_type_id' => $second_id ], [ '%d' ], [ '%d' ] );
@@ -223,7 +335,7 @@ final class PortalGameTypeIdentityPersistenceTest {
 				$this->assert_same( null, $wpdb->get_var( $wpdb->prepare( "SELECT portal_game_type_id FROM `{$game_types}` WHERE game_type_id = %d", $created_id ) ), 'local service creation fabricates no Portal identity' );
 			}
 
-			$this->assert_true( true === Migrations::migrate_current_site(), 'v4 migration rerun is idempotent' );
+			$this->assert_true( true === Migrations::migrate_current_site(), 'v5 migration rerun is idempotent' );
 			$this->assert_true( true === Migrations::verify_current_site_schema(), 'schema still verifies after rerun' );
 		} finally {
 			restore_current_blog();
@@ -239,9 +351,10 @@ final class PortalGameTypeIdentityPersistenceTest {
 
 		switch_to_blog( $site_id );
 		try {
-			$this->assert_same( 4, (int) get_option( Migrations::VERSION_OPTION, 0 ), 'normal new-site provisioning records Catalog v4' );
-			$this->assert_true( true === Migrations::verify_current_site_schema(), 'normal new-site provisioning produces the complete v4 schema' );
+			$this->assert_same( 5, (int) get_option( Migrations::VERSION_OPTION, 0 ), 'normal new-site provisioning records Catalog v5' );
+			$this->assert_true( true === Migrations::verify_current_site_schema(), 'normal new-site provisioning produces the complete v5 schema' );
 			$this->assert_portal_column_and_index( Migrations::game_types_table(), 'newly provisioned hall' );
+			$this->assert_v5_names( Migrations::game_types_table() );
 		} finally {
 			restore_current_blog();
 		}

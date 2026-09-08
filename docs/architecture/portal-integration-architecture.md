@@ -11,7 +11,8 @@ v1 validation contract, ADR-038's completeness and Game Type absence decision,
 and ADR-039's approved name/code, validation-amendment, and Catalog v5 migration
 design, it is not an API, webhook, persistence, provisioning, or SSO
 implementation design. ADR-039's name-validation amendment is implemented and
-tested; COMPLETE. Catalog v5 and Phase 3E remain unimplemented.
+tested; COMPLETE. Catalog v5 is implemented and tested; COMPLETE.
+Phase 3E and Portal importing remain unimplemented.
 
 All Portal identities below belong to the single authoritative Bingo Innovation
 Portal environment:
@@ -358,7 +359,8 @@ remove it. Verify the target table/index before and after removal and the
 replacement key/backfill before dropping the old index. Advance the Catalog
 version only after complete verification; new sites receive final v5 directly.
 The name-validation amendment is implemented and tested; COMPLETE.
-The Catalog v5 migration and Phase 3E remain unimplemented.
+Catalog v5 is implemented and tested; COMPLETE. Phase 3E,
+Portal importing, and imported-code allocation remain unimplemented.
 
 Approved shape:
 
