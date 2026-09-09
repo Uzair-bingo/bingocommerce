@@ -22,8 +22,10 @@ final class Roles {
 	/**
 	 * Bump when HALL_MANAGER_CAPS / GAME_OPERATOR_CAPS / PROHIBITED_NATIVE_CAPS
 	 * change, so existing sites get re-synced.
+	 *
+	 * Version 2 adds bc_sync_portal to Hall Manager (ADR-041).
 	 */
-	const SCHEMA_VERSION = 1;
+	const SCHEMA_VERSION = 2;
 
 	/** Per-site option: schema version currently applied on this site. */
 	const SITE_VERSION_OPTION = 'bc_core_role_schema_version';
@@ -45,6 +47,11 @@ final class Roles {
 		'bc_view_sessions',
 		'bc_redeem_tickets',
 		'bc_reactivate_tickets',
+		// ADR-041: manual Portal synchronization for THIS hall only. Deliberately
+		// its own capability rather than a reuse of bc_manage_hall_settings or
+		// bc_manage_products, so Portal authority can be granted and revoked
+		// without moving unrelated hall administration with it.
+		'bc_sync_portal',
 	];
 
 	const GAME_OPERATOR_CAPS = [

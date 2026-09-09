@@ -1433,13 +1433,178 @@ passing assertions. Production deployment is NOT claimed (local Portal test
 environment on `127.0.0.1` only). For the full operational verification record
 and step-by-step evidence, see `PROJECT_STATUS.md`.
 
-**Phase 3G business scope:** Phase 3G is NEXT and unimplemented. It will provide
-manual, Hall-scoped synchronization: an authorized Hall Manager must be able to
-synchronize their own Hall, while Network Super Admin retains emergency and
-oversight access. Ordinary Hall staff (such as Game Operators) must not receive
-synchronization authority. Exact capability names, provisioning, and UI
-mechanics remain undecided until Phase 3G source inspection. Webhooks and
-scheduling remain deferred, as do local writer restrictions and reconciliation.
+**Phase 3G business scope:** Phase 3G provides manual, Hall-scoped
+synchronization: an authorized Hall Manager must be able to synchronize their own
+Hall, while Network Super Admin retains emergency and oversight access. Ordinary
+Hall staff (such as Game Operators) must not receive synchronization authority.
+Its capability, provisioning and UI mechanics are decided by ADR-041 below.
+Webhooks and scheduling remain deferred, as do local writer restrictions and
+reconciliation.
+
+- **ADR-041 — [2026-09-09] — Phase 3G Manual Hall-Scoped Portal
+  Synchronization: Capability, Tenant Derivation, Request Mechanism, Notices and
+  Audit:**
+
+**Status and scope. COMPLETE.** Source review passed, the local harness passes
+411/411, and the practical browser test PASSED against a local Portal test
+environment. Production deployment is NOT claimed, and scheduling and webhooks do
+not exist. This entry decides only how an authorized person triggers the
+already-complete Phase 3E synchronization from inside one hall's wp-admin. It
+adds no scheduling, cron, webhook, REST route, Portal-side trigger, SSO,
+reconciliation, local writer restriction, Commerce scheduling change, Portal API
+change, or new persistence, and it changes no Phase 3E production file.
+
+**Dedicated capability.** Phase 3G introduces `bc_sync_portal`, granted only to
+`bc_hall_manager` and never to `bc_game_operator` or any other role. Reuse was
+rejected: `bc_manage_hall_settings` and `bc_manage_hall` are broad hall
+administration grants, and `bc_manage_products` / `bc_manage_sessions` describe
+LOCAL Catalog authority, whereas synchronization applies Portal-owned Game Type
+names and Session-template replicas. Binding Portal authority to any of them
+would make it impossible to grant or revoke synchronization without moving
+unrelated powers with it. The capability rides the existing versioned role
+mechanism — `Roles::SCHEMA_VERSION` advances 1 -> 2 — so existing sites converge
+through `maybe_provision_network()` / `maybe_sync_current_site()` and new sites
+through `provision_new_site()`. No new role, migration framework or table.
+
+**Network Super Admin oversight is inherited, not special-cased.** A Multisite
+Super Admin already satisfies `current_user_can()` for any non-meta capability
+(`WP_User::has_cap()`), so oversight needs no dropdown, no network screen and no
+bypass branch. The screen additionally carries the explicit `is_super_admin() ||`
+gate the other BingoCommerce screens use. Super Admin acts through the same
+hall-local page by entering that hall's site admin.
+
+**Authorization lives at the Phase 3G boundary.** `PortalSyncService` remains a
+TRUSTED-CALLER service and gains no WordPress-user authorization, because CLI
+harnesses invoke it with no logged-in user and because Phase 3E is complete and
+reviewed. Every WordPress-facing entry point must therefore establish method,
+tenancy, capability and nonce before calling it. That contract is documented on
+`PortalSyncAdmin`, not by editing Phase 3E.
+
+**Tenant derivation is structural.** The target site comes only from
+`HallContext::site_id()` / `get_current_blog_id()`. No `blog_id`, Portal Hall ID,
+mapping ID or network ID is read from GET or POST, and the form carries no such
+field. The active mapping is resolved from that trusted site through
+`HallMappingRepository::findActiveByBlogId()`. Phase 3E then re-derives the
+Portal Hall ID from the mapping, the validator re-checks hall identity on the
+envelope and every child record, and the transport re-confirms the mapping under
+`FOR UPDATE`, so a forged identifier would have to survive four independent
+re-derivations. There is no network-wide Hall selector.
+
+**Authenticated admin-post, not the render callback.** The handler is
+`admin_post_bc_portal_sync`; no `admin_post_nopriv` twin is registered.
+Synchronization must not run inside the page-render callback, because WordPress
+has already emitted admin output by then, which would make a redirect impossible
+and stall a half-rendered screen for the length of a Portal round-trip. Order is
+fixed: POST, hall context, capability, nonce, trusted site id, dependency gate,
+one `PortalSyncService::synchronize()` call, audit, `wp_safe_redirect( …, 303 )`,
+exit. Every method, tenancy, capability and nonce rejection happens before any
+Portal fetch.
+
+**Post/Redirect/Get is a deliberate deviation.** The five existing BingoCommerce
+screens self-POST and render their notice inline. That is tolerable for local
+CRUD but not for an action whose repeat costs a Portal round-trip and an advisory
+lock, so Phase 3G redirects with 303 and renders from the follow-up GET. This is
+the new convention for outward-effect actions; it does not retrofit the existing
+screens.
+
+**Phase 3E owns locking.** Phase 3G adds no transient, cooldown, rate limit or
+second lock. Concurrent submissions are resolved by the existing per-hall
+advisory lock and surface as the fixed retry notice.
+
+**Allowlisted notices only.** The redirect carries at most `page`, `bc_sync`
+(`applied` | `no_change` | `error`), `bc_sync_code` (an allowlisted failure
+category) and `bc_sync_audit=1`. It never carries counts, messages, hall or site
+identifiers, endpoint URLs or error data. Every failure is reduced to one
+category from an explicit table built from real Phase 3B/3D/3E error codes; an
+unrecognised code becomes `unknown`. `get_error_message()` and
+`get_error_data()` are never rendered, so no token, Authorization header,
+endpoint, snapshot fragment, SQL, errno, table, constraint or lock name can reach
+the browser. Because both the outcome and the category are allowlisted on read, a
+hand-edited query string can only ever select one of the fixed strings.
+
+**Audit policy.** Success records `portal.snapshot.synchronized` with the trusted
+`blog_id`, the authenticated actor, the Portal Hall ID from `PortalSyncResult`,
+an `outcome` of `applied` or `no_change`, the five integer counts, and a
+server-generated UUID. Failure records `portal.snapshot.failed` with the same
+trusted attribution, an allowlisted error category, and the Portal Hall ID only
+when safely available from the trusted mapping. Never the token, Authorization
+header, Portal body, snapshot, raw `WP_Error` message or data, raw SQL, or
+endpoint URL. If the audit write fails AFTER a committed synchronization, the
+synchronization outcome is NOT rewritten — reporting a committed sync as a
+failure would invite a pointless retry — and the screen shows the true outcome
+plus one fixed secondary warning, with a single fixed generic server log line
+carrying no error data.
+
+**Audit failure is one case, not two.** `AuditLog::record()` returning a
+`WP_Error` and THROWING a `Throwable` are handled identically, because by that
+point the synchronization has already committed: neither may rewrite the outcome
+or escape to the browser. Both paths preserve the true result, keep the HTTP 303
+redirect, add only `bc_sync_audit=1`, and write one fixed generic log line. The
+exception object is never read — its message, class and trace can carry SQL,
+table names and stored values.
+
+**Absent mapping is not an unavailable mapping system.** A clean read that finds
+no active mapping shows `Not linked`. A missing mapping schema or a failed
+mapping read shows `Synchronization unavailable`, and the Portal Hall row reads
+`Unavailable`; telling a Hall Manager their hall is Not linked during a database
+failure would misdescribe a different problem with a different fix. The button is
+withheld in both cases, no schema/table/SQL/`WP_Error` detail is rendered, and
+the POST handler still leaves authoritative mapping resolution to Phase 3E.
+
+**Testing.** `tests/portal-sync-admin.php`, with
+`tests/portal-sync-admin-worker.php` (required because the handler terminates in
+`exit()` or `wp_die()`), exercises the real registered page and handler, with the
+Portal intercepted at `pre_http_request` and throwaway fixture constants. The
+operator's token is never read. It passes **411/411** across two consecutive runs
+with an identical count, asserts HTTP **303** on applied, no-change and error
+redirects, and asserts the error-category table contains **52** mappings across
+17 categories. Its cleanup removes current-run audit rows only when BOTH the row
+is newer than the opening high-water mark AND its `blog_id` is a site that run
+created; a deleted hall alone is never grounds for deletion.
+
+**Practical browser test: PASSED (2026-09-09).** The plugin was network-activated
+through `activate_plugin()` — writing only `active_sitewide_plugins`, with the
+network schema unchanged at version 1, the table count unchanged, sites 2-4
+byte-identical, and no synchronization triggered by activation — and a freshly
+issued Hall-2-only web token was supplied through the ADR-036 constant boundary.
+A non-Super-Admin Hall Manager synchronized Sunrise/site 2 in a real browser:
+three deliberate POSTs, each answered HTTP 303, each producing exactly one
+correctly attributed `portal.snapshot.synchronized` audit event carrying only the
+five integer counts (applied, then two domain no-ops). Five page GETs produced
+neither a synchronization nor an audit event, confirming the PRG contract. Site 2
+changed only in its Portal Game Type replica and sync-state marker; the two
+pre-existing local-only Game Types survived byte-identical; Tampa and Orlando were
+byte-identical; the mapping was unchanged; the Game Operator was denied both by
+menu absence and by a 403 on a direct request for the Portal Sync page URL —
+WordPress refused the request rather than redirecting the unauthorized user;
+Network Super Admin was admitted. The active token does not appear in tracked
+source, the Phase 3G diff, any Portal Sync page URL, a rendered notice, an audit
+record, or any log inspected during verification.
+
+**Credential lifecycle.** Token `id 2` is ACTIVE and granted Hall 2 only; the
+superseded Phase 3E CLI token `id 1` is REVOKED, having been revoked only AFTER
+the new token authenticated successfully, and is retained as a revoked record
+rather than deleted so an access review can still see it existed. Both temporary
+plaintext token files were deleted. The active token is currently configured
+directly through the ADR-036 `BINGOCOMMERCE_PORTAL_INTEGRATION_TOKEN` constant in
+`wp-config.php`, which is git-ignored and untracked configuration; the Portal
+stores only the SHA-256 hash and has no plaintext column. That ignored file is
+therefore the one place in the working tree holding the credential, which is why
+no broader "the token exists nowhere" claim is made. Temporary browser-test users
+were removed through `HallStaffService` and `wpmu_delete_user()`, leaving no
+residual usermeta and no change to any pre-existing user.
+
+**Still NOT claimed.** No production deployment has occurred. **Scheduling and
+webhooks do not exist.** Local writer restrictions and reconciliation remain
+deferred. The plugin activation and web configuration are local test-environment
+state only.
+
+*Rationale:* A dedicated capability keeps Portal authority separable from hall
+administration; deriving tenancy from the current site rather than from the
+request removes cross-tenant tampering as a class instead of validating against
+it; and reducing every outcome to an allowlisted category makes the disclosure
+surface a fixed table that can be reviewed in one place, rather than whatever an
+upstream error happens to contain.
 
 ---
 

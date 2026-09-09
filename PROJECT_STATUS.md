@@ -1191,15 +1191,143 @@
   Phase 3F and Phase 3E runs were removed under per-row guards; 391 historical
   rows for earlier blog IDs were deliberately left untouched. No production PHP
   changed.
-- **NEXT Portal-integration checkpoint: Phase 3G — manual Hall-scoped
-  synchronization. NEXT and UNIMPLEMENTED.** Phase 3G will provide manual,
-  Hall-scoped synchronization: an authorized Hall Manager must be able to
-  synchronize their own Hall, while Network Super Admin retains emergency and
-  oversight access. Ordinary Hall staff (such as Game Operators) must not
-  receive synchronization authority. Exact capability names, provisioning, and
-  UI mechanics remain undecided until Phase 3G source inspection. Webhooks and
-  scheduling remain deferred and unimplemented, as do local writer restrictions
-  and reconciliation. Overall Phase 3D is COMPLETE against ADR-037; ADR-039's
+- **[2026-09-09] Phase 3G — manual Hall-scoped synchronization: COMPLETE.**
+  Source review passed, the local harness passes 411/411, and the practical
+  browser test PASSED against a local Portal test environment. ADR-041 approves
+  and this increment implements `PortalSyncAdmin` in
+  `bingocommerce-portal-integration` plus the `bc_sync_portal` capability in
+  `bingocommerce-core`. No Phase 3E production file changed. **Production
+  deployment is NOT claimed, and scheduling and webhooks do not exist.**
+  - **Authorization.** A dedicated `bc_sync_portal` capability is granted only to
+    `bc_hall_manager`, never to `bc_game_operator` or any other role. It rides
+    the existing versioned role mechanism (`Roles::SCHEMA_VERSION` 1 -> 2), so
+    existing halls converge through `maybe_provision_network()` /
+    `maybe_sync_current_site()` and new halls through `provision_new_site()`. No
+    new role, migration framework or table. Network Super Admin retains
+    emergency/oversight access through ordinary Multisite capability behaviour
+    plus the explicit `is_super_admin() ||` gate the other screens use, working
+    from the same hall-local page; there is no network-wide Hall selector.
+  - **Tenant boundary.** The target site comes only from
+    `HallContext::site_id()` / `get_current_blog_id()`. No `blog_id`, Portal Hall
+    ID, mapping ID or network ID is read from GET or POST, and the form carries
+    no such field, so Phase 3E's four independent hall re-derivations cannot be
+    redirected by a forged request.
+  - **Request mechanism.** A hall-local `Portal Sync` page
+    (`bingocommerce-portal-sync`) posts to the authenticated
+    `admin_post_bc_portal_sync` handler; no `admin_post_nopriv` twin exists.
+    The handler enforces POST, hall context, capability and nonce — all before
+    any Portal fetch — then calls `PortalSyncService::synchronize()` exactly
+    once, records a safe audit event, and redirects with HTTP 303. Phase 3E
+    still owns locking: Phase 3G adds no lock, transient, cooldown or rate limit.
+  - **Safe output.** The redirect carries at most `page`, `bc_sync`
+    (`applied` | `no_change` | `error`), an allowlisted `bc_sync_code`, and
+    `bc_sync_audit=1` — never counts, messages, identifiers, endpoints or error
+    data. Failures are reduced to fixed categories from an explicit table of real
+    Phase 3B/3D/3E error codes; an unrecognised code becomes `unknown`.
+    `get_error_message()` and `get_error_data()` are never rendered.
+  - **Audit.** `portal.snapshot.synchronized` (with the five integer counts and
+    `outcome` of `applied` or `no_change`) and `portal.snapshot.failed` (with an
+    allowlisted category only), both attributed to the trusted current site and
+    the authenticated actor. An audit write failure never rewrites the
+    synchronization outcome; it adds one fixed secondary warning and a single
+    fixed generic log line.
+  - `tests/portal-sync-admin.php` passes **411/411** across two consecutive runs
+    with an identical count, driving the real registered page and handler through
+    `tests/portal-sync-admin-worker.php`. The Portal is intercepted at
+    `pre_http_request` and the operator's token is never read.
+  - **[2026-09-09] Source-review corrections applied.**
+    - `record_audit()` now wraps `AuditLog::record()` in `try/catch ( \Throwable )`.
+      A thrown exception and a returned `WP_Error` are handled identically: the
+      real synchronization outcome is preserved, the redirect still carries
+      HTTP 303, only `bc_sync_audit=1` is added, and one fixed generic log line
+      is written. The exception object is never read, so its message, class and
+      trace cannot reach the browser or the log. A worker scenario throws
+      mid-insert and proves the exception does not escape, the committed rows
+      are neither rolled back nor re-applied, the synchronization is not
+      repeated, and no fixture string leaks.
+    - Readiness now distinguishes an absent mapping from an unavailable mapping
+      SYSTEM. A clean read that finds no active mapping shows `Not linked`; a
+      missing mapping schema or a failed mapping read shows the fixed
+      `Synchronization unavailable` state and the Portal Hall row reads
+      `Unavailable` rather than falsely claiming the hall is not linked. The
+      button is withheld in both cases, and no schema, table, SQL or `WP_Error`
+      detail is rendered. The POST handler still leaves authoritative mapping
+      resolution to Phase 3E.
+    - The last-synchronization row is labelled **UTC**, matching Phase 3E's
+      `current_time( 'mysql', true )` storage.
+    - The worker captures `wp_redirect_status`, and applied, no-change and error
+      redirects are each asserted to use HTTP **303**.
+    - The worker's misleading `SERVICE=` line is renamed `HANDLER_REGISTERED=`,
+      which is what it actually reported.
+    - The production error-category table contains **52** mappings across 17
+      categories, asserted by the harness.
+    - Harness cleanup now removes current-run audit rows under two guards —
+      `id > ` the opening high-water mark **and** a `blog_id` this run created —
+      and then asserts none remain. A deleted hall alone is never grounds for
+      deletion, and historical or persistent-hall rows are never touched.
+  - **[2026-09-09] Practical browser test: PASSED.** Run in a real browser
+    against the local Portal test environment at `http://127.0.0.1:8000`, with
+    the integration plugin network-activated through `activate_plugin()` and a
+    freshly issued web token supplied via the ADR-036 constant boundary in
+    `wp-config.php` (git-ignored). Activation itself wrote only
+    `active_sitewide_plugins`: the network schema stayed at version `1`, the
+    database table count was unchanged at 239, sites 2-4 domain tables were
+    byte-identical, and no synchronization occurred merely from activating.
+    - A non-Super-Admin **Hall Manager** on Sunrise/site 2 saw the Portal Sync
+      page and synchronized successfully. The Apache log shows three deliberate
+      `POST /wp-admin/admin-post.php` clicks, each answered **HTTP 303** and each
+      followed by a `GET` of the hall-local page: the first applied
+      (`bc_sync=applied`), the second and third were domain no-ops
+      (`bc_sync=no_change`).
+    - **One audit event per request, three in total, all correctly attributed** —
+      `portal.snapshot.synchronized`, `blog_id = 2`, actor = the Hall Manager,
+      `target_type = portal_hall`, `target_id = 2`; contexts `{"outcome":"applied"}`
+      then `{"outcome":"no_change"}` twice, carrying only the five integer counts.
+    - **Refresh performed no synchronization.** Five page `GET`s produced zero
+      additional POSTs and zero additional audit events; POST count equalled
+      audit-event count exactly. No form-resubmission warning appeared, which is
+      the PRG contract working.
+    - **Site 2 changed only in approved Portal replica/sync-state areas:**
+      `bingo_game_types` 9 -> 10 rows (Portal Game Type `45 "Mini Mad"`, imported
+      as `portal-gt-45` with `local_name_key` NULL) plus the
+      `bc_portal_snapshot_sync_state` marker. Play Products, Packages, package
+      components, Commerce Sessions, session/package assignments, posts, postmeta
+      and orders were untouched, and the 2 pre-existing local-only Game Types
+      (`#654`, `#1343`) survived byte-identical.
+    - **Tampa/site 3 and Orlando/site 4 were byte-identical** to the pre-test
+      baseline in every domain table, with their sync markers absent throughout.
+    - **Mapping `Portal Hall 2 -> site 2` remained active and unchanged**,
+      including its `created_at`/`updated_at`.
+    - **Game Operator denied** — the menu did not register, and a direct `GET` of
+      the Portal Sync page URL returned **403**. WordPress did not redirect the
+      unauthorized user; the request was refused. **Network Super Admin** reached
+      the same hall-local page.
+    - **No secret disclosure in tracked material.** The active token does not
+      appear in tracked source, the Phase 3G diff, any Portal Sync page URL, a
+      rendered notice, an audit record, or any log inspected during verification.
+      Portal Sync page URLs carried only `page` and `bc_sync`, and the three audit
+      rows contain no token, Authorization header, endpoint, snapshot body, SQL,
+      errno or lock name. The active token IS present in `wp-config.php`, which is
+      git-ignored and untracked configuration, so this is not a claim that no
+      token exists anywhere in the working tree.
+  - **Credential lifecycle.** A fresh token (`id 2`,
+    "BingoCommerce Phase 3G local browser test") was issued through the Portal's
+    own token service and is **ACTIVE, granted Hall 2 only**. The superseded
+    Phase 3E CLI token (`id 1`) is **REVOKED**; it was revoked only after the new
+    token authenticated successfully, and is retained as a revoked record rather
+    than deleted. **Both temporary plaintext token files were deleted** — no
+    plaintext remains in `/private/tmp`. The active token is currently configured
+    **directly through the ADR-036 `BINGOCOMMERCE_PORTAL_INTEGRATION_TOKEN`
+    constant in `wp-config.php`**, which is git-ignored and untracked; the Portal
+    itself stores **only the SHA-256 hash**, and its table has no plaintext
+    column. The two temporary `p3g_*` browser-test users were removed through
+    `HallStaffService` and `wpmu_delete_user()`, leaving zero residual usermeta
+    and every pre-existing real user untouched.
+  - **NOT claimed:** no production deployment has occurred, and **scheduling and
+    webhooks do not exist**. Local writer restrictions and reconciliation remain
+    deferred and unimplemented. The plugin activation and web configuration are
+    local test-environment state only.
+  Overall Phase 3D is COMPLETE against ADR-037; ADR-039's
   name-validation amendment and Catalog v5 are implemented and tested; COMPLETE.
   - **[2026-09-07] Pre-Phase 3E Design Slice 1 — snapshot completeness:
     documented in ADR-038; COMPLETE.** A successful Portal v1
@@ -1291,12 +1419,19 @@
    synchronizations of both Halls changed zero domain rows, Portal identities
    never crossed sites, and all disposable resources were cleanly removed.
    Production deployment is not claimed. **Phase 3G — manual Hall-scoped
-   synchronization — is NEXT and unimplemented**: an authorized Hall Manager
-   must be able to synchronize their own Hall, Network Super Admin retains
-   emergency and oversight access, ordinary Hall staff receive no sync
-   authority, and exact capability names, provisioning, and UI mechanics remain
-   undecided until source inspection; webhooks and scheduling remain deferred
-   and unimplemented, as do local writer restrictions and reconciliation.
+   synchronization — is COMPLETE** (ADR-041): a hall-local `Portal Sync` page and
+   authenticated `admin_post_bc_portal_sync` handler let an authorized Hall
+   Manager synchronize their own Hall through the dedicated `bc_sync_portal`
+   capability, Network Super Admin retains emergency and oversight access, and
+   ordinary Hall staff receive no sync authority. Source review passed, the local
+   harness passes 411/411, and the practical browser test PASSED: three
+   deliberate clicks produced one correctly attributed audit event each (applied,
+   then two domain no-ops), refresh performed no synchronization, site 2 changed
+   only in its Portal Game Type replica and sync marker, Tampa and Orlando stayed
+   byte-identical, the Game Operator was denied and Super Admin admitted.
+   **Production deployment is NOT claimed, and scheduling and webhooks do not
+   exist.** Local writer restrictions and reconciliation remain deferred and
+   unimplemented.
    Commerce selection remains separate and is not implemented.
 
 Everything below is tracked work that is NOT a blocker to that demo.
@@ -1311,11 +1446,10 @@ Everything below is tracked work that is NOT a blocker to that demo.
    idempotent synchronization is COMPLETE (automated harness verified multiple
    disposable mappings; real run used persistent mapping), and the separate
    practical proof with two simultaneously active mappings against the real local
-   Portal endpoint — Phase 3F — is COMPLETE. Remaining work begins with Phase 3G,
-   manual Hall-scoped synchronization (Hall Manager authorized for own Hall,
-   Super Admin emergency/oversight access, ordinary Hall staff denied, exact
-   mechanics undecided until source inspection; manual only, webhooks and
-   scheduling deferred); then the separately reviewed webhook, reconciliation,
+   Portal endpoint — Phase 3F — is COMPLETE. Phase 3G, manual Hall-scoped
+   synchronization, is COMPLETE (ADR-041): source-reviewed, 411/411 automated,
+   and practically browser-tested. It is manual only — scheduling and webhooks do
+   not exist. Remaining work is the separately reviewed webhook, reconciliation,
    and tenant-provisioning increments, which stay deferred and unimplemented.
    Any further Game Type/Session schema or writer change requires its own
    reviewed compatibility/application design. SSO remains a later integration
@@ -1421,18 +1555,38 @@ Everything below is tracked work that is NOT a blocker to that demo.
   §"Catalog lock-order review" is accurate as written. ADR-033 locks
   `bingo_packages` then `bingo_play_products` ascending, and locks no component
   rows at all.
-- Latest verified results: Phase 3D2 Portal snapshot validation **1638/1638
+- Latest verified results **[2026-09-09, Phase 3G gate]**: Phase 3G practical
+  browser test **PASSED** (3 clicks -> 3 correctly attributed audit events, 0 on
+  refresh); Phase 3G Portal sync admin **411/411 PASS** (twice, identical count);
+  Phase 3E Portal snapshot application **387/387 PASS**; Phase 3D2 Portal
+  snapshot validation **1638/1638
   PASS**; Phase 3D1 Portal HTTP transport **67/67 PASS**; Phase
   3B Portal integration foundation regression **75/75 PASS**; Phase 3C2 Portal
   Session-template replica persistence **98/98 PASS**; Phase 3C1 Portal Game
-  Type identity persistence **70/70 PASS**; Session Increment 1 **344/344
-  PASS**; Package Stage B **258/258 PASS**; Package Stage A **313/313 PASS**;
-  Game Type **164/164 PASS**. The Play Product suite reports **461/461
-  functional/regression assertions PASS** with zero functional/regression
-  failures; the selector
+  Type identity persistence **133/133 PASS**; Session Increment 1 **344/344
+  PASS**; Package Stage B **258/258 PASS**; Package Stage A **316/316 PASS**;
+  Game Type **164/164 PASS**; Hall Staff Create/Invite **262 passed, 0 failed**.
+  The Play Product suite reports **466 of 467 assertions PASS**, the
+  single failure being the documented Tampa residue detection described below;
+  the selector
   regression passes; and current-run disposable-hall cleanup reports **5/5
-  PASS** with zero cleanup failures. **Phase 3C1 stale-harness caveat —
-  RESOLVED on 2026-09-07.** `tests/portal-game-type-identity-persistence.php`
+  PASS** with zero cleanup failures.
+- **Open pre-existing precondition failure — `tests/hall-staff-phase-a-fixes.php`
+  (NOT a Phase 3G defect).** The harness aborts on its first precondition,
+  `hall three starts without Hall Managers: expected [], received [34]`. Tampa
+  (site 3) has carried Hall Manager `HMtampa1` (user `34`, registered
+  `2026-08-14`, `bc_3_capabilities` at `umeta_id 23443`) since well before this
+  work, and that exact row is present in the Phase 3F opening baseline captured
+  at `2026-09-09T14:34:49Z`, before any Phase 3F or Phase 3G change. The Phase 3G
+  change adds a capability to the `bc_hall_manager` role definition and cannot
+  assign a role to a user. This is the same class of issue as the resolved Phase
+  3C1 stale-harness caveat: a harness precondition that no longer matches local
+  data. It is recorded here rather than silently reclassified, and needs a
+  decision — refresh the precondition, or make the harness provision its own
+  disposable hall — before the previously recorded **67/67 PASS** figure can be
+  reproduced.
+- **Phase 3C1 stale-harness caveat — RESOLVED on 2026-09-07.**
+  `tests/portal-game-type-identity-persistence.php`
   had stopped at its fourth assertion, `no Portal Session-template table exists
   before the suite` (expected `0`, actual `3`), because that precondition was
   written before Phase 3C2 existed: the three tables are
@@ -1479,11 +1633,13 @@ Everything below is tracked work that is NOT a blocker to that demo.
   (`PortalSyncService`, `PortalSyncLock`, `PortalSnapshotApplicationPlan`,
   `PortalSnapshotTransactionTransport`, `PortalSyncState`, `PortalSyncResult`);
   **Phase 3E is COMPLETE.** Phase 3F, the multi-Hall tenant-isolation proof, is
-  COMPLETE. Phase 3G, manual Hall-scoped synchronization, is NEXT and
-  unimplemented — manual synchronization only (Hall Manager authorized for own
-  Hall, Super Admin emergency/oversight access, ordinary Hall staff denied;
-  capability/UI mechanics undecided until source inspection; plugin registers
-  no admin screen, REST route, cron event, or webhook)
+  COMPLETE. Phase 3G, manual Hall-scoped synchronization, adds `PortalSyncAdmin`
+  (hall-local `Portal Sync` page plus the authenticated
+  `admin_post_bc_portal_sync` handler) and is **COMPLETE** — manual
+  synchronization only, with no REST route, cron event, scheduler or webhook.
+  **The plugin is now network-active on this local environment**, and the ADR-036
+  Portal constants are configured in the git-ignored `wp-config.php` for ongoing
+  manual synchronization; both are local test-environment state, not a deployment
 - **Catalog schema:** per-site `bc_catalog_db_version` = **5**
   (`bingo_game_types`, `bingo_play_products`, `bingo_packages`,
   `bingo_package_components`); v4 added nullable, unique

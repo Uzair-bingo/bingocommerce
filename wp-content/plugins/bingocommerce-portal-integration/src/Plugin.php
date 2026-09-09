@@ -16,16 +16,23 @@ final class Plugin {
 		// This plugin owns one network-wide table, so no per-site migration or
 		// new-site provisioning hook is required.
 		add_action( 'admin_init', [ Migrations::class, 'maybe_migrate_network' ], 6 );
+
+		// Phase 3G: the manual hall-scoped synchronization screen and its
+		// authenticated admin-post handler. Registered unconditionally so the
+		// handler itself — not menu visibility — enforces tenancy, capability
+		// and nonce. Still no REST route, cron event, webhook or scheduler.
+		PortalSyncAdmin::register();
 	}
 
 	/**
 	 * The domain replicas Phase 3E writes into.
 	 *
-	 * Checked at call time rather than at boot: this plugin registers no admin
-	 * screen, no REST route, and no cron event, so an absent Catalog or Sessions
-	 * plugin must fail the synchronization attempt, not disable a surface that
-	 * does not exist. PortalSyncService and the transport both re-check
-	 * independently, so neither can be reached through a stale boot-time answer.
+	 * Checked at call time rather than at boot, because the answer must reflect
+	 * the moment of the attempt: a boot-time result could be stale by the time
+	 * PortalSyncAdmin renders readiness or handles a POST. PortalSyncAdmin fails
+	 * closed on a non-empty result before any Portal fetch or lock, and
+	 * PortalSyncService and the transport both re-check independently, so no
+	 * caller can be reached through a stale answer.
 	 *
 	 * @return array<int,string>
 	 */

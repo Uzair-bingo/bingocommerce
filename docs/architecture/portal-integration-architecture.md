@@ -23,13 +23,14 @@ isolation plus Commerce non-interference verified against pre-import baselines).
 with two simultaneously active mappings against the real local Portal endpoint
 verified complete isolation between Halls, with zero identity leakage and clean
 resource disposal. Production deployment is not claimed. **Phase 3G, manual
-Hall-scoped synchronization, is NEXT and unimplemented**: an authorized Hall
-Manager must be able to synchronize their own Hall, Network Super Admin retains
-emergency and oversight access, and ordinary Hall staff must not receive
-synchronization authority; exact capability names, provisioning, and UI
-mechanics remain undecided until source inspection. Webhooks, scheduling, local
-writer restrictions, reconciliation, SSO, and provisioning remain future work
-and are unimplemented.
+Hall-scoped synchronization, is COMPLETE** (ADR-041): an authorized Hall Manager
+synchronizes their own Hall from a hall-local wp-admin page, Network Super Admin
+retains emergency and oversight access, and ordinary Hall staff receive no
+synchronization authority. Source review passed, the local harness passes
+411/411, and the practical browser test PASSED against a local Portal test
+environment. **Production deployment is NOT claimed, and scheduling and webhooks
+do not exist.** Local writer restrictions, reconciliation, SSO, and provisioning
+remain future work and are unimplemented.
 
 All Portal identities below belong to the single authoritative Bingo Innovation
 Portal environment:
@@ -517,13 +518,61 @@ assertions. Production deployment is NOT claimed (local Portal test environment
 on `127.0.0.1` only). For the full operational verification record, baseline
 hashes, and step-by-step evidence, see `PROJECT_STATUS.md`.
 
-**Phase 3G Business Scope:** Phase 3G is NEXT and unimplemented. It will provide
-manual, Hall-scoped synchronization: an authorized Hall Manager must be able to
-synchronize their own Hall, while Network Super Admin retains emergency and
-oversight access. Ordinary Hall staff (such as Game Operators) must not receive
-synchronization authority. Exact capability names, provisioning, and UI
-mechanics remain undecided until Phase 3G source inspection. Webhooks and
-scheduling remain deferred (as do local writer restrictions and reconciliation).
+**Phase 3G Business Scope:** Phase 3G provides manual, Hall-scoped
+synchronization: an authorized Hall Manager synchronizes their own Hall, while
+Network Super Admin retains emergency and oversight access. Ordinary Hall staff
+(such as Game Operators) receive no synchronization authority. Webhooks and
+scheduling remain deferred, as do local writer restrictions and reconciliation.
+
+**Phase 3G Mechanics (ADR-041) — COMPLETE after source review, automated testing
+and practical browser testing.** `PortalSyncAdmin` registers a
+hall-local `Portal Sync` page (`bingocommerce-portal-sync`) and an authenticated
+`admin_post_bc_portal_sync` handler, with no `nopriv` twin. Authorization is a
+dedicated `bc_sync_portal` capability granted only to `bc_hall_manager`
+(`Roles::SCHEMA_VERSION` 1 -> 2); Network Super Admin passes through ordinary
+Multisite capability behaviour plus the explicit `is_super_admin() ||` gate. The
+synchronization target is derived only from the current site — no `blog_id`,
+Portal Hall ID, mapping ID or network ID is ever read from GET or POST — so
+Phase 3E's four independent hall re-derivations cannot be redirected by a forged
+request. The handler enforces POST, hall context, capability and nonce before any
+Portal fetch, calls `PortalSyncService::synchronize()` exactly once, records a
+safe audit event, then redirects with HTTP 303 and renders one allowlisted
+notice. `PortalSyncService` is unchanged and remains a trusted-caller service;
+Phase 3G adds no lock, transient or cooldown of its own.
+
+Failures are reduced to one of 17 fixed categories by a table of **52** real
+production error codes; an unrecognised code becomes `unknown`. An audit write
+that fails — whether it returns a `WP_Error` or throws — never rewrites the
+committed synchronization outcome and never escapes to the browser; it adds only
+a fixed secondary warning. Readiness distinguishes a hall with no active mapping
+(`Not linked`) from an unavailable mapping schema or failed mapping read
+(`Synchronization unavailable`), so an infrastructure fault is never reported as
+an absent link. The stored marker timestamp is displayed as UTC, matching Phase
+3E's storage.
+
+**Practical browser test: PASSED (2026-09-09).** Run against a local Portal test
+environment at `http://127.0.0.1:8000`, with the plugin network-activated through
+`activate_plugin()` and a freshly issued Hall-2-only web token supplied via the
+ADR-036 constant boundary. Activation wrote only `active_sitewide_plugins` — the
+network schema stayed at version 1, the table count was unchanged, sites 2-4 were
+byte-identical, and no synchronization occurred from activating. A non-Super-Admin
+Hall Manager synchronized Sunrise/site 2: three deliberate POSTs, each answered
+HTTP 303 and each producing exactly one correctly attributed
+`portal.snapshot.synchronized` audit event (applied, then two domain no-ops);
+five page GETs produced no synchronization and no audit event. Site 2 changed only
+in its Portal Game Type replica and sync marker, Tampa and Orlando stayed
+byte-identical, the mapping `Portal Hall 2 -> site 2` was unchanged, the Game
+Operator was denied (menu absent, and 403 on a direct request for the Portal Sync
+page URL) and Network Super Admin was admitted. The active token does not appear
+in tracked source, the Phase 3G diff, any Portal Sync page URL, a rendered notice,
+an audit record, or any log inspected during verification. It is configured
+directly through the ADR-036 constant in `wp-config.php`, which is git-ignored and
+untracked, and the Portal stores only its SHA-256 hash.
+
+Production deployment is NOT claimed: this was a local Portal test environment
+with no production Portal, hosting or customer data. **Scheduling and webhooks do
+not exist.** The plugin activation and web configuration are local
+test-environment state, not a deployment.
 
 ## 6. Commerce Enablement
 

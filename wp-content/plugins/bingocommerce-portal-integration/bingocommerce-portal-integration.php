@@ -26,6 +26,7 @@ require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/PortalSyncResult.php';
 require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/PortalSnapshotApplicationPlan.php';
 require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/PortalSnapshotTransactionTransport.php';
 require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/PortalSyncService.php';
+require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/PortalSyncAdmin.php';
 require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/Plugin.php';
 
 BingoCommerce\PortalIntegration\Plugin::boot();
