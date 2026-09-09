@@ -13,14 +13,23 @@ design, and ADR-040's Phase 3E snapshot application design, it is not an API,
 webhook, persistence, provisioning, or SSO implementation design. ADR-039's
 name-validation amendment is implemented and tested; COMPLETE. Catalog v5 is
 implemented and tested; COMPLETE. **ADR-040's Phase 3E snapshot application is
-COMPLETE**: source review passed, the local harness passes 381/381, and the
-authenticated real Portal test passed against a local Portal test environment —
-Portal Hall 2 mapped to BingoCommerce site 2, a first run importing 7 Game Types
+COMPLETE**: source review passed, the local harness passes 387/387 (testing
+multiple disposable Hall mappings and tenant isolation), and the authenticated
+real Portal test passed against a local Portal test environment (using one
+persistent mapping: Portal Hall 2 -> site 2; a first run importing 7 Game Types
 and 26 Session templates, a second run that was a domain no-op, and tenant
-isolation plus Commerce non-interference verified against pre-import baselines.
-Production deployment is not claimed. The Phase 3E trigger surface (UI or
-scheduling), local writer restrictions, webhooks, reconciliation, SSO, and
-provisioning remain future work and are unimplemented.
+isolation plus Commerce non-interference verified against pre-import baselines).
+**Phase 3F, the multi-Hall tenant-isolation proof, is COMPLETE**: practical proof
+with two simultaneously active mappings against the real local Portal endpoint
+verified complete isolation between Halls, with zero identity leakage and clean
+resource disposal. Production deployment is not claimed. **Phase 3G, manual
+Hall-scoped synchronization, is NEXT and unimplemented**: an authorized Hall
+Manager must be able to synchronize their own Hall, Network Super Admin retains
+emergency and oversight access, and ordinary Hall staff must not receive
+synchronization authority; exact capability names, provisioning, and UI
+mechanics remain undecided until source inspection. Webhooks, scheduling, local
+writer restrictions, reconciliation, SSO, and provisioning remain future work
+and are unimplemented.
 
 All Portal identities below belong to the single authoritative Bingo Innovation
 Portal environment:
@@ -416,22 +425,24 @@ deferred per ADR-035.
 Phase 3E adds no admin UI, cron, REST route, or webhook. The service is invoked
 directly; a trigger surface is a later, separately reviewed increment.
 
-Phase 3E is COMPLETE. Beyond source review and the 381/381 local harness, it was
-exercised end to end against a local Portal test environment: Portal Hall 2
-mapped to BingoCommerce site 2 via `HallMappingRepository::bind( 2, 2 )`, a first
-synchronization importing 7 Game Types and 26 Session templates whose Portal IDs,
-names, statuses, and currentness matched the validated snapshot exactly, and an
-immediate second synchronization that changed no domain row. Against pre-import
-baseline hashes, site 2 changed only in its Game Types, Session templates, and
-sync marker; Commerce Sessions, assignments, Packages, Play Products, products,
-and orders were unchanged, as were the other halls. The integration token was
-supplied from a `0600` file to a temporary runner outside the repository and
-never written to configuration, Git, logs, or output.
+Phase 3E is COMPLETE. Beyond source review, the 387/387 local harness tested
+multiple disposable Hall mappings and tenant isolation, and the end-to-end
+authenticated test was exercised against a local Portal test environment with
+one persistent mapping: Portal Hall 2 mapped to BingoCommerce site 2 via
+`HallMappingRepository::bind( 2, 2 )`, a first synchronization importing 7 Game
+Types and 26 Session templates whose Portal IDs, names, statuses, and
+currentness matched the validated snapshot exactly, and an immediate second
+synchronization that changed no domain row. Against pre-import baseline hashes,
+site 2 changed only in its Game Types, Session templates, and sync marker;
+Commerce Sessions, assignments, Packages, Play Products, products, and orders
+were unchanged, as were the other halls. The integration token was supplied from
+a `0600` file to a temporary runner outside the repository and never written to
+configuration, Git, logs, or output.
 
 Production deployment is NOT claimed — that run used a local Portal on
-`127.0.0.1` with no production Portal, hosting, or customer data. The trigger
-surface, local writer restrictions, webhooks, and reconciliation remain future
-work.
+`127.0.0.1` with no production Portal, hosting, or customer data. Phase 3G's
+manual Hall-scoped synchronization, local writer restrictions, webhooks, and
+reconciliation remain future work.
 
 Approved shape:
 
@@ -469,7 +480,10 @@ details remain undecided until their dedicated reviews:
 - other endpoint paths, versions, filters, pagination, and payloads;
 - local writer restrictions after synchronization, which ADR-040 deliberately
   leaves transitional until reconciliation and recovery are proven;
-- the Phase 3E trigger surface (admin action, scheduled pull, or endpoint);
+- the exact Phase 3G capability names, provisioning, and UI mechanics for
+  manual, Hall-scoped synchronization (Hall Manager authorized for own Hall,
+  Super Admin emergency/oversight access, ordinary Hall staff denied), which is
+  the next increment and is unimplemented; webhooks and scheduling stay deferred;
 - webhook event types, signatures, ordering, retry, replay, and delivery logs;
 - any additional sync-state/cursor persistence, reconciliation state, and
   future snapshot-application/import writer details;
@@ -478,6 +492,38 @@ details remain undecided until their dedicated reviews:
 - recurrence expansion horizon, regeneration, timezone, daylight-saving, and
   boundary behavior; and
 - monitoring, alerting, retention, and operational runbooks.
+
+### Phase 3F — Multi-Hall Tenant-Isolation Proof (Verification Summary)
+
+Phase 3F is COMPLETE. While the Phase 3E automated harness already tested
+multiple disposable Hall mappings and tenant isolation, Phase 3E's authenticated
+real-Portal run used a single persistent mapping (Portal Hall 2 -> site 2).
+Phase 3F added the separate practical proof with two simultaneously active
+mappings against the real local Portal endpoint (`http://127.0.0.1:8000`),
+proving the boundary holds under real endpoint execution with a second mapped
+Hall present.
+
+The verified boundary held in both directions: both Halls synchronized
+independently through the real Portal endpoint (Hall A was an expected domain
+no-op; Hall B imported 3 Game Types and 5 Session templates; repeat runs changed
+zero domain rows); Portal identities never crossed between sites; pre-existing
+local and Commerce data on site 2 and other halls remained untouched; expected
+restamped `generated_at` marker and WooCommerce `wc_last_active` telemetry were
+verified as normal platform behavior, not tenant leakage; disposable resources
+were cleanly removed under safety guards; legitimate Portal audit logs and
+auto-increment advancement were preserved; and the harness Multisite
+registration-log cleanup was corrected, bringing the suite to 387/387 passing
+assertions. Production deployment is NOT claimed (local Portal test environment
+on `127.0.0.1` only). For the full operational verification record, baseline
+hashes, and step-by-step evidence, see `PROJECT_STATUS.md`.
+
+**Phase 3G Business Scope:** Phase 3G is NEXT and unimplemented. It will provide
+manual, Hall-scoped synchronization: an authorized Hall Manager must be able to
+synchronize their own Hall, while Network Super Admin retains emergency and
+oversight access. Ordinary Hall staff (such as Game Operators) must not receive
+synchronization authority. Exact capability names, provisioning, and UI
+mechanics remain undecided until Phase 3G source inspection. Webhooks and
+scheduling remain deferred (as do local writer restrictions and reconciliation).
 
 ## 6. Commerce Enablement
 

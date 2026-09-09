@@ -1078,11 +1078,13 @@
     MySQL message reaches returned error data, only a numeric errno plus an
     allowlisted constraint identifier; and every participating table is verified
     to exist and be InnoDB before BEGIN.
-  - `tests/portal-snapshot-application.php` passes **381/381** and
-    `tests/portal-snapshot-sync-worker.php` supplies real same-Hall lock
-    contention. Sunrise, Tampa, and Orlando rows, schemas, WooCommerce state,
-    and the Hall mapping table were byte-identical before and after the run,
-    and all six disposable halls plus their test mappings were destroyed.
+  - `tests/portal-snapshot-application.php` passes **387/387** (the historical
+    381/381 landing figure stands; the count rose to 387 on 2026-09-09 when the
+    registration-log cleanup correction added one assertion per disposable
+    site) and `tests/portal-snapshot-sync-worker.php` supplies real same-Hall
+    lock contention. Sunrise, Tampa, and Orlando rows, schemas, WooCommerce
+    state, and the Hall mapping table were byte-identical before and after the
+    run, and all six disposable halls plus their test mappings were destroyed.
   - **Authenticated real Portal test: PASSED.** Run against a local Portal test
     environment at `http://127.0.0.1:8000`, with the integration token supplied
     from a `0600` file to a temporary runner outside the repository and never
@@ -1117,11 +1119,88 @@
   - **Production deployment is NOT claimed.** This was a local Portal test
     environment on `127.0.0.1`; no production Portal, hosting, or customer data
     was involved, and no deployment has been performed.
-- **NEXT Portal-integration checkpoint: the Phase 3E trigger surface (admin
-  action or scheduling), then local writer restrictions, webhooks, and
-  reconciliation — all future work, none implemented.** Overall Phase 3D is
-  COMPLETE against ADR-037; ADR-039's name-validation amendment and Catalog v5
-  are implemented and tested; COMPLETE.
+- **[2026-09-09] Phase 3F — multi-Hall tenant-isolation proof: COMPLETE.** The
+  Phase 3E automated harness already tested multiple disposable Hall mappings
+  and tenant isolation, while its authenticated real-Portal run used one
+  persistent mapping (Portal Hall 2 -> site 2). Phase 3F added the separate
+  practical proof with two simultaneously active mappings against the real local
+  Portal endpoint at `http://127.0.0.1:8000`, proving tenant isolation under
+  real endpoint execution with a second mapped Hall present.
+  - **Hall A stayed the established pair.** Portal Hall `2 -> site 2` remained
+    active and mapped throughout; it was never deleted, disabled, or rebound,
+    and its imported data was retained.
+  - **Hall B was created disposable and bound dynamically.** A dedicated Portal
+    test Hall was created through `HallManagementService::createHall()` and a
+    disposable Multisite site through `wp_insert_site()`; both IDs were taken
+    from the creation return values, asserted absent from the opening baseline,
+    and asserted outside the protected `1-4` range before use. No Portal Hall
+    ID or site ID was hard-coded. The pair was bound with
+    `HallMappingRepository::bind()` — no raw SQL — and the existing integration
+    token was granted Hall B with `syncWithoutDetaching()`, leaving Hall 2's
+    grant intact.
+  - **Independent synchronization.** Hall A's first synchronization was a
+    domain no-op, as expected for an already-imported Hall. Hall B's first
+    synchronization imported **3 Game Types and 5 Session templates** (2 active
+    and 3 draft), matching its Portal fixtures exactly.
+  - **Repeat synchronization of both Halls produced zero domain-row changes.**
+    Both repeats reported `portal_snapshot_applied` with every count at zero.
+  - **Portal identities never crossed between sites.** Site 2 held exactly Hall
+    2's Game Type IDs and its 26 Session-template IDs; Hall B's site held
+    exactly its own 3 Game Type IDs and 5 Session-template IDs. Both sets were
+    disjoint, and each site's sync marker recorded its own mapped
+    `portal_hall_id`.
+  - **Existing local and Commerce-owned data was unchanged.** Sunrise's 2
+    pre-existing local Game Types stayed byte-identical — not adopted, renamed,
+    or relinked — and Packages, package components, Play Products, Commerce
+    Sessions, session/package assignments, posts, postmeta, and `wc_orders`
+    were unchanged on site 2, as were Tampa and Orlando throughout.
+  - **Not every database value was byte-identical, and the exceptions are
+    expected.** Site 2's `bc_portal_snapshot_sync_state` marker advanced its
+    `generated_at` normally, because the Portal restamps it on every request,
+    and WooCommerce updated one unrelated `wc_last_active` usermeta row. Both
+    are normal platform behaviour, not tenant leakage.
+  - **Cleanup removed only Hall B's disposable resources.** The temporary
+    mapping row was deleted under guards requiring both dynamically returned
+    IDs, absence from the opening baseline, exclusion of sites/Halls `1-4`, the
+    exact pair present exactly once, and exactly one row deleted; the mapping
+    table then equalled its opening baseline. The disposable site, its
+    per-site tables, its site-scoped usermeta, and its uploads directory were
+    all removed, the temporary token grant was detached before the Hall was
+    deleted, and the Portal Hall was hard-deleted with its Game Types and
+    Sessions cascading.
+  - **Legitimate audit records and auto-increment advancement were preserved.**
+    The two Portal `audit_logs` rows written by the supported service — the
+    disposable Hall's `created` and `hard_deleted` entries, both carrying
+    `hall_id = NULL` because that column is `ON DELETE SET NULL` — were kept as
+    test evidence, and no pre-existing audit row was removed or modified.
+    Auto-increment counters advanced as expected and were not reset.
+  - **Production deployment is NOT claimed.** This was a local Portal test
+    environment on `127.0.0.1`; no production Portal, hosting, or customer data
+    was involved, and no deployment has been performed.
+- **[2026-09-09] Phase 3E harness registration-log leakage: CORRECTED.**
+  `wp_delete_site()` removes a site's row, blogmeta, and per-site tables, but
+  the registration log is a Multisite-*global* table
+  (`$wpdb->registration_log`, keyed by `blog_id`) that no core deletion path
+  touches, so every disposable hall left a permanent row behind.
+  `tests/portal-snapshot-application.php` now deletes the registration-log row
+  for each of its own disposable `blog_id`s and asserts zero remain, so future
+  harness runs are **net-zero for their disposable site registrations**. The
+  fix is scoped to sites recorded in the current run's `disposable_sites`,
+  guarded to IDs greater than `4`, and uses a typed, parameterized delete on
+  the fixed `$wpdb->registration_log` property. The 7 verified rows left by the
+  Phase 3F and Phase 3E runs were removed under per-row guards; 391 historical
+  rows for earlier blog IDs were deliberately left untouched. No production PHP
+  changed.
+- **NEXT Portal-integration checkpoint: Phase 3G — manual Hall-scoped
+  synchronization. NEXT and UNIMPLEMENTED.** Phase 3G will provide manual,
+  Hall-scoped synchronization: an authorized Hall Manager must be able to
+  synchronize their own Hall, while Network Super Admin retains emergency and
+  oversight access. Ordinary Hall staff (such as Game Operators) must not
+  receive synchronization authority. Exact capability names, provisioning, and
+  UI mechanics remain undecided until Phase 3G source inspection. Webhooks and
+  scheduling remain deferred and unimplemented, as do local writer restrictions
+  and reconciliation. Overall Phase 3D is COMPLETE against ADR-037; ADR-039's
+  name-validation amendment and Catalog v5 are implemented and tested; COMPLETE.
   - **[2026-09-07] Pre-Phase 3E Design Slice 1 — snapshot completeness:
     documented in ADR-038; COMPLETE.** A successful Portal v1
     snapshot is complete, non-paginated, and non-delta for one trusted mapped
@@ -1199,12 +1278,25 @@
    Type absence. ADR-039's name-validation amendment is implemented and tested;
    COMPLETE. Catalog v5 is implemented and tested; COMPLETE.
    **Phase 3E snapshot application is COMPLETE under ADR-040: source review
-   passed, the local harness passes 381/381, and the authenticated real Portal
-   test passed (Portal Hall 2 -> site 2; first run imported 7 Game Types and 26
-   Session templates, second run was a domain no-op, tenant isolation and
-   Commerce non-interference passed).** Production deployment is not claimed.
-   The Phase 3E trigger surface (UI or scheduling), local writer restrictions,
-   webhooks, and reconciliation remain future work.
+   passed, the local harness passes 387/387 (testing multiple disposable Hall
+   mappings and tenant isolation), and the authenticated real Portal test
+   passed with one persistent mapping (Portal Hall 2 -> site 2; first run
+   imported 7 Game Types and 26 Session templates, second run was a domain
+   no-op, tenant isolation and Commerce non-interference passed).**
+   **Phase 3F — the multi-Hall tenant-isolation proof — is COMPLETE:** building
+   on the Phase 3E automated harness and persistent real mapping, Phase 3F
+   provided the separate practical proof with two simultaneously active
+   mappings against the real local Portal endpoint. Both Halls synchronized
+   independently, Hall B imported 3 Game Types and 5 Session templates, repeat
+   synchronizations of both Halls changed zero domain rows, Portal identities
+   never crossed sites, and all disposable resources were cleanly removed.
+   Production deployment is not claimed. **Phase 3G — manual Hall-scoped
+   synchronization — is NEXT and unimplemented**: an authorized Hall Manager
+   must be able to synchronize their own Hall, Network Super Admin retains
+   emergency and oversight access, ordinary Hall staff receive no sync
+   authority, and exact capability names, provisioning, and UI mechanics remain
+   undecided until source inspection; webhooks and scheduling remain deferred
+   and unimplemented, as do local writer restrictions and reconciliation.
    Commerce selection remains separate and is not implemented.
 
 Everything below is tracked work that is NOT a blocker to that demo.
@@ -1214,15 +1306,20 @@ Everything below is tracked work that is NOT a blocker to that demo.
    Hall mapping/config, Phase 3C1 Game Type identity persistence, Phase 3C2
    Session-template replica persistence, Phase 3D1 read-only HTTP transport,
    and Phase 3D2 strict snapshot validation are complete. ADR-039's tested
-   name-validation amendment is COMPLETE. Remaining work begins with the
-   unimplemented Catalog v5 migration,
-   plus the remaining pre-Phase 3E design questions listed above, followed by
-   Phase 3E snapshot application/full-pull idempotent
-   synchronization, followed by a separate second-mapped-Hall tenant-isolation
-   proof, then the separately reviewed webhook, reconciliation, and tenant-
-   provisioning increments. Any further Game Type/Session schema or writer
-   change requires its own reviewed compatibility/application design. SSO
-   remains a later integration phase and is not a customer-launch prerequisite.
+   name-validation amendment is COMPLETE, and the Catalog v5 migration is
+   implemented and tested; COMPLETE. Phase 3E snapshot application/full-pull
+   idempotent synchronization is COMPLETE (automated harness verified multiple
+   disposable mappings; real run used persistent mapping), and the separate
+   practical proof with two simultaneously active mappings against the real local
+   Portal endpoint — Phase 3F — is COMPLETE. Remaining work begins with Phase 3G,
+   manual Hall-scoped synchronization (Hall Manager authorized for own Hall,
+   Super Admin emergency/oversight access, ordinary Hall staff denied, exact
+   mechanics undecided until source inspection; manual only, webhooks and
+   scheduling deferred); then the separately reviewed webhook, reconciliation,
+   and tenant-provisioning increments, which stay deferred and unimplemented.
+   Any further Game Type/Session schema or writer change requires its own
+   reviewed compatibility/application design. SSO remains a later integration
+   phase and is not a customer-launch prerequisite.
 2. The BR-066 storefront mechanism that enforces Bingo Play Product
    non-purchasability. Deferred by decision; requires a new reviewed entry
    before any implementer selects a mechanism.
@@ -1377,13 +1474,21 @@ Everything below is tracked work that is NOT a blocker to that demo.
   `wp-content/plugins/bingocommerce-sessions/` (all three Network Active);
   `wp-content/plugins/bingocommerce-portal-integration/` is declared
   network-only and contains the Phase 3B Hall mapping/config foundation, the
-  Phase 3D1 read-only Portal HTTP transport, and the Phase 3D2 strict
-  `PortalSnapshotValidator`; Phase 3E snapshot application/import is not
-  implemented
-- **Catalog schema:** per-site `bc_catalog_db_version` = 4
+  Phase 3D1 read-only Portal HTTP transport, the Phase 3D2 strict
+  `PortalSnapshotValidator`, and the Phase 3E snapshot application/import
+  (`PortalSyncService`, `PortalSyncLock`, `PortalSnapshotApplicationPlan`,
+  `PortalSnapshotTransactionTransport`, `PortalSyncState`, `PortalSyncResult`);
+  **Phase 3E is COMPLETE.** Phase 3F, the multi-Hall tenant-isolation proof, is
+  COMPLETE. Phase 3G, manual Hall-scoped synchronization, is NEXT and
+  unimplemented — manual synchronization only (Hall Manager authorized for own
+  Hall, Super Admin emergency/oversight access, ordinary Hall staff denied;
+  capability/UI mechanics undecided until source inspection; plugin registers
+  no admin screen, REST route, cron event, or webhook)
+- **Catalog schema:** per-site `bc_catalog_db_version` = **5**
   (`bingo_game_types`, `bingo_play_products`, `bingo_packages`,
-  `bingo_package_components`); v4 adds nullable, unique
-  `bingo_game_types.portal_game_type_id`
+  `bingo_package_components`); v4 added nullable, unique
+  `bingo_game_types.portal_game_type_id`, and v5 is implemented and tested as
+  the Portal-compatible Game Type name/index and imported-code design
 - **Session schema:** per-site `bc_sessions_db_version` = 2
   (`bingo_sessions`, `bingo_session_packages`,
   `bingo_portal_session_templates`); v2 adds the Portal Session-template replica

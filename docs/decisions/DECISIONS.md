@@ -1194,17 +1194,26 @@ the later implementation boundaries reviewable without implementing them.
   Locking, Ordering, and Session-Template Currentness:**
 
 **Status and scope. COMPLETE.** Implemented and tested together with this entry.
-Source review passed, the local harness passes 381/381, and the authenticated
-real Portal test passed against a local Portal test environment: Portal Hall 2
-mapped to BingoCommerce site 2 through `HallMappingRepository::bind( 2, 2 )`, a
-first synchronization importing 7 Game Types and 26 Session templates matching
-the validated snapshot exactly, an immediate second synchronization that was a
-domain no-op, and tenant isolation plus Commerce non-interference verified
-against pre-import baseline hashes. Production deployment is NOT claimed: that
-run used a local Portal on `127.0.0.1`, with no production Portal, hosting, or
-customer data, and no deployment has been performed. The Phase 3E trigger
-surface (UI or scheduling), local writer restrictions, webhooks, and
-reconciliation remain future work. It
+Source review passed, the local harness passes 387/387 (testing multiple
+disposable Hall mappings and tenant isolation), and the authenticated real Portal
+test passed against a local Portal test environment with one persistent mapping:
+Portal Hall 2 mapped to BingoCommerce site 2 through
+`HallMappingRepository::bind( 2, 2 )`, a first synchronization importing 7 Game
+Types and 26 Session templates matching the validated snapshot exactly, an
+immediate second synchronization that was a domain no-op, and tenant isolation
+plus Commerce non-interference verified against pre-import baseline hashes.
+**Phase 3F, the separate multi-Hall tenant-isolation proof, is COMPLETE**
+(practical proof with two simultaneously active mappings against the real local
+Portal endpoint; recorded concisely below and detailed in `PROJECT_STATUS.md`).
+Production deployment is NOT claimed: those runs used a local Portal on
+`127.0.0.1`, with no production Portal, hosting, or customer data, and no
+deployment has been performed. **Phase 3G, manual Hall-scoped synchronization,
+is the next increment and is unimplemented**: an authorized Hall Manager must be
+able to synchronize their own Hall, Network Super Admin retains
+emergency/oversight access, ordinary Hall staff must not receive synchronization
+authority, exact capability names, provisioning, and UI mechanics remain
+undecided until source inspection, and webhooks and scheduling remain deferred,
+as do local writer restrictions and reconciliation. It
 resolves the remaining pre-Phase 3E design work left open by ADR-038 and
 ADR-039: the Phase 3E transaction and locking mechanics, snapshot
 replay/stale-order handling, and Session-template application behaviour. It
@@ -1400,6 +1409,37 @@ zero-write. Rejecting only strictly older snapshots keeps ordering safe without
 discarding real changes that share a one-second timestamp, and treating
 `not_current_at` as the current absence keeps the replica's history honest
 across repeated pulls.
+
+**Phase 3F completion and verification note — [2026-09-09] — multi-Hall
+tenant-isolation proof: COMPLETE.** Phase 3F introduced no new architectural
+decision; it provides the separate practical proof with two simultaneously
+active mappings against the real local Portal endpoint (`http://127.0.0.1:8000`),
+confirming that the ADR-040 boundary holds when multiple mapped Halls exist at
+the same time. (The Phase 3E automated harness had already tested multiple
+disposable Hall mappings and tenant isolation, while its authenticated real-Portal
+run used one persistent mapping.)
+
+The practical run verified complete tenant isolation in both directions: Hall A
+(retained pair `2 -> site 2`) ran as a domain no-op; disposable Hall B imported
+3 Game Types and 5 Session templates; repeat synchronizations produced zero
+domain changes; Portal identity sets remained disjoint with zero crossing
+between sites; pre-existing local and Commerce data remained untouched; expected
+restamped `generated_at` markers and WooCommerce `wc_last_active` telemetry were
+confirmed normal platform behaviour rather than tenant leakage; disposable
+resources were cleaned up under strict safety guards; Portal audit log records
+and auto-increment advancement were preserved; and the harness Multisite
+`$wpdb->registration_log` cleanup was corrected, bringing the suite to 387/387
+passing assertions. Production deployment is NOT claimed (local Portal test
+environment on `127.0.0.1` only). For the full operational verification record
+and step-by-step evidence, see `PROJECT_STATUS.md`.
+
+**Phase 3G business scope:** Phase 3G is NEXT and unimplemented. It will provide
+manual, Hall-scoped synchronization: an authorized Hall Manager must be able to
+synchronize their own Hall, while Network Super Admin retains emergency and
+oversight access. Ordinary Hall staff (such as Game Operators) must not receive
+synchronization authority. Exact capability names, provisioning, and UI
+mechanics remain undecided until Phase 3G source inspection. Webhooks and
+scheduling remain deferred, as do local writer restrictions and reconciliation.
 
 ---
 
@@ -2836,10 +2876,21 @@ delete_users.
   changes. ADR-040's real Portal test-environment run PASSED against a local
   Portal test environment (Portal Hall 2 -> site 2; 7 Game Types and 26 Session
   templates imported, second run a domain no-op), so Phase 3E is COMPLETE.
-  Production deployment is not claimed. Still open after ADR-040 and all future
-  work: the Phase 3E trigger surface (UI or scheduling); local writer
-  restrictions after synchronization, which stay deliberately transitional until
-  reconciliation and recovery are proven; webhooks; and reconciliation.
+  The separate multi-Hall tenant-isolation proof — Phase 3F — also PASSED and is
+  COMPLETE: building on the Phase 3E automated harness (which already tested
+  multiple disposable Hall mappings and tenant isolation) and persistent real
+  mapping, Phase 3F proved two simultaneously active mappings against the real
+  local Portal endpoint. Both Halls synchronized independently, identity sets
+  never crossed, disposable resources were cleanly removed, and the harness was
+  brought to 387/387 assertions. Production deployment is not claimed. Still
+  open after ADR-040 and all future work: **Phase 3G, manual Hall-scoped
+  synchronization — the next increment, unimplemented, and manual
+  synchronization only (Hall Manager authorized for own Hall, Super Admin
+  emergency/oversight access, ordinary Hall staff denied; exact capability,
+  provisioning, and UI mechanics undecided until source inspection)**; local
+  writer restrictions after synchronization, which stay deliberately
+  transitional until reconciliation and recovery are proven; webhooks and
+  scheduling, which remain deferred and unimplemented; and reconciliation.
 - Schema-specific compatibility/refactoring review for the implemented local
   Game Type and Session models. The review must not assume either domain or the
   existing Session tables are deleted or replaced.

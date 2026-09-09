@@ -1783,6 +1783,9 @@ final class PortalSnapshotApplicationTest {
 
 		foreach ( array_keys( $this->disposable_sites ) as $site_id ) {
 			$site_id = (int) $site_id;
+			if ( $site_id <= 4 ) {
+				throw new \RuntimeException( 'Refusing to clean up a site ID outside the disposable range.' );
+			}
 			$prefix  = $wpdb->get_blog_prefix( $site_id );
 			$tables  = array_map( static fn( string $suffix ): string => $prefix . $suffix, $this->domain_table_suffixes() );
 
@@ -1793,6 +1796,13 @@ final class PortalSnapshotApplicationTest {
 					$wpdb->query( "DROP TABLE IF EXISTS `{$table}`" );
 				}
 			}
+
+			// wp_delete_site() removes the site row, its blogmeta and its per-site
+			// tables, but the registration log is a Multisite-global table that no
+			// core deletion path touches, so every disposable hall would otherwise
+			// leave a permanent row behind. Scoped to this one blog_id, which the
+			// guard above proves is a disposable site created by this run.
+			$wpdb->delete( $wpdb->registration_log, [ 'blog_id' => $site_id ], [ '%d' ] );
 
 			$this->deleted_site_tables[ $site_id ] = $tables;
 			unset( $this->disposable_sites[ $site_id ] );
@@ -1815,6 +1825,11 @@ final class PortalSnapshotApplicationTest {
 					"disposable hall {$site_id} table {$table} was removed"
 				);
 			}
+			$this->assert_same(
+				0,
+				(int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->registration_log} WHERE blog_id = %d", $site_id ) ),
+				"disposable hall {$site_id} registration log rows were removed"
+			);
 		}
 	}
 
