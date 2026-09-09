@@ -1028,10 +1028,100 @@
     webhook/scheduler/SSO/provisioning. Catalog, Session, Portal replica,
     WooCommerce, Hall mapping, and schema/version option state were all
     byte-identical before and after the run.
-- **NEXT Portal-integration checkpoint: Phase 3E — snapshot
-  application/import.** Phase 3E is not implemented. Overall Phase 3D is
-  COMPLETE against ADR-037; ADR-039's name-validation amendment is implemented
-  and tested; COMPLETE. Catalog v5 remains unimplemented.
+- **[2026-09-08] Phase 3E — Portal snapshot application: COMPLETE.** Source
+  review passed and the authenticated real Portal test passed against a local
+  Portal test environment. ADR-040 approves and this
+  increment implements `PortalSyncService`, `PortalSyncLock`,
+  `PortalSnapshotApplicationPlan`, `PortalSnapshotTransactionTransport`,
+  `PortalSyncState`, and `PortalSyncResult` in
+  `bingocommerce-portal-integration`. The per-Hall advisory lock
+  `bc:ps:<discriminator>:<blog_id>` is taken BEFORE the Portal request and
+  released in `finally`; HTTP and validation complete before BEGIN; one
+  transaction applies Game Types, Session templates, and the sync-state marker
+  in the fixed lock order mapping -> Game Types -> Session templates -> sync
+  state, with every lock taken as a read before the first write.
+  - AGENTS.md §5 rule 4 now lists ADR-040's transport as the fourth approved
+    captured-`$wpdb->dbh` boundary — the only one spanning both hall replicas.
+  - No schema change: Catalog stays v5, Sessions stays v2, no new table, and no
+    `portal_updated_at` column. The only new state is the non-autoloaded
+    per-site option `bc_portal_snapshot_sync_state`, written inside the same
+    transaction so no failed or rejected attempt leaves a sync-state row.
+  - Ordering rejects only a strictly older `generated_at` instant; equal
+    instants apply. Session-template `not_current_at` is stamped on
+    disappearance, cleared on reappearance, and untouched during continued
+    absence. Local Game Type rename of a linked row is NOT blocked in this
+    increment and archive/restore is unchanged; Portal restores the
+    Portal-owned name on the next pull.
+  - No admin UI, cron, REST route, webhook, SSO, provisioning, Commerce
+    Session, Package, product, or scheduling behaviour was added.
+  - Source-review hardening: Phase 3E production code never calls
+    `is_wp_error()` (it fires the `is_wp_error_instance` action), and a runtime
+    observer proves a mid-transaction failure fires zero such callbacks;
+    `PortalSyncLock` carries a request-local reentrancy guard that RESERVES the
+    lock name before the first `$wpdb` acquisition query — `wpdb::query()` fires
+    the `query` filter, so a callback on the GET_LOCK statement itself could
+    otherwise re-enter and take the re-entrant MySQL lock again — releasing the
+    reservation in `finally` if acquisition fails or throws, and holding it
+    across every release-path database call. Release gives the reservation up
+    only on proof the lock cannot still be held: a valid positive connection id
+    that differs from the acquiring one, or `RELEASE_LOCK` returning exactly 1
+    without a query error. The connection id is validated before it is cast,
+    and a `Throwable` from either release query is caught so it cannot replace
+    an already-committed synchronization result. Any UNCONFIRMED release —
+    0, NULL, false, a query error, an unusable connection id, an exception —
+    intentionally KEEPS the reservation and leaves that Hall refused for the
+    remainder of the PHP request, logging one fixed generic message; refusing a
+    later synchronization is recoverable, handing out a possibly-held lock is
+    not. An absent marker row is the only
+    "no previous state" case, with malformed, bad-timestamp, and wrong-Hall
+    markers rejected as `portal_sync_state_invalid` with zero writes; no raw
+    MySQL message reaches returned error data, only a numeric errno plus an
+    allowlisted constraint identifier; and every participating table is verified
+    to exist and be InnoDB before BEGIN.
+  - `tests/portal-snapshot-application.php` passes **381/381** and
+    `tests/portal-snapshot-sync-worker.php` supplies real same-Hall lock
+    contention. Sunrise, Tampa, and Orlando rows, schemas, WooCommerce state,
+    and the Hall mapping table were byte-identical before and after the run,
+    and all six disposable halls plus their test mappings were destroyed.
+  - **Authenticated real Portal test: PASSED.** Run against a local Portal test
+    environment at `http://127.0.0.1:8000`, with the integration token supplied
+    from a `0600` file to a temporary runner outside the repository and never
+    written to `wp-config.php`, Git, logs, or output. Portal Hall 2 was mapped
+    to BingoCommerce site 2 through `HallMappingRepository::bind( 2, 2 )` — no
+    raw SQL — and that mapping is retained.
+    - First synchronization imported **7 Game Types and 26 Session templates**
+      (`portal_snapshot_applied`). Imported Portal IDs, names, `portal_status`,
+      and currentness match the validated Hall 2 snapshot exactly; names are
+      byte-identical; every linked row carries `local_name_key` NULL and a code
+      in the approved `portal-gt-<id>` family; the 5 active and 21 draft
+      templates are all `is_current = 1` with `not_current_at` NULL.
+    - Second synchronization was a **domain no-op**: zero Game Type and zero
+      Session-template changes.
+    - The sync-state marker exists, is non-autoloaded (`autoload = off`),
+      decodes cleanly, and records `portal_hall_id = 2` with the applied
+      `generated_at`. The Portal restamps `generated_at` on every request while
+      content stays stable, so later pulls are strictly newer and apply as
+      domain no-ops rather than being rejected as stale.
+    - **Tenant isolation and Commerce non-interference passed.** Against
+      pre-import baseline hashes, site 2 changed in exactly three places —
+      Game Types, Session templates, sync marker. Commerce Sessions, session/
+      package assignments, Packages, package components, Play Products, posts,
+      postmeta, and `wc_orders` were UNCHANGED, as were Tampa and Orlando in
+      every table. Sunrise's 2 pre-existing local Game Types remained
+      byte-identical: not adopted, renamed, or relinked.
+    - A post-import regression gate re-ran the full suite. All Portal, Catalog,
+      and Session harnesses passed; `tests/play-products-increment-1.php`
+      reproduced only the pre-existing, documented Tampa Game Type `#39`
+      residue detection, byte-identical in both its FAIL and NOTE lines to the
+      pre-import run, with no additional failure.
+  - **Production deployment is NOT claimed.** This was a local Portal test
+    environment on `127.0.0.1`; no production Portal, hosting, or customer data
+    was involved, and no deployment has been performed.
+- **NEXT Portal-integration checkpoint: the Phase 3E trigger surface (admin
+  action or scheduling), then local writer restrictions, webhooks, and
+  reconciliation — all future work, none implemented.** Overall Phase 3D is
+  COMPLETE against ADR-037; ADR-039's name-validation amendment and Catalog v5
+  are implemented and tested; COMPLETE.
   - **[2026-09-07] Pre-Phase 3E Design Slice 1 — snapshot completeness:
     documented in ADR-038; COMPLETE.** A successful Portal v1
     snapshot is complete, non-paginated, and non-delta for one trusted mapped
@@ -1108,8 +1198,13 @@
    COMPLETE against ADR-037.** ADR-038 records snapshot completeness and Game
    Type absence. ADR-039's name-validation amendment is implemented and tested;
    COMPLETE. Catalog v5 is implemented and tested; COMPLETE.
-   Phase 3E snapshot application/import remains unimplemented; remaining design
-   work is listed above.
+   **Phase 3E snapshot application is COMPLETE under ADR-040: source review
+   passed, the local harness passes 381/381, and the authenticated real Portal
+   test passed (Portal Hall 2 -> site 2; first run imported 7 Game Types and 26
+   Session templates, second run was a domain no-op, tenant isolation and
+   Commerce non-interference passed).** Production deployment is not claimed.
+   The Phase 3E trigger surface (UI or scheduling), local writer restrictions,
+   webhooks, and reconciliation remain future work.
    Commerce selection remains separate and is not implemented.
 
 Everything below is tracked work that is NOT a blocker to that demo.

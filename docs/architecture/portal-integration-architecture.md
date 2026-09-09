@@ -8,11 +8,19 @@ integration boundary between the existing Laravel Bingo Innovation Portal and
 the WordPress Multisite/WooCommerce BingoCommerce platform. Except for
 ADR-036's narrow Hall snapshot transport URL contract, ADR-037's Hall snapshot
 v1 validation contract, ADR-038's completeness and Game Type absence decision,
-and ADR-039's approved name/code, validation-amendment, and Catalog v5 migration
-design, it is not an API, webhook, persistence, provisioning, or SSO
-implementation design. ADR-039's name-validation amendment is implemented and
-tested; COMPLETE. Catalog v5 is implemented and tested; COMPLETE.
-Phase 3E and Portal importing remain unimplemented.
+ADR-039's approved name/code, validation-amendment, and Catalog v5 migration
+design, and ADR-040's Phase 3E snapshot application design, it is not an API,
+webhook, persistence, provisioning, or SSO implementation design. ADR-039's
+name-validation amendment is implemented and tested; COMPLETE. Catalog v5 is
+implemented and tested; COMPLETE. **ADR-040's Phase 3E snapshot application is
+COMPLETE**: source review passed, the local harness passes 381/381, and the
+authenticated real Portal test passed against a local Portal test environment —
+Portal Hall 2 mapped to BingoCommerce site 2, a first run importing 7 Game Types
+and 26 Session templates, a second run that was a domain no-op, and tenant
+isolation plus Commerce non-interference verified against pre-import baselines.
+Production deployment is not claimed. The Phase 3E trigger surface (UI or
+scheduling), local writer restrictions, webhooks, reconciliation, SSO, and
+provisioning remain future work and are unimplemented.
 
 All Portal identities below belong to the single authoritative Bingo Innovation
 Portal environment:
@@ -359,8 +367,71 @@ remove it. Verify the target table/index before and after removal and the
 replacement key/backfill before dropping the old index. Advance the Catalog
 version only after complete verification; new sites receive final v5 directly.
 The name-validation amendment is implemented and tested; COMPLETE.
-Catalog v5 is implemented and tested; COMPLETE. Phase 3E,
-Portal importing, and imported-code allocation remain unimplemented.
+Catalog v5 is implemented and tested; COMPLETE. Phase 3E, Portal importing, and
+imported-code allocation are implemented under ADR-040 and are exercised by
+`tests/portal-snapshot-application.php`; they remain pending final source review
+and the external Portal test-environment run.
+
+### Phase 3E Portal snapshot application
+
+ADR-040 resolves the transaction, locking, ordering, and Session-template
+questions the earlier entries deferred, and is implemented in
+`bingocommerce-portal-integration`. The complete flow is:
+
+```text
+per-Hall advisory lock
+        -> trusted Hall mapping (HallMappingRepository, active only)
+        -> PortalHttpClient fetch by the MAPPED Portal Hall ID
+        -> PortalSnapshotValidator (envelope and every child hall_id)
+        -> immutable PortalSnapshotApplicationPlan
+        -> one transaction: mapping -> Game Types -> Session templates
+                            -> sync-state marker
+```
+
+The advisory lock `bc:ps:<discriminator>:<blog_id>` is taken BEFORE the Portal
+request and released in `finally`, so a second synchronization of the same Hall
+never issues a request; different Halls are never serialized against each other.
+HTTP always finishes before BEGIN. Inside the transaction every lock is acquired
+as a read, in the fixed order above, before the first write, so mapping
+mismatch, stale rejection, and ADR-038's missing-Game-Type rejection are all
+provably zero-write.
+
+Ordering uses only the existing v1 envelope `generated_at`. A strictly older
+instant is rejected as `portal_snapshot_stale`; an equal instant applies. The
+per-hall marker is the non-autoloaded per-site option
+`bc_portal_snapshot_sync_state`, written inside the same transaction, so no
+failed or rejected attempt leaves a sync-state write. No `portal_updated_at`
+column is added and no schema changes: Catalog remains v5, Sessions remains v2.
+
+Session-template `not_current_at` records the CURRENT absence — stamped on
+disappearance, cleared on reappearance, and untouched while a row merely stays
+missing. `created_at` is always preserved and no row is ever deleted. Phase 3E
+writes nothing to `bingo_sessions` or `bingo_session_packages`.
+
+Local Game Type writers stay transitional: rename of a Portal-linked row is not
+blocked in this increment, archive/restore is unchanged, and Portal restores the
+Portal-owned name on the next pull. The writer-restriction decision remains
+deferred per ADR-035.
+
+Phase 3E adds no admin UI, cron, REST route, or webhook. The service is invoked
+directly; a trigger surface is a later, separately reviewed increment.
+
+Phase 3E is COMPLETE. Beyond source review and the 381/381 local harness, it was
+exercised end to end against a local Portal test environment: Portal Hall 2
+mapped to BingoCommerce site 2 via `HallMappingRepository::bind( 2, 2 )`, a first
+synchronization importing 7 Game Types and 26 Session templates whose Portal IDs,
+names, statuses, and currentness matched the validated snapshot exactly, and an
+immediate second synchronization that changed no domain row. Against pre-import
+baseline hashes, site 2 changed only in its Game Types, Session templates, and
+sync marker; Commerce Sessions, assignments, Packages, Play Products, products,
+and orders were unchanged, as were the other halls. The integration token was
+supplied from a `0600` file to a temporary runner outside the repository and
+never written to configuration, Git, logs, or output.
+
+Production deployment is NOT claimed — that run used a local Portal on
+`127.0.0.1` with no production Portal, hosting, or customer data. The trigger
+surface, local writer restrictions, webhooks, and reconciliation remain future
+work.
 
 Approved shape:
 
@@ -396,10 +467,9 @@ details remain undecided until their dedicated reviews:
 
 - Portal API authentication and authorization lifecycle;
 - other endpoint paths, versions, filters, pagination, and payloads;
-- remaining pre-Phase 3E design work: snapshot replay/stale-order handling,
-  Phase 3E transaction and locking mechanics, local writer
-  restrictions after synchronization, and Session-template application behavior
-  beyond already-frozen decisions;
+- local writer restrictions after synchronization, which ADR-040 deliberately
+  leaves transitional until reconciliation and recovery are proven;
+- the Phase 3E trigger surface (admin action, scheduled pull, or endpoint);
 - webhook event types, signatures, ordering, retry, replay, and delivery logs;
 - any additional sync-state/cursor persistence, reconciliation state, and
   future snapshot-application/import writer details;

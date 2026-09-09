@@ -1190,6 +1190,216 @@ ID-derived code allocation preserves existing local rows and immutable codes.
 The explicit name-validation prerequisite and index-removal exception make
 the later implementation boundaries reviewable without implementing them.
 
+- **ADR-040 — [2026-09-08] — Phase 3E Portal Snapshot Application: Transport,
+  Locking, Ordering, and Session-Template Currentness:**
+
+**Status and scope. COMPLETE.** Implemented and tested together with this entry.
+Source review passed, the local harness passes 381/381, and the authenticated
+real Portal test passed against a local Portal test environment: Portal Hall 2
+mapped to BingoCommerce site 2 through `HallMappingRepository::bind( 2, 2 )`, a
+first synchronization importing 7 Game Types and 26 Session templates matching
+the validated snapshot exactly, an immediate second synchronization that was a
+domain no-op, and tenant isolation plus Commerce non-interference verified
+against pre-import baseline hashes. Production deployment is NOT claimed: that
+run used a local Portal on `127.0.0.1`, with no production Portal, hosting, or
+customer data, and no deployment has been performed. The Phase 3E trigger
+surface (UI or scheduling), local writer restrictions, webhooks, and
+reconciliation remain future work. It
+resolves the remaining pre-Phase 3E design work left open by ADR-038 and
+ADR-039: the Phase 3E transaction and locking mechanics, snapshot
+replay/stale-order handling, and Session-template application behaviour. It
+decides nothing about webhooks, reconciliation, SSO, provisioning, Commerce
+scheduling, or a trigger surface. ADR-035 through ADR-039 remain in force and
+are not rewritten.
+
+**Approved direct-mysqli transport (the sole Rule 4 addition).** Phase 3E
+introduces `PortalSnapshotTransactionTransport`, a fourth approved
+captured-`$wpdb->dbh` transport, and AGENTS.md §5 rule 4 is amended to list it.
+One invariant justifies it: a validated snapshot must apply to the hall's
+`bingo_game_types` replica AND its `bingo_portal_session_templates` replica
+ALL-OR-NOTHING together with the sync-state marker. No existing boundary spans
+those two domains — ADR-032/ADR-033 own WooCommerce-product exclusivity, Play
+Product reference integrity, and Package composition, with different lock orders
+and different statement sequences, and ADR-025 owns Hall Staff mandatory-audit
+atomicity. Reusing either would widen a deliberately tiny boundary.
+
+A transaction is genuinely required rather than preferred: ADR-039 mandates that
+exhausting the 32 imported-code candidates reject the complete application
+"without partial domain changes", and a code collision is only detectable at
+INSERT time against `code_unique`.
+
+`$wpdb` transactions were considered and rejected. The repository has none, and
+`wpdb::query()` fires the `query` filter on every statement — the exact reason
+ADR-033 already prohibits it inside an open transaction. Because the transport
+captures the connection `$wpdb` itself uses, a filter callback would execute
+inside the open transaction. The transport therefore accepts NO callable, owns
+one fixed reviewed statement sequence, issues no `$wpdb` call between BEGIN and
+COMMIT, and reuses ADR-032's `$active`/`$untrusted` guards, server-side
+transaction-state assertion, unknown-COMMIT handling, and callback-free
+`WP_Error` construction. It adds no operation_id, commit witness, or retry
+token, and performs NO bounded retry: a snapshot application is idempotent and
+non-interactive, so re-invoking the whole flow is safer than re-proving a
+poisoned session.
+
+**Locking.** One MySQL advisory lock per hall,
+`bc:ps:<32 hex of DB_NAME|base_prefix|network_id>:<blog_id>`, five-second
+timeout, taken through ordinary `$wpdb->prepare()` following
+`HallStaffProvisioningService` and `HallStaffInvitation`. It is acquired BEFORE
+the Portal HTTP request and covers mapping resolution, fetch, validation, and
+application, so a second synchronization of the same hall never issues a Portal
+request at all; it is released in `finally`. Because the lock name carries
+`blog_id`, different halls never serialize against one another. Possession is
+proven with `IS_USED_LOCK()` against the acquiring `CONNECTION_ID()` rather than
+inferred, since a `$wpdb` reconnect releases advisory locks silently, and the
+transport re-asserts possession before BEGIN.
+
+HTTP completes before BEGIN. That is structural, not documentary: no network
+call is reachable from the transport's fixed statement set.
+
+**Lock order.** Fixed and total:
+`mapping -> Game Types -> Session templates -> sync state`. Every lock is taken
+as a READ, in that order, before the first write, so every rejection happens
+while the transaction has written nothing. Rank 1 re-reads the mapping row
+`FOR UPDATE` and re-confirms `portal_hall_id`, `blog_id`, active status,
+network membership, non-main-site, and non-archived/deleted/spam — a mapping can
+be disabled or a site archived during a Portal round-trip. Rank 2 locks linked
+Game Type rows in ascending Portal-ID order; local rows are deliberately not
+locked. Rank 3 locks the Session-template replica in ascending Portal-ID order,
+because absence is decided by set difference. Rank 4 locks the marker row by its
+unique `option_name`. Isolation is REPEATABLE READ, and every in-transaction read
+is a locking read, so ADR-033's first-consistent-read hazard cannot arise.
+
+**Stale ordering, using only the existing v1 payload.** The per-hall marker is
+the non-autoloaded per-site option `bc_portal_snapshot_sync_state`, holding
+`portal_hall_id`, the verbatim `generated_at`, and `applied_at`. No Portal field
+is invented and no `portal_updated_at` column is added: the snapshot is complete
+and non-delta, so per-record `updated_at` contributes nothing to ordering. Only
+a STRICTLY older `generated_at` instant is rejected, as
+`portal_snapshot_stale` with zero writes. Equal instants apply: Portal
+timestamps carry one-second resolution, applying a duplicate is a no-op by
+construction, and skipping a real change would be data loss. Comparison is on
+the absolute instant, never the text, so offsets cannot invert ordering. Only an
+ABSENT marker row means there is no previous state; an existing but unusable
+marker — malformed, bad timestamp, or a different `portal_hall_id` — fails
+closed as `portal_sync_state_invalid` with zero writes rather than being treated
+as absent. The stale check precedes ADR-038's absence gate, because a genuinely
+older snapshot may legitimately lack a later-created Game Type.
+
+The marker is created or updated INSIDE the same transaction, never pre-created,
+so fetch failure, validation failure, missing-Game-Type rejection, stale
+rejection, and any transaction failure all leave no sync-state write. Its
+non-autoload value is the literal `off`, verified against this installation's
+WordPress. The object cache — both the option key and the negative `notoptions`
+entry — is invalidated only after a CONFIRMED commit.
+
+**Game Type application.** Identity is `portal_game_type_id` within the trusted
+hall's own prefixed table, and nothing else; names and codes never link, merge,
+adopt, or overwrite. New rows take the ADR-039 candidate family by real INSERT
+attempts, because the database index is the collision authority and a pre-read
+would race `GameTypeService::create()`. Existing linked rows keep their local ID,
+immutable code, local status, and `created_at`; only a byte-different name is
+rewritten, compared in PHP so no collation can hide a rename. Every linked row
+stores `local_name_key` as SQL NULL. ADR-038's absence gate is unchanged.
+
+**Session-template application.** Upsert by `portal_session_id`; absence never
+deletes. `portal_status` and `is_current` stay independent. `created_at` is
+preserved on every path. `not_current_at` records the CURRENT absence: stamped
+when a present row goes missing, CLEARED when the row reappears, and left
+untouched while a row merely stays missing, so a later absence starts a new
+transition and a repeated snapshot rewrites nothing. Phase 3E issues no
+statement against `bingo_sessions` or `bingo_session_packages`.
+
+**Local writers remain transitional.** Phase 3E does NOT restrict local Game
+Type writers. Local rename of a Portal-linked row stays permitted and local
+archive/restore is unchanged; Portal remains authoritative and restores the
+Portal-owned name on the next pull. ADR-035 sequences writer restrictions after
+reconciliation and recovery are proven, and Phase 3E delivers neither, so that
+decision remains deferred.
+
+**Callback-free error handling.** Phase 3E production code NEVER calls
+`is_wp_error()`. That helper fires the `is_wp_error_instance` action for every
+error it inspects, and the transport inspects an error on every in-transaction
+rejection path, so a single use would run arbitrary third-party callbacks on the
+captured session while the transaction is open — the same hazard as the `query`
+and `gettext` filters. Every check is `instanceof \WP_Error`, and a runtime
+observer test asserts a mid-transaction failure fires zero such callbacks.
+
+**Request-local reentrancy.** MySQL advisory locks are re-entrant within one
+session, so `GET_LOCK` alone would let a nested same-Hall synchronization take
+the same name, fetch, and write concurrently with the outer one while MySQL
+reported success. `PortalSyncLock` therefore keeps a request-local set of held
+names and refuses a second acquisition of the same name BEFORE `GET_LOCK`,
+before any fetch, and before any write.
+
+The reservation is made BEFORE the first `$wpdb` query of acquisition, not
+after it. `wpdb::query()` fires the `query` filter on every statement, so
+checking the guard and only then querying would leave a re-entrancy window
+exactly the width of the GET_LOCK statement: a callback running on that
+statement could re-enter, find the guard empty, and be handed the same
+re-entrant lock. A `finally` releases the reservation if acquisition fails or
+throws.
+
+Release keeps the reservation across BOTH of its database calls and gives it up
+ONLY on positive proof that the lock can no longer be held: either a valid,
+positive connection id that differs from the acquiring one — so the original
+session and its advisory locks are provably gone — or `RELEASE_LOCK` returning
+exactly 1, without a query error, on that same session. The connection-id result
+is validated before it is cast, because `get_var()` yields null on a query error
+and `(int) null` is 0, which would compare unequal to a real id and be misread as
+"the connection changed" on precisely the failure where the lock is most likely
+still held. Both queries are wrapped so a `Throwable` cannot escape: release runs
+from the caller's `finally`, and an escaping exception would replace an
+already-committed synchronization result.
+
+Every other outcome — 0, NULL, false, a query error, an unusable connection id,
+an exception — is an UNCONFIRMED release, and INTENTIONALLY keeps the
+reservation, leaving that Hall refused for the remainder of the PHP request.
+This is deliberate, not a wedge to be avoided: refusing a later synchronization
+is recoverable, while handing out a lock that may still be held is not. Only one
+fixed generic message is logged on every failure branch, disclosing no lock name,
+connection id, SQL, or MySQL text. Different Halls are unaffected throughout.
+
+**Sync-state strictness.** An ABSENT marker row is the ONLY "no previous state"
+case. A marker that exists but is malformed, carries a timestamp that is not the
+Portal Atom serialization, or records a different `portal_hall_id` is rejected
+as `portal_sync_state_invalid` with zero writes. Treating any of those as absent
+would silently bypass stale-order protection exactly when the ordering record is
+least trustworthy, and a wrong Hall ID means the marker and the hall's tables
+disagree about tenancy. Repair is an operator decision, not an assumption.
+
+**Error-data disclosure.** No raw MySQL message reaches returned error data, a
+log, or a caller. A duplicate-entry message quotes the offending value — a
+Portal name or an imported code — plus the schema-qualified index. The raw
+message is read in exactly one place, reduced there to a numeric errno plus an
+ALLOWLISTED constraint identifier, and discarded; an unrecognised index
+contributes nothing. Imported-code collision detection consumes that distilled
+identifier, so ADR-039's candidate walk still works without a MySQL string
+existing anywhere outside that function.
+
+**Storage-engine gate.** Before BEGIN, every table this boundary locks or writes
+— hall mappings, `wp_blogs`, the hall's Game Types, the hall's Session
+templates, and the hall's options — is verified to exist and to be InnoDB. A
+MyISAM or MEMORY participant would accept every write, ignore ROLLBACK, and
+leave the all-or-nothing guarantee that justifies this transport quietly false,
+including ADR-039's no-partial-changes requirement. A missing or non-InnoDB
+table fails closed with zero writes.
+
+**Scope exclusions.** No admin UI, cron, REST route, webhook, SSO, provisioning,
+Commerce scheduling, Package, product, or occurrence behaviour. No new table and
+no schema change: Catalog stays v5 and Sessions stays v2.
+
+*Rationale:* The hall-scoped advisory MySQL lock is INTENTIONALLY held across the
+HTTP round-trip, but no database transaction and no row lock is held during it —
+the transaction begins only after the response has been fetched and validated.
+That split is the point: a second synchronization of the hall is excluded from the
+moment mapping resolution starts, while InnoDB row locks and the transaction
+itself exist only for the few milliseconds of the apply, so a slow or hung
+Portal cannot stall ordinary hall administration behind held row locks. A total
+lock order taken entirely as reads then makes every rejection provably
+zero-write. Rejecting only strictly older snapshots keeps ordering safe without
+discarding real changes that share a one-second timestamp, and treating
+`not_current_at` as the current absence keeps the replica's history honest
+across repeated pulls.
 
 ---
 
@@ -2613,15 +2823,23 @@ delete_users.
   and ADR-037 froze the Hall snapshot v1 validation contract. ADR-038 freezes
   completeness and zero-write rejection of missing linked Game Types. ADR-039
   approves the Catalog v5 name/index and imported-code design, a narrow name-
-  validation amendment, and the allowlisted index-removal exception; these
-  remain unimplemented. None of these decisions authorizes Phase 3E
-  implementation.
-- Remaining pre-Phase 3E design work after ADR-039: snapshot replay/stale-order
-  protection; Phase 3E transaction and locking mechanics;
-  local writer restrictions after synchronization; and Session-template
-  application behavior beyond already-frozen decisions. Game Type
-  `portal_is_current` / `portal_not_current_at` fields are not required for v1;
-  missing linked Game Types are integrity violations, not currentness changes.
+  validation amendment, and the allowlisted index-removal exception; all three
+  are now implemented and tested. ADR-040 authorizes and implements Phase 3E
+  snapshot application, including imported-code allocation; it is COMPLETE,
+  source-reviewed, and validated by an authenticated real Portal test against a
+  local Portal test environment.
+- ADR-040 resolves the former pre-Phase 3E design work: snapshot
+  replay/stale-order protection, Phase 3E transaction and locking mechanics, and
+  Session-template application behavior are decided and implemented. Game Type
+  `portal_is_current` / `portal_not_current_at` fields are still not required
+  for v1; missing linked Game Types remain integrity violations, not currentness
+  changes. ADR-040's real Portal test-environment run PASSED against a local
+  Portal test environment (Portal Hall 2 -> site 2; 7 Game Types and 26 Session
+  templates imported, second run a domain no-op), so Phase 3E is COMPLETE.
+  Production deployment is not claimed. Still open after ADR-040 and all future
+  work: the Phase 3E trigger surface (UI or scheduling); local writer
+  restrictions after synchronization, which stay deliberately transitional until
+  reconciliation and recovery are proven; webhooks; and reconciliation.
 - Schema-specific compatibility/refactoring review for the implemented local
   Game Type and Session models. The review must not assume either domain or the
   existing Session tables are deleted or replaced.

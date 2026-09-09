@@ -20,6 +20,12 @@ require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/HallMappingRepository.
 require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/PortalConfig.php';
 require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/PortalHttpClient.php';
 require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/PortalSnapshotValidator.php';
+require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/PortalSyncState.php';
+require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/PortalSyncLock.php';
+require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/PortalSyncResult.php';
+require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/PortalSnapshotApplicationPlan.php';
+require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/PortalSnapshotTransactionTransport.php';
+require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/PortalSyncService.php';
 require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/Plugin.php';
 
 BingoCommerce\PortalIntegration\Plugin::boot();
