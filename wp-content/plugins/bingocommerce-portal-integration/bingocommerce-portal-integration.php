@@ -27,6 +27,9 @@ require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/PortalSnapshotApplicat
 require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/PortalSnapshotTransactionTransport.php';
 require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/PortalSyncService.php';
 require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/PortalSyncAdmin.php';
+// Read-only setup-prerequisite evaluation. Loaded only; it registers no hook,
+// no menu and no route, so its presence cannot change any request's behaviour.
+require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/SetupReadiness.php';
 require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/Plugin.php';
 
 BingoCommerce\PortalIntegration\Plugin::boot();
