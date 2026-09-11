@@ -73,6 +73,8 @@ final class PortalSyncAdmin {
 		'mapping_state_inconsistent'             => 'write_failed',
 		'mapping_state_changed'                  => 'write_failed',
 		'mapping_schema_unavailable'             => 'schema_unavailable',
+		// HallCommerceAccess, applied by PortalSyncService before lock or HTTP
+		'hall_commerce_blocked'                  => 'commerce_blocked',
 		// PortalConfig / PortalHttpClient configuration
 		'portal_base_url_missing'                => 'not_configured',
 		'portal_integration_token_missing'       => 'not_configured',
@@ -442,6 +444,7 @@ final class PortalSyncAdmin {
 			'state_invalid'      => __( 'This hall\'s synchronization state needs administrator attention.', 'bingocommerce-portal-integration' ),
 			'data_inconsistent'  => __( 'The Portal data is inconsistent with this hall. Nothing was saved.', 'bingocommerce-portal-integration' ),
 			'schema_unavailable' => __( 'Synchronization is unavailable for this hall. Contact Platform Admin.', 'bingocommerce-portal-integration' ),
+			'commerce_blocked'   => __( 'This hall is not currently open for business, so it cannot be synchronized. Contact Platform Admin.', 'bingocommerce-portal-integration' ),
 			'write_failed'       => __( 'Synchronization failed. Nothing was saved.', 'bingocommerce-portal-integration' ),
 			'commit_unconfirmed' => __( 'The synchronization result could not be confirmed. Check this hall before retrying.', 'bingocommerce-portal-integration' ),
 			'unknown'            => __( 'Synchronization failed. Nothing was saved.', 'bingocommerce-portal-integration' ),

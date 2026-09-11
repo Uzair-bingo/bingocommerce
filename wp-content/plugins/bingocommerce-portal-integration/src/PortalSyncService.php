@@ -11,7 +11,9 @@ if ( ! defined( 'ABSPATH' ) ) {
  *
  * The order below is the security boundary, not a convenience:
  *
- *   1. the per-Hall advisory lock is taken FIRST, so a second synchronization of
+ *   0. the shared Commerce access decision runs before anything else, so a
+ *      blocked hall takes no lock, makes no Portal request, and writes nothing;
+ *   1. the per-Hall advisory lock is taken next, so a second synchronization of
  *      the same hall never even issues a Portal request;
  *   2. the Portal Hall ID comes ONLY from the active HallMappingRepository row
  *      for the target site — never from a request, a payload, a hostname, or a
@@ -68,6 +70,19 @@ final class PortalSyncService {
 		if ( $blog_id < 1 ) {
 			return self::error( 'invalid_blog_id', 'The WordPress site ID is invalid.' );
 		}
+
+		/*
+		 * Commerce access, BEFORE the advisory lock and before any Portal
+		 * request. A blocked Hall must not synchronize through the admin button
+		 * or a direct service call, and Network Super Admin recovery access does
+		 * not lift that restriction: this is a policy about the Hall, not about
+		 * the caller, so no capability is consulted here. Operational and legacy
+		 * Halls are unaffected and reach exactly the checks they always did.
+		 */
+		if ( HallCommerceAccess::BLOCK === HallCommerceAccess::evaluate( $blog_id )['access'] ) {
+			return self::error( 'hall_commerce_blocked', 'Portal synchronization is unavailable while this hall is blocked.' );
+		}
+
 		if ( ! Migrations::is_current() ) {
 			return self::error( 'mapping_schema_unavailable', 'The Portal Hall mapping schema is unavailable.' );
 		}

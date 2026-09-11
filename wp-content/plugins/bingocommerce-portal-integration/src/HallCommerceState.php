@@ -202,6 +202,13 @@ final class HallCommerceState {
 				return $eligible;
 			}
 
+			/*
+			 * WRITES keep the migration-version gate. Reads deliberately no
+			 * longer have one (see read() below): an existing row is
+			 * authoritative whatever the version metadata says, but creating or
+			 * advancing one must never happen against a schema this build has
+			 * not confirmed it owns.
+			 */
 			if ( ! ProvisioningMigrations::is_current() ) {
 				return self::error( 'state_schema_unavailable', 'The Commerce state schema is unavailable.' );
 			}
@@ -325,6 +332,23 @@ final class HallCommerceState {
 	 * let an unreadable or corrupt table look like a Hall that simply has no
 	 * state.
 	 *
+	 * MIGRATION-VERSION METADATA IS NOT A READ PRECONDITION. It used to be, and
+	 * that was wrong for the one question that matters most: a Hall that IS
+	 * suspended or provisioning would have reported "schema unavailable" merely
+	 * because `bc_portal_provisioning_db_version` was absent, unreadable or
+	 * behind, and a caller with no managed marker would then have treated a
+	 * genuinely suspended Hall as a legacy one. The stored ROW is the authority;
+	 * the version option describes what this build installed, not what the
+	 * database currently holds. So the row is queried directly, and the version
+	 * is not consulted here at all — not even to classify a failure, which
+	 * storage_error() answers from the storage itself.
+	 *
+	 * Writes are unchanged: write() still refuses against a schema version this
+	 * build has not confirmed. Reading existing state and creating new state are
+	 * different risks.
+	 *
+	 * Nothing here migrates, repairs, creates or alters anything.
+	 *
 	 * @param mixed $blog_id
 	 * @return array{blog_id:int,seq:int,state:string,updated_at:string}|null|\WP_Error
 	 */
@@ -334,8 +358,9 @@ final class HallCommerceState {
 		}
 
 		/*
-		 * IDENTITY only, not lifecycle. A Hall must exist, belong to this network
-		 * and not be the main site before its state means anything. Lifecycle
+		 * IDENTITY only, not lifecycle, and ALWAYS before the row is read. A Hall
+		 * must exist, belong to this network and not be the main site before its
+		 * state — or the absence of it — means anything at all. Lifecycle
 		 * eligibility is a WRITE concern: a suspended Hall whose site has since
 		 * been marked deleted or spam must still have its recorded state
 		 * readable, and an archived provisioning target must remain fully
@@ -345,10 +370,6 @@ final class HallCommerceState {
 			$identity = self::validate_identity( $blog_id );
 			if ( $identity instanceof \WP_Error ) {
 				return $identity;
-			}
-
-			if ( ! ProvisioningMigrations::is_current() ) {
-				return self::error( 'state_schema_unavailable', 'The Commerce state schema is unavailable.' );
 			}
 		} catch ( \Throwable $throwable ) {
 			unset( $throwable );
@@ -375,13 +396,49 @@ final class HallCommerceState {
 		}
 
 		if ( '' !== $error ) {
-			return self::error( 'state_read_failed', 'The Commerce state could not be read.' );
+			return self::storage_error();
 		}
 		if ( ! is_array( $row ) ) {
 			return null;
 		}
 
 		return self::validate_stored_row( $row, $blog_id );
+	}
+
+	/**
+	 * Why did a state read fail — is the storage missing, or merely unreadable?
+	 *
+	 * Answered from the STORAGE, never from the recorded schema version, so the
+	 * version cannot re-enter the read path by the back door. Only reached when
+	 * a read has already failed, so a legacy installation pays for it once per
+	 * evaluation and an installed one never does.
+	 *
+	 * Both categories lead callers to the same place — consult the managed
+	 * marker — so an inconclusive probe is reported as the more cautious of the
+	 * two rather than guessed at.
+	 */
+	private static function storage_error(): \WP_Error {
+		global $wpdb;
+
+		$table = ProvisioningMigrations::state_table();
+
+		$previous = $wpdb->suppress_errors( true );
+		try {
+			$found = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $wpdb->esc_like( $table ) ) );
+			$error = (string) $wpdb->last_error;
+		} catch ( \Throwable $throwable ) {
+			unset( $throwable );
+
+			return self::error( 'state_read_failed', 'The Commerce state could not be read.' );
+		} finally {
+			$wpdb->suppress_errors( $previous );
+		}
+
+		if ( '' !== $error || (string) $found === $table ) {
+			return self::error( 'state_read_failed', 'The Commerce state could not be read.' );
+		}
+
+		return self::error( 'state_schema_unavailable', 'The Commerce state schema is unavailable.' );
 	}
 
 	/**

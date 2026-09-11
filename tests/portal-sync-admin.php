@@ -430,7 +430,9 @@ final class PortalSyncAdminTest {
 		// Every emitted category is allowlisted, and the error messages resolve.
 		$messages = $this->error_message_keys();
 		$this->assert_true( in_array( 'unknown', $messages, true ), 'the notice table defines an unknown fallback' );
-		$this->assert_same( 52, $this->declared_category_mappings(), 'the production error-category table contains 52 mappings' );
+		// 53 since Commerce access enforcement added hall_commerce_blocked,
+		// which PortalSyncService returns before any lock or Portal request.
+		$this->assert_same( 53, $this->declared_category_mappings(), 'the production error-category table contains 53 mappings' );
 		foreach ( $this->declared_categories() as $category ) {
 			$this->assert_true( in_array( $category, $messages, true ), "category {$category} has a fixed notice" );
 		}

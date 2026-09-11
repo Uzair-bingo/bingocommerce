@@ -24,10 +24,32 @@
  * wp-config.php only to reach the same MySQL server.
  */
 
-if ( 'cli' !== PHP_SAPI ) {
-	fwrite( STDERR, "The isolated fixture is CLI-only.\n" );
+/*
+ * SAPI guard.
+ *
+ * CLI is the normal case. `cgi-fcgi` is additionally permitted, because request
+ * enforcement cannot be proven under CLI — header() is a no-op there and a
+ * gate that skips CLI would never run — so one worker drives a real non-CLI
+ * SAPI from the command line via php-cgi.
+ *
+ * That permission is deliberately narrow and cannot be reached from the web:
+ * it requires an environment variable, which an HTTP client cannot set, AND the
+ * absence of the two variables every real web server supplies. A request
+ * arriving through a server therefore still hits the refusal below.
+ */
+$bc_fixture_sapi_allowed = 'cli' === PHP_SAPI
+	|| (
+		'cgi-fcgi' === PHP_SAPI
+		&& '1' === (string) getenv( 'BC_FIXTURE_CGI' )
+		&& ! isset( $_SERVER['SERVER_SOFTWARE'] )
+		&& ! isset( $_SERVER['REMOTE_ADDR'] )
+	);
+
+if ( ! $bc_fixture_sapi_allowed ) {
+	fwrite( STDERR, "The isolated fixture is command-line only.\n" );
 	exit( 1 );
 }
+unset( $bc_fixture_sapi_allowed );
 
 /** Databases this fixture may create, own, write and drop tables in. */
 const BC_FIXTURE_DB_ALLOWLIST = [ 'bingocommerce_state_test', 'bingocommerce_state_test_scratch' ];
@@ -350,10 +372,47 @@ final class BC_Fixture {
 
 		$db_version = self::wp_db_version( dirname( __DIR__, 2 ) );
 
+		/*
+		 * Network-active plugin list, set on EVERY boot rather than only when
+		 * absent, so it is deterministic in both directions and one run cannot
+		 * inherit the other's choice.
+		 *
+		 * With BC_FIXTURE_NETWORK_ACTIVE=1 the Portal Integration plugin is
+		 * loaded by wp-settings.php itself, exactly as a network-activated
+		 * plugin is in production — which is the only way its `plugins_loaded`
+		 * hook can be observed firing in its real lifecycle position. Without
+		 * it, the list is empty and callers require the plugin themselves.
+		 * BC_FIXTURE_WOOCOMMERCE=1 adds the installed WooCommerce alongside it,
+		 * so its real payment and Action Scheduler handlers can be executed.
+		 */
+		// The activation timestamp is fixed rather than time(): WordPress only
+		// records it, and a moving value would make the fixture's own sitemeta
+		// differ between two boots inside one test run.
+		$plugins = [];
+		if ( '1' === (string) getenv( 'BC_FIXTURE_NETWORK_ACTIVE' ) ) {
+			$plugins['bingocommerce-portal-integration/bingocommerce-portal-integration.php'] = 1;
+		}
+		if ( '1' === (string) getenv( 'BC_FIXTURE_WOOCOMMERCE' ) ) {
+			// Opt-in, because WooCommerce's installer creates ~40 tables per site
+			// and only the installed-handler integration needs them.
+			$plugins['woocommerce/woocommerce.php'] = 1;
+		}
+		$network_active = serialize( $plugins );
+
+		/*
+		 * DELETE then INSERT, not ON DUPLICATE KEY UPDATE: WordPress's sitemeta
+		 * table carries no unique key on (site_id, meta_key), so an upsert would
+		 * silently accumulate a second row on every boot.
+		 */
+		$db->query( "DELETE FROM `{$p}sitemeta` WHERE site_id = 1 AND meta_key = 'active_sitewide_plugins'" );
+		$stmt = $db->prepare( "INSERT INTO `{$p}sitemeta` (site_id, meta_key, meta_value) VALUES (1, 'active_sitewide_plugins', ?)" );
+		$stmt->bind_param( 's', $network_active );
+		$stmt->execute();
+		$stmt->close();
+
 		foreach (
 			[
 				'site_admins'             => serialize( [ 'fixture_admin' ] ),
-				'active_sitewide_plugins' => serialize( [] ),
 				'siteurl'                 => 'http://' . BC_FIXTURE_DOMAIN . '/',
 				'db_version'              => $db_version,
 				'initial_db_version'      => $db_version,
@@ -430,10 +489,24 @@ final class BC_Fixture {
 	 * ------------------------------------------------------------------ */
 
 	private static function define_constants( string $root ): void {
-		$_SERVER['HTTP_HOST']      = BC_FIXTURE_DOMAIN;
-		$_SERVER['REQUEST_URI']    = '/';
-		$_SERVER['REQUEST_METHOD'] = 'GET';
-		$_SERVER['REMOTE_ADDR']    = '127.0.0.1';
+		/*
+		 * Defaults only. A caller that has already described the request it wants
+		 * to simulate keeps its own values — vars.php derives $pagenow from
+		 * PHP_SELF while wp-settings.php loads, so clobbering these here would
+		 * make every request look like the fixture's own placeholder.
+		 */
+		foreach (
+			[
+				'HTTP_HOST'      => BC_FIXTURE_DOMAIN,
+				'REQUEST_URI'    => '/',
+				'REQUEST_METHOD' => 'GET',
+				'REMOTE_ADDR'    => '127.0.0.1',
+			] as $key => $value
+		) {
+			if ( ! isset( $_SERVER[ $key ] ) || '' === $_SERVER[ $key ] ) {
+				$_SERVER[ $key ] = $value;
+			}
+		}
 
 		define( 'DB_NAME', self::$database );
 		define( 'DB_USER', self::$user );

@@ -8,7 +8,28 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 final class Plugin {
 
+	/**
+	 * Where Commerce access enforcement sits on `plugins_loaded`.
+	 *
+	 * PHP_INT_MIN rather than a merely small number: this must run before
+	 * anything a plugin can register on the same hook. WooCommerce hooks
+	 * `plugins_loaded` at -1, and its request handlers run later still
+	 * (`wp_loaded`, `parse_request`, `wp`, `template_redirect`), so a blocked
+	 * Hall is refused before any of them is reached.
+	 */
+	public const ENFORCEMENT_PRIORITY = PHP_INT_MIN;
+
 	public static function boot(): void {
+		/*
+		 * Registered here, at plugin include time, rather than inside init()
+		 * below: init() itself runs on `plugins_loaded`, and a hook added from
+		 * inside a hook is a fragile place to put a security boundary.
+		 * `plugins_loaded` is the earliest boundary where the current user can
+		 * be resolved — pluggable.php loads immediately before it — which is
+		 * what makes Network Super Admin recovery access possible.
+		 */
+		add_action( 'plugins_loaded', [ HallCommerceGate::class, 'enforce' ], self::ENFORCEMENT_PRIORITY );
+
 		add_action( 'plugins_loaded', [ self::class, 'init' ] );
 	}
 

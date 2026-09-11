@@ -35,6 +35,11 @@ require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/SetupReadiness.php';
 // apply the schema, and HallCommerceState changes no request's behaviour.
 require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/ProvisioningMigrations.php';
 require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/HallCommerceState.php';
+// Commerce access enforcement. HallCommerceAccess reads only; HallCommerceGate
+// refuses requests to a blocked Hall and is registered by Plugin::boot() at the
+// earliest boundary where the current user can be resolved.
+require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/HallCommerceAccess.php';
+require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/HallCommerceGate.php';
 require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/Plugin.php';
 
 BingoCommerce\PortalIntegration\Plugin::boot();

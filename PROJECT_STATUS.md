@@ -1493,6 +1493,416 @@
     maintenance page, no managed-marker enrolment or backfill, no site creation
     or suspension orchestration, no mapping changes, no Portal routes,
     credentials or grants. Nothing reads this table yet.
+- **[2026-09-11]** Hall Commerce **access enforcement** implemented and tested
+  (enforcement only; still no enrolment, provisioning or suspension
+  orchestration).
+  - New `HallCommerceAccess` is the single access decision, reusing
+    `HallCommerceState`'s stored-row validation and the existing tenant identity
+    rules. No second state parser and no competing policy class was introduced.
+  - **The shared reader no longer gates on migration-version metadata, and that
+    correction fixes a real inversion.** `read()` used to return
+    `state_schema_unavailable` BEFORE querying whenever
+    `bc_portal_provisioning_db_version` was absent, unreadable or behind — so a
+    Hall that was genuinely SUSPENDED or PROVISIONING reported "no usable state",
+    and a Hall whose witness was missing was then served as LEGACY. Open for
+    business while its stored state said otherwise. The row is now queried
+    directly and the version is not consulted on the read path at all: a failed
+    read is classified from the STORAGE (`SHOW TABLES LIKE`), so a missing table
+    is `state_schema_unavailable` and a present-but-unreadable one is
+    `state_read_failed`. Identity is still established BEFORE the row is read,
+    so an identity failure can never be mistaken for "no state". Writes keep
+    their version gate in full — creating or advancing state against a schema
+    this build has not confirmed is a different risk from reading what is
+    already there — and `migrate()` still refuses to rebuild while the recorded
+    version claims the schema is installed. Both are asserted directly. Cost is
+    unchanged in the legacy case (one failed SELECT plus one metadata probe,
+    where it was one sitemeta read plus a short-circuit) and one indexed SELECT
+    once the schema is deployed.
+  - The durable managed-Hall witness is the per-Hall option
+    `bc_commerce_managed`, kept separate from the state value, and it stores the
+    ENROLLING OPERATION'S lowercase UUID v4 — not a flag. A flag records only
+    that someone set something; an operation id records WHICH enrolment produced
+    the Hall, which is what a later increment needs to reconcile a half-finished
+    one. Validation is strict on case, version nibble and variant nibble:
+    uppercase, v1/v3/v5, the nil UUID, an unhyphenated form, a padded form, an
+    empty string and the retired `1` are all INVALID — never a verified absence.
+    The pattern is anchored `\A...\z`, NOT `^...$`: PCRE's `$` also matches
+    immediately before a final newline, so an `$`-anchored pattern ACCEPTED a
+    valid UUID carrying a trailing LF. A trailing LF, CRLF, CR, space, tab or
+    NUL, and a leading LF, are each written to the options table, read back and
+    asserted INVALID — so the anchoring is proven against real stored values,
+    not argued.
+    Its read has four outcomes — valid, invalid, VERIFIED absent, unreadable —
+    and is a direct `SELECT` against the target Hall's own options table
+    (`$wpdb->get_blog_prefix( $blog_id ) . 'options'`), never `get_option()`.
+    Three reasons, all correctness: `get_option()` needs `switch_to_blog()` to
+    reach another Hall, it cannot report a database error, and **a cached miss
+    would otherwise establish absence** — proven by priming WordPress's negative
+    `notoptions` entry and then writing the row underneath it. The read uses
+    `get_row()`, not `get_var()`: `wpdb::get_var()` maps an EMPTY STRING to
+    `null`, which would have turned a witness stored as `''` into a verified
+    absence and handed a managed Hall legacy access. WordPress core avoids
+    `get_var()` in `get_option()` for the same reason.
+  - **Identity failures never reach the witness.** `state_precondition_failed`
+    — what the reader returns when Hall identity validation THROWS — had been
+    classified as unavailable state STORAGE, so the access layer consulted the
+    witness for it, and a verified-absent witness then produced `allow /
+    legacy`: an unidentifiable site served as an ordinary pre-Commerce Hall. It
+    is no longer in that list. An identity failure falls through to a block and
+    the witness is not consulted at all, asserted directly by checking that the
+    returned verdict carries no marker value. The regression test injects the
+    throw through the installed `get_site` filter that `validate_identity()`
+    genuinely goes through, with the Hall's options table readable, and repeats
+    it for a verified-absent, valid, invalid AND unreadable witness — every one
+    blocks as undetermined. A Hall whose identity resolves is legacy again
+    immediately afterwards, so the change refuses only what it should.
+  - Decision table, all covered by assertions: operational row -> allow;
+    provisioning or suspended row -> block; invalid stored row -> block and
+    **never** legacy, even with a verified-absent witness; no row with a witness
+    present (valid or invalid) -> block; unavailable state storage with a
+    witness present -> block; no usable state result with an unreadable witness
+    -> block; verified-absent witness with no row OR unavailable storage ->
+    legacy access preserved. **Schema-version absence alone never means allow.**
+    The witness is read only when the state result cannot decide alone, proven
+    by making the witness unreadable and showing a valid row still decides.
+  - **Nothing is cached.** A cached allow could outlive the suspension meant to
+    end it, so every call re-reads; a suspension recorded between two
+    evaluations takes effect on the next one. Evaluation is at most two indexed
+    lookups plus the witness, does no SetupReadiness check, no WooCommerce
+    inspection, no schema verification loop, no migration, no network-wide scan
+    and no outbound call, and writes nothing anywhere (proven by a before/after
+    fingerprint across repeated evaluation).
+  - New `HallCommerceGate` refuses every request to a blocked Hall at
+    `plugins_loaded`, priority `PHP_INT_MIN`, registered from `Plugin::boot()`
+    at plugin include time rather than from inside another hook. **The boundary
+    was chosen against the installed source, not assumed:** wp-settings.php
+    (WP 7.0.3) resolves the site in ms-settings.php, loads network then ordinary
+    plugins, loads pluggable.php, and only then fires `plugins_loaded`.
+    `muplugins_loaded` is earlier but unusable — no pluggable functions, so no
+    current user and therefore no Super Admin recovery, and the cookie constants
+    are not defined yet. `plugins_loaded` still precedes every WooCommerce entry
+    point that can mutate: `WC_Form_Handler` at `wp_loaded` 20 / `wp` 20 /
+    `template_redirect`, `WC_AJAX::do_wc_ajax` at `template_redirect` 0, and the
+    `wc-api` dispatch at `parse_request` 0. WordPress has not yet rebuilt and
+    normalised `$_REQUEST` at this point — `wp_magic_quotes()` runs after this
+    hook and is what assigns `array_merge( $_GET, $_POST )` to it and slashes
+    the superglobals — so the gate reads `$_GET`/`$_POST` directly, does not
+    unslash them, and mirrors WordPress's later POST-over-GET precedence.
+  - Refusal is **HTTP 503** with `Cache-Control: no-store, no-cache,
+    must-revalidate, max-age=0`, `Retry-After: 900`, `X-Robots-Tag: noindex`,
+    and the fixed sentence *This store is temporarily unavailable. Please
+    contact the Hall administrator.* It is a request-boundary refusal, not a
+    hidden menu and not a maintenance template. Storefront, product, cart,
+    checkout, order-pay, order-received, account, payment-method, Store API,
+    WordPress REST, wp-admin, admin-ajax, admin-post, wp-signup, xmlrpc and feed
+    requests are all refused, as are direct purchase and form paths
+    (`add-to-cart`, `update_cart`, `apply_coupon`,
+    `woocommerce_checkout_place_order`, `woocommerce_pay`, `cancel_order`,
+    `wc-ajax`, customer login/registration/account POSTs). Existing
+    authenticated Hall Manager and Game Operator sessions do **not** bypass it:
+    the gate consults no capability at all, which is asserted with real users.
+    Nothing is deleted or changed on any path.
+  - **Preserved:** Network Super Admin recovery access, and the authentication
+    path that reaches it — `wp-login.php` for its login and logout actions only.
+    `lostpassword`, `retrievepassword`, `resetpass`, `rp`, `register`,
+    `postpass` and `confirmaction` stay refused as customer account flows, with
+    POST-over-GET action precedence matching wp-login.php's own `$_REQUEST`
+    read. The current user is resolved **only** on the branch that needs it,
+    never on an exempt or authentication path.
+  - **Necessary exceptions, verified in the installed source rather than
+    invented, and bound to what will ACTUALLY happen rather than to what a
+    parameter claims.**
+    - WP-Cron (`DOING_CRON`, defined by wp-cron.php before wp-load).
+    - The Action Scheduler async queue runner. The action name alone is NOT
+      sufficient and is no longer accepted: the gate verifies the same nonce
+      the runner's own handler checks — `check_ajax_referer(
+      'as_async_request_queue_runner', 'nonce' )` in the installed
+      `WP_Async_Request::maybe_handle()` — locating it through the same
+      `nonce` / `_ajax_nonce` / `_wpnonce` chain, against the same action, in
+      the same user context. That context matches because the installed
+      `get_post_args()` forwards `$_COOKIE` with the dispatch. A missing,
+      empty, forged, truncated, wrong-action or other-session nonce now
+      receives the maintenance refusal, so no queued action runs at all.
+    - Exactly ONE payment-notification callback, `wc_gateway_paypal`, because
+      `WC_Gateway_Paypal_IPN_Handler` is the only installed handler and
+      `WC_Gateway_Paypal` registers it whenever the gateway is valid for use —
+      INDEPENDENTLY of `enabled`, which is what keeps pending notifications
+      working after the gateway is switched off for new checkout. **The
+      exemption is now bound to dispatch.** The `wc-api` dispatch hangs off
+      `parse_request`, which runs only inside `WP::main()`, which only the front
+      controller calls — so an approved identifier on `/wp-admin/`,
+      `admin-post.php`, an unrelated `admin-ajax.php` action, or a
+      `wp-login.php` registration or password-recovery action dispatches
+      nothing and now buys nothing. `is_admin()` settles `/wp-admin/`, which
+      `$pagenow` alone cannot because wp-settings maps it to `index.php` too.
+      Competing routing instructions are refused rather than resolved: a
+      `rest_route` parameter, a REST path (including via `/index.php/`),
+      AJAX/cron/XML-RPC, and a query identifier that disagrees with the path
+      identifier. The path form requires a permalink structure, because the
+      `wc-api` rewrite endpoint does not exist without one. Both forms are
+      normalised exactly as WooCommerce normalises them — `sanitize_key()` for
+      the query form, and the WHOLE remainder after `wc-api/` through
+      `strtolower( sanitize_text_field() )` for the path form, so
+      `/wc-api/wc_gateway_paypal/extra/` correctly names a hook nothing listens
+      on. A POSTed `wc-api` routes nothing and is ignored.
+    Neither check replaces a handler's own authentication; both run before it.
+    The installed IPN handler still posts the notification back to PayPal
+    itself. Unknown identifiers get nothing, and nothing is exempt when
+    WooCommerce is not installed to dispatch it. No gateway framework and no
+    queue-filtering subsystem was created.
+  - **Mixed requests are refused before any mutation runs.** `wp_loaded`
+    precedes `parse_request`, so a callback, cron or runner request carrying a
+    shopping or account parameter would have mutated the store on the way to its
+    own handler. Every exempt path is screened against a mutation-trigger list
+    taken verbatim from installed WooCommerce, and each trigger is asserted to
+    exist in that source. As a second line of defence an exempt request also
+    detaches WooCommerce's own handlers; the detach table is compared
+    element-by-element against `WC_Form_Handler::init()` in the installed file,
+    so it cannot silently drift.
+  - Manual synchronization: `PortalSyncService::synchronizeHall()` applies the
+    same shared policy **before lock acquisition and before any HTTP**. Proven
+    rather than asserted: with the Hall's advisory lock pre-held from a second
+    MySQL connection, a blocked Hall returns `hall_commerce_blocked` in under a
+    second while an allowed Hall waits out the 5-second lock timeout and reports
+    `portal_sync_lock_timeout`. Super Admin does not lift it. Legacy Halls
+    behave exactly as before. `PortalSyncAdmin` gains one mapping,
+    `hall_commerce_blocked -> commerce_blocked`, with its own fixed notice.
+    `HallMappingRepository` and mapping status are untouched, and no mapping row
+    is created, changed or removed.
+  - **Enforcement is exercised as REAL REQUESTS, not only as decision inputs.**
+    The gate skips the CLI SAPI by design, so
+    `tests/hall-commerce-access-request.php` runs each request in its own
+    process: the caller describes it entirely through the environment
+    (REQUEST_URI, PHP_SELF, QUERY_STRING, method, POST body), the SAPI populates
+    `$_GET`/`$_POST`/`$_SERVER`, vars.php derives `$pagenow` from PHP_SELF for
+    real, and the fixture loads the Portal Integration plugin as a
+    NETWORK-ACTIVE plugin so `enforce()` runs on the genuine `plugins_loaded`
+    hook. Under **php-cgi** the SAPI is `cgi-fcgi`, so the CLI exit does not
+    apply and REAL response headers are observable: the suite asserts
+    **HTTP 503**, `Cache-Control: no-store`, `Retry-After: 900`,
+    `X-Robots-Tag: noindex` and `Content-Type: text/html` off the wire, plus the
+    exact maintenance sentence as the body's only visible text. Canaries seeded
+    into `$wp_filter` before WordPress builds its hook objects record whether
+    `init`, `wp_loaded`, `wp` or `template_redirect` ever fired; a refused
+    request reaches NONE of them, which is what makes "no cart or order
+    mutation" structural — every WC_Form_Handler and WC_AJAX entry point hangs
+    off those four hooks. **Reaching `init` is not on its own treated as a
+    healthy worker:** every child is additionally checked for a bounded
+    completion, an exit status of 0, empty stderr, and the absence of any PHP
+    fatal, warning, notice, deprecation or WordPress database error, and a child
+    that overruns its deadline is terminated, escalated and reaped rather than
+    blocking the parent on `stream_get_contents()` or `proc_close()`.
+    **Outbound HTTP is counted INSIDE each child**, before plugins load, and
+    returned in its report — the parent's own counter can only ever observe the
+    parent, and is asserted as exactly that and never offered as evidence about
+    a child. **Termination is bounded AND confirmed:** after SIGTERM and, if
+    needed, SIGKILL, the parent polls for a bounded period, drains the remaining
+    output, and calls `proc_close()` only once exit is confirmed — because
+    `proc_close()` is itself the call that blocks on a child that has not
+    exited. A child that still cannot be confirmed is recorded as a controlled
+    failure, named by pid, and deliberately NOT reaped. A fixture-only worker
+    mode that IGNORES SIGTERM and stalls proves the escalation path end to end:
+    observed timing out against a 2-second deadline, escalating, confirming
+    exit, leaving no unreaped child, and finishing in **7.0 s**. Proven this way: the four item-1 bypass URLs, a
+    checkout POST, an add-to-cart link, the Store API, the runner identifier
+    with a forged and with an absent nonce, and a payment callback carrying a
+    shopping parameter are all refused; a genuine PayPal IPN callback, the
+    runner with a genuine nonce, WP-Cron, the login form, the CONTROL Hall's
+    storefront and checkout, and the main network site all continue;
+    authenticated Hall Manager and Game Operator sessions are refused while a
+    Network Super Admin session keeps recovery access. WooCommerce is
+    represented by defining `WC_PLUGIN_FILE` — literally the fact the gate
+    consults — rather than by booting WooCommerce into the fixture, which would
+    require its installer and full table set.
+  - **Installed-handler execution, proved separately from admission.** Admission
+    says a request was not refused; it does not say the handler it was admitted
+    FOR ran. New `tests/hall-commerce-handlers.php` (**361/361 PASS**, run twice,
+    exit 0) boots the
+    REAL installed WooCommerce into the isolated fixture for one Hall and drives
+    both exceptions through their own entry points.
+    - **PayPal.** Four pending orders are created through WooCommerce's own API
+      BEFORE the Hall is suspended — a payment already under way when the store
+      closed. With the Hall suspended and PayPal Standard `enabled = 'no'` (off
+      for new purchases), a verified IPN travels WP::main() -> `parse_request`
+      -> LegacyRestApiStub -> `WC()->payment_gateways()` ->
+      `woocommerce_api_wc_gateway_paypal` -> the installed
+      `WC_Gateway_Paypal_IPN_Handler`, which posts back to PayPal to validate
+      and then completes the order: status `pending` -> `completed` with the
+      notification's transaction id recorded. Answer `INVALID` to that post-back
+      instead and the SAME request still reaches the SAME handler, but the
+      handler's own validation refuses it and the order stays `pending` with no
+      transaction id — so the gate is shown to admit on routing grounds only and
+      the gateway's authentication is shown to still be what protects the order.
+      An unapproved identifier (`WC_Gateway_Stripe`) is refused at the gate with
+      503, reaching no handler and attempting no HTTP at all; the checkout,
+      add-to-cart and Store API remain refused, and the untouched orders are
+      unchanged.
+    - **Action Scheduler, with REAL QUEUED WORK.** Reaching
+      `action_scheduler_run_queue` on an empty queue proves dispatch, not
+      completion, so two fixture-only actions are enqueued through the installed
+      `as_schedule_single_action()` BEFORE suspension: one already due
+      (`bc_fixture_canary_action`) and one a week out (`bc_fixture_control_action`).
+      The due action's callback writes a single dedicated option in the Hall's
+      own options table, APPENDING a record per invocation, so "exactly once" is
+      a fact about stored data rather than an inference.
+      Every rejected-nonce case runs FIRST, while the action is still pending and
+      due — no nonce, an empty nonce, a forged nonce, a nonce for another action,
+      a nonce minted in another user's session, a valid nonce carrying
+      `add-to-cart`, and two unrelated AJAX actions carrying a genuine runner
+      nonce. Each returns 503, reaches no handler, and leaves both actions
+      pending with the canary unwritten. Only then does the authenticated runner
+      run: admin-ajax's own dispatch reaches `WP_Async_Request::maybe_handle()`,
+      its own `check_ajax_referer()` passes, `action_scheduler_run_queue` fires
+      with the `Async Request` context, and **the queued callback itself
+      executes**. Observed afterwards: the canary holds exactly ONE run carrying
+      this suite's token, the action's stored status is `complete`, the control
+      action is still `pending` and its callback was never invoked, and a second
+      authenticated run does not re-execute the completed action. No
+      queue-filtering subsystem was built and the whole-queue exemption is
+      unchanged.
+    - **Route parity, against the installed dispatcher.** Each callback form is
+      driven through WooCommerce's real dispatcher and TWO facts are recorded —
+      whether the gate admitted it, and whether
+      `woocommerce_api_wc_gateway_paypal` actually fired — then asserted as a
+      biconditional. Query form, permalink form and unslashed permalink form:
+      admitted AND reached. Extra path segment, doubled trailing slash, tripled
+      trailing slash, and both conflicting-identifier orders: refused AND not
+      reached. That test found a real defect: the path matcher used `rtrim()`,
+      collapsing EVERY trailing slash, so `/wc-api/WC_Gateway_Paypal//`
+      normalised to the approved identifier and was exempted — while the
+      rewrite rule `wc-api(/(.*))?/?$` absorbs exactly ONE slash, hands
+      WordPress `WC_Gateway_Paypal/`, and dispatches a hook nothing listens on.
+      The matcher now removes exactly one trailing slash, and the parity
+      assertion records both forms as `neither`.
+    - **The callback contract is POST-bearing, on installed-source evidence.**
+      `WC_Gateway_Paypal_IPN_Handler::check_response()` opens with
+      `if ( ! empty( $_POST ) && $this->validate_ipn() )` and otherwise falls
+      through to `wp_die( 'PayPal IPN Request Failure', ..., 500 )`. The gate
+      mirrors that precondition — a non-empty POST body — rather than inventing
+      a method check, since a GET cannot populate `$_POST` and an empty POST
+      fails the handler identically. A bodyless callback is refused with 503,
+      reaches no handler and attempts no post-back.
+    - Nothing leaves the machine: the fixture rejects every outbound request
+      before any plugin loads, and the worker answers exactly ONE url — matched
+      on EXACT scheme, host and path (`https://www.paypal.com/cgi-bin/webscr`),
+      never a substring, so a lookalike such as
+      `https://paypal.com.attacker.example/cgi-bin/webscr` stays blocked. Every
+      attempt is counted inside the child process. The only other attempt
+      observed anywhere is Action Scheduler's own follow-up dispatch to the
+      site's own admin-ajax; the host test compares against an EXACT allowlist
+      of the fixture's two hosts and is itself proved to reject lookalikes such
+      as `hall-a.fixture.bingocommerce.test.attacker.example`, a userinfo form,
+      and a path-embedded form.
+    - **Every seeded order's final state is asserted collectively**, not only by
+      the test that touched it: of five pending orders seeded before suspension,
+      exactly ONE completed — the one the VERIFIED notification named, carrying
+      its transaction id — while the INVALID-notification order, the
+      rejected-callback order, the route-parity order and the untouched control
+      order all remain `pending` with no transaction id, and no refused request
+      created an additional order.
+    - WooCommerce's installer legitimately emits database errors on its FIRST
+      boot for a site, because some of its own `init` callbacks query tables the
+      installer has not finished creating. That boot is run on its own and
+      exempted from the clean-run standard; the very NEXT boot is held to it and
+      is clean, which is what proves the install completed rather than merely
+      being tolerated.
+  - Verification: `tests/hall-commerce-access.php` — **833/833 PASS**, run twice
+    consecutively, exit 0. It boots the isolated fixture, creates the two Hall
+    options tables and three real users (anonymous / Hall Manager / Game
+    Operator / Super Admin), and drops only what it created. Fixture users are
+    deleted through the SAME guarded mechanism as every other destructive
+    operation, which re-proves the connected database, the fixture sentinel and
+    ownership AT DELETION TIME — this run recorded the id, the stored login
+    still matches that record, and it still carries the `fixture_` prefix — and
+    inspects both delete results. Preservation comparisons carry actual VALUES:
+    option names AND values AND autoload flags, user metadata keys AND values,
+    and every user field claimed unchanged (`user_pass`, `user_email`,
+    `user_nicename`, `user_url`, `user_registered`, `user_activation_key`,
+    `user_status`, `display_name`). **A failed read fails the assertion**
+    instead of comparing equal as an empty result: every capture carries its own
+    success flag, and both sides must have read successfully before contents are
+    compared at all. Table discovery is likewise THREE-valued — present, absent,
+    or unreadable — because a failed `SHOW TABLES` returns nothing and would
+    otherwise compare equal to a table that genuinely does not exist. `cron` and the default `widget_*` options are excluded by
+    name from the hall-options capture, because a measured experiment showed
+    WordPress itself writes them on a site's first boot. The fixture database
+    was verified empty of every suite-owned table, version option and user
+    afterwards. The handler suite additionally captures a FIXTURE-GLOBAL
+    baseline before it runs — `active_sitewide_plugins`, `user_count`, the
+    remaining network sitemeta, every user field, all usermeta, and the main
+    site's options with values — and restores, by name, only what it changed.
+    Two rows needed it: the fixture rewrites `active_sitewide_plugins` on every
+    child boot, so the last WooCommerce-enabled child left WooCommerce in it;
+    and WordPress recomputes `user_count` on its own throttled schedule after
+    this suite creates and deletes its fixture user. Both are written back to
+    the captured bytes and then asserted byte-identical, alongside sitemeta,
+    users, usermeta and main options. `tests/hall-commerce-state.php` still
+    reports **252/252 PASS**, confirming the shared-reader correction did not
+    regress its committed behaviour. A read-only probe of the development database confirms every
+    development Hall is a legacy Hall (no state table, no
+    `bc_portal_provisioning_db_version`, no `bc_commerce_managed` on sites 1-4),
+    so the registered gate cannot block one. No migration was run against
+    development and no development Hall was enrolled or suspended.
+  - **Pre-existing, environment-caused harness failure — `tests/portal-sync-admin.php`
+    (NOT an access-enforcement defect).** The suite stops at `missing Portal
+    configuration maps to the not_configured category`, receiving
+    `snapshot_stale`. Cause: `tests/portal-sync-admin-worker.php` proves the
+    unconfigured path by NOT defining the Portal constants, but the local
+    git-ignored `wp-config.php` has defined `BINGOCOMMERCE_PORTAL_BASE_URL` and
+    `BINGOCOMMERCE_PORTAL_INTEGRATION_TOKEN` since the Phase 3G browser test, so
+    `wp-load.php` supplies them anyway and the scenario cannot occur on this
+    machine. Verified pre-existing: the identical failure reproduces at pristine
+    commit `f0114f7` with none of this increment present, and the suite reaches
+    **107 passing assertions before it in both cases** — identical with and
+    without the change, including the updated 53-mapping error-category
+    assertion. Re-run again after the shared-reader correction: still **107**,
+    still the same stopping point, so that correction does not regress it
+    either. Live configuration was NOT altered to satisfy it. Same class as the
+    `tests/hall-staff-phase-a-fixes.php` item below: a harness precondition that
+    no longer matches local configuration, needing a decision before the
+    recorded 411/411 figure can be reproduced.
+  - **What is proved, at three different strengths.** GATE REFUSAL is proved for
+    a blocked Hall as a real request with real 503 headers. ROUTE ADMISSION is
+    proved for the approved callback and runner paths, and is now asserted as a
+    BICONDITIONAL against the installed dispatcher, so an admitted form that
+    would not actually dispatch fails the test. INSTALLED HANDLER EXECUTION is
+    proved only for the cases in `tests/hall-commerce-handlers.php` — the PayPal
+    IPN completing an already-started payment, and the Action Scheduler runner
+    executing one fixture-only queued action exactly once — and nowhere else. No
+    claim is made that any other handler completed.
+  - **Limitations, recorded not resolved.** Practical browser testing has NOT
+    been performed and production readiness is NOT claimed; proxy and CDN
+    behaviour in front of the 503 is unverified. The php-cgi evidence is a real
+    non-CLI SAPI driven from the command line, which is not the same as a
+    browser through a web server. The PayPal evidence uses a PREEMPTED
+    verification post-back with a canned `VERIFIED`/`INVALID` body: the
+    handler's validation logic is exercised, PayPal itself is not, and no real
+    gateway account, live notification or production endpoint is involved.
+    The Action Scheduler evidence now runs ONE fixture-only queued action of
+    this suite's own making, so "a queued callback completed exactly once while
+    the Hall was suspended" is proved for that action; the behaviour of real
+    production work — WooCommerce's own scheduled actions, a backlog, or
+    concurrent runners — is not, and the whole-queue exemption still means a
+    blocked Hall's own queued actions run.
+  - The isolated fixture now also accepts the `cgi-fcgi` SAPI, but only with an
+    explicit environment variable AND the absence of `SERVER_SOFTWARE` and
+    `REMOTE_ADDR` — neither of which an HTTP client can arrange — so it remains
+    unreachable from the web.
+  - On a Hall whose state table does not exist yet, each access evaluation now
+    issues one SELECT that fails and one `SHOW TABLES LIKE` to classify it.
+    Errors are suppressed and nothing is printed or logged by WordPress, and the
+    cost matches what the version check used to be; once the schema is deployed
+    it is a single indexed SELECT. A request already admitted
+    before a suspension is recorded can finish — the gate evaluates once per
+    request, at its start. The WP-Cron and Action Scheduler exceptions admit the
+    WHOLE queue, so actions belonging to a blocked Hall still run; filtering
+    individual actions would need the queue-filtering subsystem this increment
+    deliberately does not build. Network Super Admin recovery is full
+    pass-through, including the storefront. The request gate is HTTP-only: CLI
+    and WP-CLI are skipped, which is also what lets every harness in `tests/`
+    boot the plugin in-process. No marker is ever created, deleted or backfilled
+    here, no state is mutated, and no scheduled or automatic synchronization was
+    introduced.
 - No Hall Staff Management work currently in progress.
 - No other Catalog or Session implementation work is in progress. Package
   Increment 1 and Session Increment 1 remain COMPLETE and are recorded under
@@ -1662,6 +2072,14 @@ Everything below is tracked work that is NOT a blocker to that demo.
   §"Catalog lock-order review" is accurate as written. ADR-033 locks
   `bingo_packages` then `bingo_play_products` ascending, and locks no component
   rows at all.
+- Latest verified results **[2026-09-11, Commerce access enforcement]**: Hall
+  Commerce access enforcement **833/833 PASS** (run twice, exit 0); installed
+  payment/runner handler integration **361/361 PASS** (run twice, exit 0);
+  Commerce state persistence **252/252 PASS**. `tests/portal-sync-admin.php` reaches
+  **107 passing assertions** and then stops on the pre-existing, environment-
+  caused `not_configured` precondition described above — identical at pristine
+  commit `f0114f7`, so it is not a regression, and its previously recorded
+  411/411 figure cannot be reproduced until that precondition is decided.
 - Latest verified results **[2026-09-09, Phase 3G gate]**: Phase 3G practical
   browser test **PASSED** (3 clicks -> 3 correctly attributed audit events, 0 on
   refresh); Phase 3G Portal sync admin **411/411 PASS** (twice, identical count);
@@ -1746,7 +2164,13 @@ Everything below is tracked work that is NOT a blocker to that demo.
   synchronization only, with no REST route, cron event, scheduler or webhook.
   **The plugin is now network-active on this local environment**, and the ADR-036
   Portal constants are configured in the git-ignored `wp-config.php` for ongoing
-  manual synchronization; both are local test-environment state, not a deployment
+  manual synchronization; both are local test-environment state, not a
+  deployment. The plugin also carries `ProvisioningMigrations` and
+  `HallCommerceState` (Commerce-state persistence, migration NOT applied here)
+  and `HallCommerceAccess` / `HallCommerceGate` (Commerce access enforcement).
+  The gate IS registered on `plugins_loaded`; every development Hall is a legacy
+  Hall (no state table, no `bc_portal_provisioning_db_version`, no
+  `bc_commerce_managed`), so it allows every one of them
 - **Catalog schema:** per-site `bc_catalog_db_version` = **5**
   (`bingo_game_types`, `bingo_play_products`, `bingo_packages`,
   `bingo_package_components`); v4 added nullable, unique
