@@ -30,6 +30,11 @@ require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/PortalSyncAdmin.php';
 // Read-only setup-prerequisite evaluation. Loaded only; it registers no hook,
 // no menu and no route, so its presence cannot change any request's behaviour.
 require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/SetupReadiness.php';
+// Commerce-state persistence. Definitions only: ProvisioningMigrations has no
+// activation, init, admin_init or cron trigger, so loading these files cannot
+// apply the schema, and HallCommerceState changes no request's behaviour.
+require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/ProvisioningMigrations.php';
+require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/HallCommerceState.php';
 require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/Plugin.php';
 
 BingoCommerce\PortalIntegration\Plugin::boot();

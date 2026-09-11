@@ -1386,6 +1386,113 @@
     local writer restrictions after synchronization; and Session-template
     application behavior beyond already-frozen decisions. Commerce scheduling,
     webhooks, SSO, and provisioning are not decided or implemented by this slice.
+- **[2026-09-10]** Commerce-state persistence increment implemented and tested
+  (internal persistence only).
+  - New network table `{base_prefix}bingo_hall_commerce_state` (`blog_id`
+    primary key, `seq`, `state`, `updated_at`) holding `provisioning` /
+    `operational` / `suspended`, owned by a NEW `ProvisioningMigrations` class
+    under its own `bc_portal_provisioning_db_version` option. The shipped Hall
+    mapping schema version (`Migrations::NETWORK_DB_VERSION`) remains **1** and
+    is deliberately untouched, so mapping reads and Portal Sync are unaffected.
+  - `HallCommerceState` writes through a single guarded
+    `INSERT ... ON DUPLICATE KEY UPDATE` whose ordering guard lives in the
+    database, with `seq` assigned last. The stored row read back afterwards is
+    authoritative for `superseded`, `conflict` and `unverified`. **Affected-row
+    semantics are enforced, not assumed.** Normally MySQL reports 1 for an
+    insert, 2 for a changed duplicate and 0 for a duplicate that already held
+    those values. A connection carrying CLIENT_FOUND_ROWS reports the unchanged
+    duplicate as 1 instead of 0 (the changed duplicate is still 2), which makes
+    an insert and an unchanged duplicate indistinguishable — so that mode is
+    refused, checked against the `MYSQL_CLIENT_FLAGS` constant wpdb actually
+    uses, before any write. Only after the read-back confirms the requested
+    sequence AND state do affected rows separate `applied` from
+    `already_applied`. A timestamp comparison is **not** used for that:
+    identical requests within one second share a timestamp, which the
+    same-second retry test exercises directly — asserting both calls landed in
+    one second, then applying the retired rule to two INDEPENDENT inputs (the
+    stored timestamp and the separately captured timestamp of the retry) to show
+    it would have misclassified that retry as `applied`.
+  - Validation: parameters are untyped and checked explicitly, so a weakly typed
+    caller cannot coerce `"5"`, `5.0`, `5.7` or `true` into an identifier or a
+    sequence. The packer's numeric capacity (256 phases) is separate from the
+    lifecycle phases; `provisioning` must be transitional, `operational` and
+    `suspended` settled, and reserved phases are refused as lifecycle writes.
+    Site IDENTITY (exists, this network, not the main site) is checked on
+    **reads as well as writes**; lifecycle eligibility (deleted/spam refused,
+    archived deliberately supported) applies to writes only, so a recorded state
+    stays readable after a site is later marked deleted. Stored rows are
+    validated for Hall-ID representation and range, sequence range, state/phase
+    agreement and timestamp representation before being returned as trusted
+    data; malformed storage stays distinct from verified absence.
+  - Database paths — preconditions, the guarded write, the confirmation read,
+    schema verification, version reads and version recording — catch
+    `Throwable`, restore error suppression in `finally`, and return fixed
+    categories with no SQL, driver text or traces. A write whose confirmation
+    fails or throws returns `unverified`; it never claims nothing was written.
+    **An unreadable schema version stops the migration** before any `dbDelta()`
+    or version write: `run_migration()` calls `read_version()` directly — it no
+    longer routes the initial decision through `is_current()`, which collapses
+    "could not read" to false — and returns immediately on `WP_Error`.
+    `is_current()` keeps its boolean contract for other callers and fails
+    closed. Tested through `migrate()` itself for a database error and for a
+    one-time throw, asserting the ATTEMPTED writes are zero rather than
+    inferring it from the final table state, with a genuinely-absent-version
+    positive control.
+  - **The migration is NOT wired to activation, `init`, `admin_init`, cron or
+    any other automatic path.** `migrate()` is called explicitly and nowhere
+    else; the bootstrap change loads definitions only.
+  - **The migration has NOT been applied to the development database.** Tests
+    boot WordPress itself against an isolated fixture
+    (`tests/fixtures/isolated-multisite.php`) that supplies its own network and
+    two Hall sites and never loads `wp-config.php`. Before WordPress builds its
+    hooks the fixture seeds `enable_loading_object_cache_dropin` to false — the
+    supported switch, since `WP_CACHE` does not prevent that drop-in loading —
+    and a `pre_http_request` rejection, because `WP_HTTP_BLOCK_EXTERNAL` still
+    permits localhost and the site's own host. A `db.php` routing drop-in causes
+    the fixture to refuse to boot. Ownership is proven before any write: a
+    pre-existing database must already carry the exact fixture identity (an
+    empty one is refused too), and `created_by_this_run` is set only after this
+    run actually creates the database. An inconsistent leftover state
+    table/version combination aborts rather than being adopted or destroyed.
+    Destructive work is limited to three named operations whose SQL is built
+    inside the guard, covering the version option as well as the table.
+  - Verified after the run: no state table and no version option in
+    `bingo_commerce`; the Hall mapping table, its schema version, the four
+    development sites and the absence of drop-ins are unchanged.
+  - Harness `tests/hall-commerce-state.php`: **252/252 PASS** (run twice consecutively, exit 0, no warnings or cleanup errors).
+    Concurrency uses **separate processes** whose readiness is observed through
+    per-worker database locks rather than a sleep: the parent waits for the lock
+    to be held by a connection that is neither its own nor a known blocker, and
+    if readiness is not reached the gate is never opened, so no worker can write
+    after a failed readiness phase. Completion is bounded too — output is drained
+    without blocking and a worker that has not exited by the deadline is
+    terminated and reaped. Two failure scenarios are covered: a worker that never
+    becomes ready, one that stalls after the gate opens, and one that IGNORES
+    SIGTERM; all three are asserted to fail within a measured elapsed bound,
+    write no state, and leave no worker or coordination lock behind. Cleanup
+    confirms each child's exit before `proc_close()` — terminate, bounded grace
+    poll, escalate with SIGKILL, and record an explicit failure if exit still
+    cannot be confirmed — and workers are stopped before the gate is released.
+    The escalation path is exercised for real by a worker that installs
+    `SIG_IGN`; it is skipped with an explicit note where pcntl is unavailable. A deterministic interleaving test lands a newer write from a
+    second connection between another operation's write and its read-back and
+    requires that operation to report `superseded`. Ownership negative controls
+    run only in a scratch database **this run created** — a pre-existing one is
+    refused untouched and never dropped — covering an unmarked empty database, a
+    database with foreign tables, and a wrong sentinel identity. The
+    connection-mode probe process inspects the parent's fixture and is asserted
+    to leave its table, rows and version unchanged.
+  - **Remaining limitations:** migration upgrade paths are untested — `DB_VERSION`
+    is 1, so no prior version exists to migrate from; concurrency is exercised
+    across OS processes on one machine, which proves the database guard resolves
+    the race but says nothing about multi-host behaviour; and the fixture
+    mirrors development table STRUCTURE (never rows) via `SHOW CREATE TABLE`, so
+    a development schema change is reflected automatically but a development
+    server-configuration difference is not.
+  - **Enable/Disable Ecommerce is NOT implemented.** No access enforcement, no
+    maintenance page, no managed-marker enrolment or backfill, no site creation
+    or suspension orchestration, no mapping changes, no Portal routes,
+    credentials or grants. Nothing reads this table yet.
 - No Hall Staff Management work currently in progress.
 - No other Catalog or Session implementation work is in progress. Package
   Increment 1 and Session Increment 1 remain COMPLETE and are recorded under
