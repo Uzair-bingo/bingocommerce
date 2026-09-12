@@ -9,7 +9,8 @@
  * (tests/portal-sync-admin-worker.php) because the production handler ends in
  * exit() or wp_die(); that termination is part of what is under test.
  *
- * The Portal is never contacted and the operator's token is never read. Every
+ * The Portal is never contacted, and the operator's Portal configuration never
+ * becomes the effective runtime constants — see the bootstrap note below. Every
  * HTTP attempt is short-circuited at `pre_http_request` inside the worker, and
  * the worker defines its own throwaway fixture constants.
  *
@@ -27,14 +28,100 @@ $_SERVER['REQUEST_URI']    = '/';
 $_SERVER['REQUEST_METHOD'] = 'GET';
 $_SERVER['REMOTE_ADDR']    = '127.0.0.1';
 
-// Throwaway fixture configuration so the page can reach its Ready state. These
-// are not, and must never be, the operator's credentials; the real token is
-// never read by this suite. The unconfigured path is covered separately by the
-// worker, which runs without these constants defined.
-define( 'BINGOCOMMERCE_PORTAL_BASE_URL', 'http://portal-3g-fixture.invalid' );
-define( 'BINGOCOMMERCE_PORTAL_INTEGRATION_TOKEN', 'phase-3g-fixture-token' );
+/** The two Portal constants this suite decides, and the only ones it touches. */
+const BC_PSA_PORTAL_CONSTANTS = [
+	'BINGOCOMMERCE_PORTAL_BASE_URL',
+	'BINGOCOMMERCE_PORTAL_INTEGRATION_TOKEN',
+];
 
-require dirname( __DIR__ ) . '/wp-load.php';
+/** Disposable fixture configuration. Never an operator value. */
+const BC_PSA_FIXTURE_BASE_URL = 'http://portal-3g-fixture.invalid';
+const BC_PSA_FIXTURE_TOKEN    = 'phase-3g-fixture-token';
+
+/*
+ * Defined BEFORE wp-load.php, so the page can reach its Ready state on
+ * disposable configuration.
+ *
+ * wp-config.php executes and evaluates its own definitions, the Portal ones
+ * included; that is not claimed otherwise. What holds is that these earlier
+ * definitions remain AUTHORITATIVE, because PHP keeps the first definition of a
+ * constant and ignores every later one. The operator's values therefore never
+ * become the effective runtime Portal constants, are not used to build an
+ * Authorization header or a Portal request, and no disclosure of them was
+ * observed in this suite's output, its redirect URLs or its audit context.
+ */
+define( 'BINGOCOMMERCE_PORTAL_BASE_URL', BC_PSA_FIXTURE_BASE_URL );
+define( 'BINGOCOMMERCE_PORTAL_INTEGRATION_TOKEN', BC_PSA_FIXTURE_TOKEN );
+
+/**
+ * Is this diagnostic the duplicate definition of one of OUR two constants?
+ *
+ * The whole suppression rule, in one testable place, and it takes BOTH halves
+ * of the diagnostic. Severity is part of the identity of what we are willing to
+ * swallow: PHP raises constant redefinition as E_WARNING, so anything arriving
+ * at another severity is a different event even when the text coincides, and a
+ * message-only rule would swallow a deliberately crafted E_USER_WARNING. Exact
+ * string equality on the complete message, for exactly the two names above.
+ */
+function bc_psa_is_portal_redefinition( int $errno, string $message ): bool {
+	if ( E_WARNING !== $errno ) {
+		return false;
+	}
+
+	foreach ( BC_PSA_PORTAL_CONSTANTS as $bc_psa_name ) {
+		if ( "Constant {$bc_psa_name} already defined" === $message ) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+/*
+ * If wp-config.php defines these names too, it will now raise one "already
+ * defined" warning each. Those are counted and swallowed; NOTHING else is.
+ *
+ * HOW MANY there are is deliberately NOT asserted as a fixed number: it depends
+ * on whether the local, git-ignored wp-config.php happens to define these
+ * constants, and pinning it to two would make this suite pass only on machines
+ * configured like one developer's. The portable invariants are asserted
+ * instead — only Portal redefinitions are suppressed, everything else is
+ * declined, and the runtime constants are whatever this file predefined.
+ */
+$bc_psa_suppressed = 0;
+$bc_psa_declined   = 0;
+set_error_handler(
+	static function ( int $errno, string $message ) use ( &$bc_psa_suppressed, &$bc_psa_declined ): bool {
+		if ( bc_psa_is_portal_redefinition( $errno, $message ) ) {
+			++$bc_psa_suppressed;
+
+			return true;
+		}
+
+		// False hands the diagnostic back to PHP's own reporting, untouched.
+		++$bc_psa_declined;
+
+		return false;
+	}
+);
+
+try {
+	require dirname( __DIR__ ) . '/wp-load.php';
+} finally {
+	restore_error_handler();
+}
+
+/* The handler is really gone, not merely assumed gone. */
+$bc_psa_probe_saw = false;
+set_error_handler(
+	static function ( int $errno, string $message ) use ( &$bc_psa_probe_saw ): bool {
+		$bc_psa_probe_saw = ( 'bc-psa-handler-restoration-probe' === $message );
+
+		return true;
+	}
+);
+@trigger_error( 'bc-psa-handler-restoration-probe', E_USER_WARNING );
+restore_error_handler();
 require_once ABSPATH . 'wp-admin/includes/ms.php';
 require_once ABSPATH . 'wp-admin/includes/plugin.php';
 
@@ -384,6 +471,28 @@ final class PortalSyncAdminTest {
 
 		$body = $this->snapshot_body( 970105, '2031-03-01T10:00:00+00:00', 2, 3 );
 		$run  = $this->worker( [ 'site_id' => $site, 'user_id' => $manager, 'configure' => true, 'body' => $body ] );
+
+		/*
+		 * CONFIGURED SCENARIOS RUN ON DISPOSABLE VALUES, and that is asserted
+		 * rather than assumed. The worker reports equality against its own
+		 * fixture constants, so neither value is emitted here or there; what is
+		 * proved is that wp-config.php did not supply what PortalConfig read.
+		 */
+		$this->assert_same( 2, $run['portal_defined'], 'a configured worker defines both Portal constants' );
+		$this->assert_same( 0, $run['portal_empty'], '  neither of them empty' );
+		$this->assert_same( 1, $run['portal_matches'], '  and both RETAIN the disposable fixture values' );
+		$this->assert_same( 'configured', $run['portal_config'], '  so PortalConfig reports a usable configuration' );
+		$this->assert_suppression_is_selective( $run, 'a configured worker' );
+
+		$this->assert_true(
+			defined( 'BINGOCOMMERCE_PORTAL_BASE_URL' )
+				&& BC_PSA_FIXTURE_BASE_URL === constant( 'BINGOCOMMERCE_PORTAL_BASE_URL' )
+				&& defined( 'BINGOCOMMERCE_PORTAL_INTEGRATION_TOKEN' )
+				&& BC_PSA_FIXTURE_TOKEN === constant( 'BINGOCOMMERCE_PORTAL_INTEGRATION_TOKEN' ),
+			"this suite's own runtime constants RETAIN the disposable fixture values"
+		);
+		$this->assert_parent_suppression_is_selective();
+
 		$this->assert_same( PortalSyncAdmin::OUTCOME_APPLIED, $this->outcome( $run ), 'a first synchronization redirects with the applied outcome' );
 		$this->assert_same( 1, $run['fetches'], '  and performed exactly one Portal fetch' );
 		$this->assert_same( 303, $run['status'], '  and redirects with HTTP 303, not a default 302' );
@@ -422,10 +531,108 @@ final class PortalSyncAdminTest {
 			$this->assert_same( 303, $run['status'], "  {$label} redirects with HTTP 303" );
 		}
 
-		// Missing configuration: refused, and no fetch is attempted.
+		/*
+		 * MISSING CONFIGURATION.
+		 *
+		 * This scenario used to be unreachable on any installation whose
+		 * wp-config.php defines the Portal constants: the worker omitted its
+		 * fixture values, wp-load.php then supplied the operator's real ones,
+		 * PortalConfig succeeded, and the run failed somewhere further down
+		 * instead. The worker now DEFINES both names itself before wp-load, so
+		 * what PortalConfig reads is settled by this suite rather than by the
+		 * environment.
+		 */
+		$before_domain  = $this->snapshot_domain_tables( [ $site ] );
+		$before_mapping = $this->mapping_snapshot();
+		$before_marker  = $this->sync_marker_for( $site );
+		$before_audit   = $this->max_audit_id();
+
 		$run = $this->worker( [ 'site_id' => $site, 'user_id' => $manager, 'configure' => false, 'body' => $body ] );
+
+		/*
+		 * The premise, established inside the worker rather than hoped for.
+		 *
+		 * Both constants are DEFINED and EMPTY. Defining them is what makes the
+		 * scenario deterministic: wp-config.php cannot replace a constant that
+		 * already exists, so the operator's values never become the runtime
+		 * ones. PortalConfig then rejects the empty base URL.
+		 *
+		 * The code is `portal_base_url_invalid`, not `portal_base_url_missing`:
+		 * an empty constant is present, so the `! defined()` branches do not
+		 * fire and the `'' === $base_url` check answers first. Both codes are
+		 * allowlisted to the same `not_configured` category, which is what the
+		 * admin screen reduces to and what this scenario is about.
+		 */
+		$this->assert_same( 2, $run['portal_defined'], 'the unconfigured worker defines BOTH Portal constants' );
+		$this->assert_same( 2, $run['portal_empty'], '  and both of them RETAIN the empty value' );
+		$this->assert_same( 0, $run['portal_matches'], '  so neither holds the disposable fixture value' );
+		$this->assert_suppression_is_selective( $run, 'the unconfigured worker' );
+		$this->assert_same(
+			'portal_base_url_invalid',
+			$run['portal_config'],
+			'  PortalConfig rejects the empty base URL rather than reading a configured one'
+		);
+
 		$this->assert_same( 'not_configured', $this->error_code( $run ), 'missing Portal configuration maps to the not_configured category' );
+		$this->assert_same( PortalSyncAdmin::OUTCOME_ERROR, $this->outcome( $run ), '  with the error outcome' );
 		$this->assert_same( 0, $run['fetches'], '  and attempts zero Portal fetches' );
+
+		// Nothing was written anywhere it matters.
+		$this->assert_same( $before_domain, $this->snapshot_domain_tables( [ $site ] ), '  no Game Type or Session-template row changed' );
+		$this->assert_same( $before_mapping, $this->mapping_snapshot(), '  the Hall mapping is byte-identical' );
+		$this->assert_same( $before_marker, $this->sync_marker_for( $site ), '  no sync marker was written or advanced' );
+		$this->assert_same( 0, $this->held_sync_locks(), '  no advisory lock is left held' );
+
+		/*
+		 * The audit row IS expected. ADR-025/BR-033 make the failure record
+		 * mandatory, and PortalSyncAdmin::finish() writes exactly one for every
+		 * refused attempt — so this asserts the recorded outcome, rather than
+		 * pretending a privileged action went unrecorded.
+		 */
+		$audit = $this->audit_rows_since( $before_audit );
+		$this->assert_same( 1, count( $audit ), '  exactly one audit row records the refusal' );
+		$this->assert_same( PortalSyncAdmin::AUDIT_FAILED, (string) ( $audit[0]['action'] ?? '' ), '    as a failed synchronization' );
+		$this->assert_true(
+			str_contains( (string) ( $audit[0]['context'] ?? '' ), '"error_category":"not_configured"' ),
+			'    carrying the allowlisted category and nothing else'
+		);
+
+		$this->assert_false(
+			str_contains( $run['raw'], 'already defined' ),
+			'  and no redefinition warning escaped into the worker output'
+		);
+		$this->assert_false(
+			str_contains( $run['raw'], 'BINGOCOMMERCE_PORTAL_INTEGRATION_TOKEN' ),
+			'  the worker output names no Portal credential constant'
+		);
+
+		/*
+		 * NO CONFIGURATION VALUE ANYWHERE, tested against the values this suite
+		 * itself controls.
+		 *
+		 * The operator's values are evaluated by wp-config.php but are not the
+		 * effective runtime constants, so they are not what this code path
+		 * carries. What is demonstrated here is that the path discloses no
+		 * configuration value at all: the disposable base URL and token travel
+		 * exactly where any Portal configuration would, and neither reaches the
+		 * worker output, the redirect URL, or the audit context. Anything
+		 * following the same route would have to surface in one of those three.
+		 */
+		$audit_context = (string) ( $audit[0]['context'] ?? '' );
+		foreach (
+			[
+				'the disposable base URL' => BC_PSA_FIXTURE_BASE_URL,
+				'the disposable token'    => BC_PSA_FIXTURE_TOKEN,
+			] as $what => $value
+		) {
+			$this->assert_false( str_contains( $run['raw'], $value ), "  {$what} never appears in the worker output" );
+			$this->assert_false( str_contains( $run['redirect'], $value ), "  {$what} never appears in the redirect URL" );
+			$this->assert_false( str_contains( $audit_context, $value ), "  {$what} never appears in the audit context" );
+		}
+
+		// And the refusal happened before any transport: no Portal URL was even
+		// built, let alone dispatched.
+		$this->assert_false( str_contains( $run['raw'], '/integration/v1/halls/' ), '  no Portal snapshot URL was constructed' );
 
 		// Every emitted category is allowlisted, and the error messages resolve.
 		$messages = $this->error_message_keys();
@@ -776,10 +983,18 @@ final class PortalSyncAdminTest {
 
 		$raw = (string) shell_exec( $cmd );
 
-		$redirect = '';
-		$wpdie    = '';
-		$fetches  = 0;
-		$status   = 0;
+		$redirect          = '';
+		$wpdie             = '';
+		$fetches           = 0;
+		$status            = 0;
+		$portal_defined    = -1;
+		$portal_empty      = -1;
+		$portal_matches    = -1;
+		$portal_suppressed = -1;
+		$portal_declined   = -1;
+		$portal_restored   = -1;
+		$portal_predicate  = -1;
+		$portal_config     = '';
 		foreach ( explode( "\n", $raw ) as $line ) {
 			$line = trim( $line );
 			if ( str_starts_with( $line, 'REDIRECT=' ) ) {
@@ -790,15 +1005,39 @@ final class PortalSyncAdminTest {
 				$wpdie = substr( $line, 6 );
 			} elseif ( str_starts_with( $line, 'FETCHES=' ) ) {
 				$fetches = max( $fetches, (int) substr( $line, 8 ) );
+			} elseif ( str_starts_with( $line, 'PORTAL_DEFINED=' ) ) {
+				$portal_defined = (int) substr( $line, 15 );
+			} elseif ( str_starts_with( $line, 'PORTAL_EMPTY=' ) ) {
+				$portal_empty = (int) substr( $line, 13 );
+			} elseif ( str_starts_with( $line, 'PORTAL_MATCHES_FIXTURE=' ) ) {
+				$portal_matches = (int) substr( $line, 23 );
+			} elseif ( str_starts_with( $line, 'PORTAL_SUPPRESSED=' ) ) {
+				$portal_suppressed = (int) substr( $line, 18 );
+			} elseif ( str_starts_with( $line, 'PORTAL_DECLINED=' ) ) {
+				$portal_declined = (int) substr( $line, 16 );
+			} elseif ( str_starts_with( $line, 'PORTAL_HANDLER_RESTORED=' ) ) {
+				$portal_restored = (int) substr( $line, 24 );
+			} elseif ( str_starts_with( $line, 'PORTAL_PREDICATE_OK=' ) ) {
+				$portal_predicate = (int) substr( $line, 20 );
+			} elseif ( str_starts_with( $line, 'PORTAL_CONFIG=' ) ) {
+				$portal_config = substr( $line, 14 );
 			}
 		}
 
 		return [
-			'redirect' => $redirect,
-			'status'   => $status,
-			'wpdie'    => $wpdie,
-			'fetches'  => $fetches,
-			'raw'      => $raw,
+			'redirect'          => $redirect,
+			'status'            => $status,
+			'wpdie'             => $wpdie,
+			'fetches'           => $fetches,
+			'portal_defined'    => $portal_defined,
+			'portal_empty'      => $portal_empty,
+			'portal_matches'    => $portal_matches,
+			'portal_suppressed' => $portal_suppressed,
+			'portal_declined'   => $portal_declined,
+			'portal_restored'   => $portal_restored,
+			'portal_predicate'  => $portal_predicate,
+			'portal_config'     => $portal_config,
+			'raw'               => $raw,
 		];
 	}
 
@@ -1255,6 +1494,154 @@ final class PortalSyncAdminTest {
 		}
 		echo 'NOTE: current-run audit rows removed: ' . count( $this->audit_ids_removed )
 			. ( $this->audit_ids_removed ? ' -> ' . wp_json_encode( $this->audit_ids_removed ) : '' ) . "\n";
+	}
+
+	/**
+	 * The error handler suppressed only what it was allowed to, in a worker.
+	 *
+	 * The COUNT is bounded rather than fixed. Whether wp-config.php redefines
+	 * these constants is a property of the developer's ignored configuration
+	 * file, so zero, one or two duplicate warnings are all legitimate; what must
+	 * hold on every machine is that nothing outside that narrow set was touched.
+	 *
+	 * @param array<string,mixed> $run
+	 */
+	private function assert_suppression_is_selective( array $run, string $label ): void {
+		$suppressed = (int) $run['portal_suppressed'];
+
+		$this->assert_true(
+			$suppressed >= 0 && $suppressed <= 2,
+			"{$label}: between 0 and 2 Portal redefinition warnings were suppressed (observed {$suppressed})"
+		);
+		$this->assert_same(
+			1,
+			$run['portal_predicate'],
+			"  {$label}: the suppression rule matches ONLY those two exact redefinition messages"
+		);
+		/*
+		 * INFORMATIONAL ONLY. A nonnegative counter proves the line parsed, not
+		 * that anything was declined — and requiring a POSITIVE count would put
+		 * us right back to depending on whether the developer's private
+		 * wp-config.php happens to raise other diagnostics. Selectivity is
+		 * proved by the errno-and-message controls instead.
+		 */
+		$this->assert_true(
+			(int) $run['portal_declined'] >= 0,
+			"  {$label}: the declined-diagnostic counter was reported (observed " . (int) $run['portal_declined'] . ')'
+		);
+		$this->assert_same(
+			1,
+			$run['portal_restored'],
+			"  {$label}: the handler was removed after bootstrap, proven by an independent probe"
+		);
+		$this->assert_false(
+			str_contains( $run['raw'], 'already defined' ),
+			"  {$label}: no redefinition warning escaped into the output"
+		);
+	}
+
+	/** The same guarantees for this suite's own bootstrap. */
+	private function assert_parent_suppression_is_selective(): void {
+		$suppressed = (int) ( $GLOBALS['bc_psa_suppressed'] ?? -1 );
+
+		$this->assert_true(
+			$suppressed >= 0 && $suppressed <= 2,
+			"this suite's bootstrap suppressed between 0 and 2 Portal redefinition warnings (observed {$suppressed})"
+		);
+		// Informational, for the same reason as above: a nonnegative counter
+		// proves only that the counter exists.
+		$this->assert_true(
+			(int) ( $GLOBALS['bc_psa_declined'] ?? -1 ) >= 0,
+			'  and reported its declined-diagnostic counter (observed '
+				. (int) ( $GLOBALS['bc_psa_declined'] ?? -1 ) . ')'
+		);
+		$this->assert_true(
+			true === ( $GLOBALS['bc_psa_probe_saw'] ?? false ),
+			'  and its handler was removed after bootstrap, proven by an independent probe'
+		);
+
+		/*
+		 * THE RULE ITSELF — the only thing that actually proves selectivity.
+		 * Both halves of the diagnostic are exercised: severity and message.
+		 */
+		$approved = [
+			'the base URL redefinition' => 'Constant BINGOCOMMERCE_PORTAL_BASE_URL already defined',
+			'the token redefinition'    => 'Constant BINGOCOMMERCE_PORTAL_INTEGRATION_TOKEN already defined',
+		];
+
+		// Positive controls: E_WARNING plus each exact approved message.
+		foreach ( $approved as $what => $message ) {
+			$this->assert_true(
+				bc_psa_is_portal_redefinition( E_WARNING, $message ),
+				"  the rule matches E_WARNING plus {$what}"
+			);
+		}
+
+		// Negative controls on SEVERITY: the same exact messages elsewhere.
+		foreach (
+			[ 'E_USER_WARNING' => E_USER_WARNING, 'E_NOTICE' => E_NOTICE, 'E_DEPRECATED' => E_DEPRECATED ] as $severity => $errno
+		) {
+			foreach ( $approved as $what => $message ) {
+				$this->assert_false(
+					bc_psa_is_portal_redefinition( $errno, $message ),
+					"  and does NOT match {$what} raised as {$severity}"
+				);
+			}
+		}
+
+		// Negative controls on MESSAGE: right severity, wrong text.
+		foreach (
+			[
+				'another constant'             => 'Constant WP_DEBUG already defined',
+				'a database constant'          => 'Constant DB_PASSWORD already defined',
+				'a near-miss with a full stop' => 'Constant BINGOCOMMERCE_PORTAL_BASE_URL already defined.',
+				'a different diagnostic'       => 'Undefined variable $BINGOCOMMERCE_PORTAL_BASE_URL',
+				'a bare constant name'         => 'BINGOCOMMERCE_PORTAL_INTEGRATION_TOKEN',
+				'an empty constant name'       => 'Constant  already defined',
+				'an empty message'             => '',
+				'a deprecation'                => 'strlen(): Passing null to parameter #1 is deprecated',
+			] as $what => $message
+		) {
+			$this->assert_false(
+				bc_psa_is_portal_redefinition( E_WARNING, $message ),
+				"  and does NOT match {$what}"
+			);
+		}
+	}
+
+	/** The whole Hall mapping table, hashed. @return string */
+	private function mapping_snapshot(): string {
+		global $wpdb;
+
+		$table = \BingoCommerce\PortalIntegration\Migrations::hall_mappings_table();
+		$rows  = $wpdb->get_results( "SELECT * FROM `{$table}` ORDER BY portal_hall_id", ARRAY_A );
+		if ( '' !== (string) $wpdb->last_error || ! is_array( $rows ) ) {
+			// An unreadable table must never hash the same as an empty one.
+			return 'unreadable:' . wp_generate_uuid4();
+		}
+
+		return md5( (string) wp_json_encode( $rows ) );
+	}
+
+	/** One Hall's sync marker, read uncached. @return string */
+	private function sync_marker_for( int $site_id ): string {
+		switch_to_blog( $site_id );
+		try {
+			$marker = PortalSyncState::readUncached();
+		} finally {
+			restore_current_blog();
+		}
+
+		return (string) wp_json_encode( $marker );
+	}
+
+	/** User-level MySQL locks currently held anywhere on this server. */
+	private function held_sync_locks(): int {
+		global $wpdb;
+
+		return (int) $wpdb->get_var(
+			"SELECT COUNT(*) FROM performance_schema.metadata_locks WHERE OBJECT_TYPE = 'USER LEVEL LOCK'"
+		);
 	}
 
 	private function verify_no_user_locks(): void {
