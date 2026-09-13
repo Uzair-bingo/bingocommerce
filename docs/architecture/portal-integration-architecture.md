@@ -3,34 +3,41 @@
 Status: approved authority and boundary decision; implementation proceeds in
 reviewed increments tracked in `PROJECT_STATUS.md`.
 
-This document expands ADR-035 and BR-071 through BR-075. It defines the
+This document expands ADR-035 and BR-071 through BR-076. It defines the
 integration boundary between the existing Laravel Bingo Innovation Portal and
 the WordPress Multisite/WooCommerce BingoCommerce platform. Except for
 ADR-036's narrow Hall snapshot transport URL contract, ADR-037's Hall snapshot
 v1 validation contract, ADR-038's completeness and Game Type absence decision,
 ADR-039's approved name/code, validation-amendment, and Catalog v5 migration
-design, and ADR-040's Phase 3E snapshot application design, it is not an API,
-webhook, persistence, provisioning, or SSO implementation design. ADR-039's
-name-validation amendment is implemented and tested; COMPLETE. Catalog v5 is
-implemented and tested; COMPLETE. **ADR-040's Phase 3E snapshot application is
-COMPLETE**: source review passed, the local harness passes 387/387 (testing
-multiple disposable Hall mappings and tenant isolation), and the authenticated
-real Portal test passed against a local Portal test environment (using one
-persistent mapping: Portal Hall 2 -> site 2; a first run importing 7 Game Types
-and 26 Session templates, a second run that was a domain no-op, and tenant
-isolation plus Commerce non-interference verified against pre-import baselines).
-**Phase 3F, the multi-Hall tenant-isolation proof, is COMPLETE**: practical proof
-with two simultaneously active mappings against the real local Portal endpoint
-verified complete isolation between Halls, with zero identity leakage and clean
-resource disposal. Production deployment is not claimed. **Phase 3G, manual
-Hall-scoped synchronization, is COMPLETE** (ADR-041): an authorized Hall Manager
-synchronizes their own Hall from a hall-local wp-admin page, Network Super Admin
-retains emergency and oversight access, and ordinary Hall staff receive no
-synchronization authority. Source review passed, the local harness passes
-411/411, and the practical browser test PASSED against a local Portal test
-environment. **Production deployment is NOT claimed, and scheduling and webhooks
-do not exist.** Local writer restrictions, reconciliation, SSO, and provisioning
-remain future work and are unimplemented.
+design, ADR-040's Phase 3E snapshot application design, ADR-041's Phase 3G
+manual synchronization mechanics, and ADR-042's automatic enable/suspend
+provisioning contract, it is not a webhook, reconciliation, or SSO
+implementation design. ADR-039's name-validation amendment is implemented and
+tested; COMPLETE. Catalog v5 is implemented and tested; COMPLETE. **ADR-040's
+Phase 3E snapshot application is COMPLETE**: source review passed, the local
+harness passes 387/387 (testing multiple disposable Hall mappings and tenant
+isolation), and the authenticated real Portal test passed against a local
+Portal test environment (using one persistent mapping: Portal Hall 2 -> site 2;
+a first run importing 7 Game Types and 26 Session templates, a second run that
+was a domain no-op, and tenant isolation plus Commerce non-interference
+verified against pre-import baselines). **Phase 3F, the multi-Hall
+tenant-isolation proof, is COMPLETE**: practical proof with two simultaneously
+active mappings against the real local Portal endpoint verified complete
+isolation between Halls, with zero identity leakage and clean resource
+disposal. Production deployment is not claimed. **Phase 3G, manual Hall-scoped
+synchronization, is COMPLETE** (ADR-041): an authorized Hall Manager
+synchronizes their own Hall from a hall-local wp-admin page, Network Super
+Admin retains emergency and oversight access, and ordinary Hall staff receive
+no synchronization authority. Source review passed; after fixture isolation
+(`7f3e332`), the local harness reports **467 passing assertions**; the
+practical browser test PASSED against a local Portal test environment.
+**Commerce-state persistence, SetupReadiness (199/199), and Hall Commerce
+access enforcement are implemented foundations. ADR-042 / BR-076 decide
+automatic Commerce enable/suspend provisioning; that endpoint, operations
+table, Portal button, and automatic site creation are NOT implemented.**
+**Production deployment is NOT claimed. Scheduling and webhooks do not exist.**
+Local writer restrictions, reconciliation, and SSO remain future work and are
+unimplemented.
 
 All Portal identities below belong to the single authoritative Bingo Innovation
 Portal environment:
@@ -73,9 +80,10 @@ Portal halls.id <-> WordPress Site ID
 Names and domains are editable routing/display attributes. They are not trusted
 integration identity. Phase 3B implements the one-to-one Portal Hall ID / Site
 ID persistence foundation through the network-wide
-`bingo_portal_hall_mappings` table and its mapping repository. Tenant
-provisioning and enablement lifecycles, plus reconciliation/recovery behavior
-beyond that mapping foundation, remain deferred.
+`bingo_portal_hall_mappings` table and its mapping repository. Automatic
+enable/suspend provisioning that uses that mapping is decided by ADR-042 and
+is not yet implemented. Reconciliation/recovery beyond the mapping foundation
+remain deferred.
 
 ### Game Type
 
@@ -311,7 +319,9 @@ upstream responses never reach an error or a log.
 This contract authorizes validation only. Snapshot application/import and
 persistence remain Phase 3E or later; ADR-038 below freezes the specific v1
 Game Type absence rule without implementing it. Reconciliation, Hall mapping
-mutation, Commerce scheduling, webhooks, SSO, and provisioning remain deferred.
+mutation, Commerce scheduling, webhooks, and SSO remain deferred. Automatic
+enable/suspend provisioning is decided later by ADR-042 / BR-076 and is not
+implemented by this validation contract.
 
 ### Pre-Phase 3E: snapshot completeness and Game Type absence
 
@@ -450,49 +460,45 @@ Approved shape:
 ```text
 Portal authenticated read API
         +
-Portal webhooks
-        +
 BingoCommerce hall-scoped local replicas
         +
-reconciliation
+(manual Hall-scoped synchronization today)
+        +
+(future) Portal webhooks + reconciliation
 ```
 
-Implementation order is fixed:
+Implementation order is fixed by ADR-042 / BR-076:
 
-1. authenticated read API;
-2. initial/full pull synchronization;
-3. prove idempotent Hall, Game Type, and Session-template mapping;
-4. Portal webhooks;
-5. reconciliation;
-6. tenant provisioning; and
-7. SSO.
+1. authenticated snapshot read and full-pull synchronization — complete;
+2. prove idempotent Hall, Game Type, and Session-template mapping / multi-Hall
+   proof — complete;
+3. manual Hall-scoped synchronization — complete;
+4. automatic Commerce enable/suspend provisioning — current work (decided;
+   not implemented);
+5. practical local end-to-end provisioning test;
+6. SSO — later;
+7. Portal webhooks, scheduling, and reconciliation — later, separately reviewed.
 
-The first implementation design must not skip directly to webhooks. Full pull
-and idempotent mapping establish the recovery baseline that later webhook and
-reconciliation work depend on.
+Webhooks and reconciliation are **not** prerequisites for automatic
+provisioning. Full pull and idempotent mapping remain the recovery baseline
+those later increments will depend on.
 
-Except for ADR-036's Hall snapshot transport URL and header-only credential
-placement, ADR-037's Hall snapshot v1 validation contract, ADR-038's
-completeness and Game Type absence decision, and ADR-039's name/code design,
-name-validation amendment, and narrow migration exception, the following
-details remain undecided until their dedicated reviews:
+Except for ADR-036 through ADR-042’s decided contracts, the following details
+remain undecided or deferred until their dedicated reviews:
 
-- Portal API authentication and authorization lifecycle;
-- other endpoint paths, versions, filters, pagination, and payloads;
 - local writer restrictions after synchronization, which ADR-040 deliberately
   leaves transitional until reconciliation and recovery are proven;
-- the exact Phase 3G capability names, provisioning, and UI mechanics for
-  manual, Hall-scoped synchronization (Hall Manager authorized for own Hall,
-  Super Admin emergency/oversight access, ordinary Hall staff denied), which is
-  the next increment and is unimplemented; webhooks and scheduling stay deferred;
 - webhook event types, signatures, ordering, retry, replay, and delivery logs;
-- any additional sync-state/cursor persistence, reconciliation state, and
-  future snapshot-application/import writer details;
+- any additional sync-state/cursor persistence and reconciliation state;
 - conflict policy for transitional local Game Type changes;
-- provisioning lifecycle and rollback/recovery;
 - recurrence expansion horizon, regeneration, timezone, daylight-saving, and
-  boundary behavior; and
+  boundary behavior;
+- SSO protocol/account/tenant mapping; and
 - monitoring, alerting, retention, and operational runbooks.
+
+ADR-042 decides automatic enable/suspend machine authentication, REST path,
+operations table, empty-store MVP, suspend/re-enable, and plugin ownership;
+those features are not implemented yet.
 
 ### Phase 3F — Multi-Hall Tenant-Isolation Proof (Verification Summary)
 
@@ -574,15 +580,76 @@ with no production Portal, hosting or customer data. **Scheduling and webhooks d
 not exist.** The plugin activation and web configuration are local
 test-environment state, not a deployment.
 
-## 6. Commerce Enablement
+**Credential-test wording (current).** `wp-config.php` executes and evaluates its
+definitions, including Portal constants. Fixture constants defined earlier in
+the worker remain authoritative because PHP keeps the first definition. No
+operator credential becomes the effective runtime test credential, is used to
+build an Authorization header or Portal request, or reaches HTTP
+(`pre_http_request` short-circuits every attempt). After fixture isolation
+commit `7f3e332`, `tests/portal-sync-admin.php` reports **467 passing
+assertions**. The earlier environment-blocked **107** stop on
+`not_configured` is historical and is not the current measured result.
 
-`Enable BingoCommerce` is a separate platform capability controlled only by a
-Portal Global Admin. It must not inherit the Portal's ordinary Hall Settings
-authorization.
+## 6. Commerce Enablement and Suspension (ADR-042 / BR-076)
 
-After enablement, authorized Hall Managers/Admins may manage the commerce state
-that BingoCommerce owns. Enablement, tenant provisioning, suspension, retry,
-partial-failure, and rollback lifecycle details remain deferred.
+`Enable BingoCommerce` / Disable Ecommerce is controlled only by an
+authenticated Portal Global Admin through the BingoCommerce machine API. It
+must not inherit ordinary Portal Hall Settings authorization. WordPress
+Platform Admin / Network Super Admin do not initiate automatic Enable/Disable;
+they retain HallCommerceGate recovery access plus explicit legacy backfill and
+ownership-unproven orphan recovery only.
+
+**Implemented foundations (not automatic provisioning):** Commerce-state
+persistence (`HallCommerceState`), read-only `SetupReadiness`, and Hall
+Commerce access enforcement (`HallCommerceAccess` / `HallCommerceGate`) exist.
+Automatic provisioning, the provisioning-operations table (including
+fingerprint columns), the machine REST endpoint, the Portal Enable/Disable
+control, and automatic site creation do **not** exist yet.
+
+**Plugin ownership and hook.** As in ADR-042:
+`bingocommerce-portal-integration` orchestrates;
+`bingocommerce-platform` creates/initializes via the decided filter
+`bingocommerce_platform_provision_hall_site` (not implemented);
+`bingocommerce-catalog` owns Catalog rules with no MVP starter copy;
+`bingocommerce-core` owns AuditLog/shared infrastructure only.
+
+**Machine authentication** reuses ADR-011 Application Passwords with
+`bc_receive_portal_provisioning` as decided in ADR-042.
+
+**REST / identity / outcomes / errors / recovery / audit / billing** follow the
+closed ADR-042 contract: complete custom response schema only after BingoCommerce
+callbacks are reached (WordPress core owns auth-before-dispatch, route/method
+matching, malformed JSON `rest_invalid_json`, and any core registered-argument
+failures); manual path/body validation after `permission_callback`; schema
+readiness before Hall-mutex acquisition; stored operation-row validation before
+classification (corrupt/impossible rows fail closed as `unverified`);
+classification precedence exact current identity → current-UUID conflict →
+lower-sequence superseded → equal-sequence conflict → higher-sequence new
+command; one Hall-scoped provisioning mutex with mutex-before-sync-lock
+ordering and stale-fence stops; permanent `site_ownership_id` with
+`bc_commerce_managed = site_ownership_id`; eight-record Canonical Request v1;
+`api_version` exact `"1"`; recoverable marker-matched partial create;
+marker-matched partial-site suspend with mapping absent/exact/`mapping_invalid`
+branches and no platform init; pre-bind no-site cancellation; independent UNIQUE
+handling; verified `bc_portal_provisioning_db_version` target 2; billing-neutral
+MVP; fixed audit mapping; App Password proof; Hall site admin from
+`BINGOCOMMERCE_HALL_SITE_ADMIN_USER_ID` only. Full normative text is ADR-042.
+
+**Lifecycle summary.** Enable creates/connects one archived site automatically
+under the Hall mutex after readiness and stored-row validation, assigns a
+permanent `site_ownership_id` before create, reserves the confirmed durable
+slug, recovers marker-matched partial creates, verifies three-fact ownership,
+prepares an empty ready store, clears `archived` with read-back only while the
+current fence holds, and returns the authoritative URL only when ownership is
+verified. A higher valid Disable before durable ownership cancels Enable without
+creating a site when no site exists, or attaches and suspends a marker-matched
+partial site while keeping `archived=1` and respecting mapping
+absent/exact/conflict rules. After bind, Disable suspends under
+HallCommerceGate without invoking the platform init filter. Re-enable reuses the
+same site/mapping/domain/data/`site_ownership_id`. Ownership-unproven orphans,
+mapping conflicts, and `UNIQUE(blog_id)` collisions require explicit operator
+recovery. Legacy sites 1–4 and Portal Hall 2 -> site 2 remain untouched until
+explicit operator backfill.
 
 ## 7. Future SSO Requirement
 

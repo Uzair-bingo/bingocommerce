@@ -23,7 +23,7 @@ Catalog v4 -> v5. The prerequisite Phase 3D2 name-validation amendment is
 implemented and tested; COMPLETE. Catalog v5 is implemented and tested;
 COMPLETE. ADR-040's Phase 3E snapshot application, Portal importing, and
 imported-code allocation are COMPLETE: source review passed, the local harness
-passes 381/381, and the authenticated real Portal test passed against a local
+passes 387/387, and the authenticated real Portal test passed against a local
 Portal test environment, importing 7 Game Types and 26 Session templates for
 Portal Hall 2 into BingoCommerce site 2 with an idempotent second run. Imported
 Game Type rows carry `local_name_key` NULL and codes from the approved
@@ -136,8 +136,12 @@ Verify the table/index before removal, the replacement key/backfill before
 dropping it, and the table/index state afterward. Advance the Catalog version
 only after complete verification; new sites receive the final v5 schema
 directly. Transaction/locking mechanics, replay/stale-order handling,
-Session-template application, local writer restrictions after synchronization,
-Commerce scheduling, webhooks, SSO, and provisioning remain open.
+Session-template application, and local writer restrictions after
+synchronization remain governed by ADR-040 and later reconciliation work.
+Commerce scheduling remains open. Webhooks, SSO, and automatic provisioning
+scheduling/reconciliation remain deferred; automatic enable/suspend
+provisioning itself is decided by ADR-042 / BR-076 and is not yet
+implemented.
 
 ### 2.2 `$wpdb->prefix . 'bingo_play_products'`
 
@@ -943,8 +947,9 @@ Owns:
 - WooCommerce product-link validation and BR-032/BR-065 projections.
 - Package composition and add-on quantity/price validation.
 - Hall override configuration and the effective-limit resolver.
-- Starter WooCommerce Product/Bingo Play Product copy logic triggered by
-  `bingocommerce-platform`; Game Types instead synchronize under ADR-035.
+- Starter WooCommerce Product/Bingo Play Product copy logic owned by Catalog
+  when that deferred mechanism exists; ADR-042 MVP runs no starter copy.
+  Game Types instead synchronize under ADR-035.
 - Per-site Catalog migration/version state, proposed as
   `bc_catalog_db_version`.
 
@@ -965,8 +970,21 @@ Owns:
 
 - Platform Admin mutation and network-scope initialization/versioning of the
   platform electronic maximum option.
-- Triggering Catalog's starter Product/Bingo Play Product copy contract during
-  hall provisioning; Game Type synchronization follows ADR-035.
+- Under ADR-042: actual WordPress Multisite site creation, WooCommerce/site
+  initialization, triggering existing per-site BingoCommerce migrations and
+  role provisioning, and returning a structured setup result to
+  `bingocommerce-portal-integration`. The ADR-042 MVP does not trigger starter
+  Product/Bingo Play Product copy; that Catalog-owned mechanism remains
+  separately deferred. Game Type synchronization follows ADR-035.
+
+### `bingocommerce-portal-integration`
+
+Owns Portal-facing machine endpoint authentication/validation,
+provisioning-operation persistence and sequencing, Portal Hall mapping
+coordination, HallCommerceState/managed-marker coordination, Portal snapshot
+synchronization, safe API responses, and integration audit attribution
+(ADR-035–ADR-042). Automatic enable/suspend provisioning is decided but not
+yet implemented.
 
 ### `bingocommerce-core`
 
@@ -982,11 +1000,19 @@ depend on network plugin deactivate/reactivate.
 
 This persistence design deliberately does not decide:
 
-- Portal Hall/Game Type/Session-template mapping columns or tables.
+- Portal webhook/reconciliation persistence and protocols.
+- SSO persistence/protocol.
 - Commerce schedule/recurrence/structured-time persistence or occurrence
-  generation strategy.
-- Portal API/webhook/reconciliation persistence and protocols.
-- Portal commerce enablement/provisioning or SSO persistence/protocol.
+  generation strategy beyond already-locked ADR-035 boundaries.
+
+ADR-042 decides the automatic enable/suspend provisioning operations table
+(including permanent internal `site_ownership_id`,
+`bc_commerce_managed = site_ownership_id`, and
+`bc_portal_provisioning_db_version` target 2) and lifecycle at the
+integration/platform boundary; that table is not a Catalog/Session persistence
+artifact and is not implemented yet. Starter Product / Play Product copy
+remains separately deferred for the ADR-042 MVP empty-store scope (narrowing
+ADR-027 / BR-047).
 
 - Entitlement/ticket table names, columns, or indexes.
 - QR payload or implementation.

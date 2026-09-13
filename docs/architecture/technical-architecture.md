@@ -82,11 +82,35 @@ One Package may be assigned to multiple dated commerce occurrences. The
 existing Game Type and Session schemas remain unchanged until a schema-specific
 compatibility/refactoring review.
 
-Approved delivery order is authenticated Portal read API, full pull, proven
-idempotent mapping, webhooks, reconciliation, tenant provisioning, then SSO.
-No protocol, persistence, or implementation is selected by this architecture
-summary. `Enable BingoCommerce` is a separate Portal Global Admin-only platform
-capability. See `docs/architecture/portal-integration-architecture.md`.
+Approved delivery order (ADR-042 / BR-076) is:
+
+1. authenticated Portal snapshot read and full-pull synchronization — complete;
+2. idempotent Hall/Game Type/Session mapping and multi-Hall proof — complete;
+3. manual Hall-scoped synchronization — complete;
+4. automatic Commerce enable/suspend provisioning — current work (decided;
+   not implemented);
+5. practical local end-to-end provisioning test;
+6. SSO — later;
+7. webhooks, scheduling, and reconciliation — later, separately reviewed.
+
+`Enable BingoCommerce` / Disable Ecommerce is a separate Portal Global
+Admin-only platform capability (BR-075, BR-076). ADR-042 decides the machine
+REST contract (`api_version` exact `"1"`; custom schema only after BingoCommerce
+callbacks; core malformed JSON / route-method bodies retained), Hall-scoped
+provisioning mutex and stale-command fencing, stored-row validation before
+classification, durable-vs-request command columns, permanent internal
+`site_ownership_id` with `bc_commerce_managed = site_ownership_id`,
+eight-record fingerprint, empty-store MVP, pre-bind cancellation and
+marker-matched partial-site suspend with mapping absent/exact/conflict rules,
+recoverable partial create, verified `bc_portal_provisioning_db_version=2`
+migration with pre-mutex readiness gate, independent UNIQUE-constraint
+handling, closed HTTP/audit matrices, billing-neutral MVP, App Password proof,
+Hall site admin via `BINGOCOMMERCE_HALL_SITE_ADMIN_USER_ID`, and plugin
+ownership (`bingocommerce-portal-integration` orchestrates;
+`bingocommerce-platform` create/init only when operational create/init is
+required). WordPress Platform Admin / Network Super Admin do not initiate
+automatic Enable/Disable. See
+`docs/architecture/portal-integration-architecture.md`.
 
 ## Data Architecture
 - Each hall has site-scoped products, orders, WooCommerce settings, and
@@ -266,8 +290,10 @@ Must explicitly support (confirm before committing to a provider, don't assume):
 - Object storage provider (AWS S3 vs. Cloudflare R2 vs. other)
 - Overall hosting provider
 - Parent domain name
-- Portal integration mapping persistence, Portal API/webhook contracts and
-  authentication, reconciliation policy, commerce recurrence/timezone/DST
-  behavior, enablement/provisioning lifecycle, and SSO security protocol
+- Portal webhook contracts, scheduling, reconciliation policy,
+  commerce recurrence/timezone/DST behavior, and SSO security protocol.
+  Automatic enable/suspend provisioning is decided by ADR-042 / BR-076 but not
+  yet implemented; webhooks and reconciliation are not prerequisites for that
+  MVP.
 - Schema-specific compatibility/refactoring plan for existing Game Type and
   Session persistence; do not assume destructive replacement

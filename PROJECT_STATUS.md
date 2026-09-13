@@ -1192,7 +1192,9 @@
   rows for earlier blog IDs were deliberately left untouched. No production PHP
   changed.
 - **[2026-09-09] Phase 3G — manual Hall-scoped synchronization: COMPLETE.**
-  Source review passed, the local harness passes 411/411, and the practical
+  Source review passed, the local harness landed at a historical **411/411**
+  and currently reports **467 passing assertions** after fixture-isolation
+  commit `7f3e332`, and the practical
   browser test PASSED against a local Portal test environment. ADR-041 approves
   and this increment implements `PortalSyncAdmin` in
   `bingocommerce-portal-integration` plus the `bc_sync_portal` capability in
@@ -1231,10 +1233,17 @@
     the authenticated actor. An audit write failure never rewrites the
     synchronization outcome; it adds one fixed secondary warning and a single
     fixed generic log line.
-  - `tests/portal-sync-admin.php` passes **411/411** across two consecutive runs
-    with an identical count, driving the real registered page and handler through
+  - `tests/portal-sync-admin.php` landed at a historical **411/411** across two
+    consecutive runs with an identical count, and after fixture-isolation commit
+    `7f3e332` the current measured result is **467 passing assertions**. It
+    drives the real registered page and handler through
     `tests/portal-sync-admin-worker.php`. The Portal is intercepted at
-    `pre_http_request` and the operator's token is never read.
+    `pre_http_request`. `wp-config.php` executes and evaluates its definitions,
+    including the Portal constants; fixture constants defined earlier remain the
+    effective runtime constants because PHP keeps the first definition, so the
+    operator values do not become the effective runtime test credential and do
+    not reach an Authorization header, Portal request, output, redirect, audit
+    context or test artifact.
   - **[2026-09-09] Source-review corrections applied.**
     - `record_audit()` now wraps `AuditLog::record()` in `try/catch ( \Throwable )`.
       A thrown exception and a returned `WP_Error` are handled identically: the
@@ -1843,24 +1852,17 @@
     `bc_portal_provisioning_db_version`, no `bc_commerce_managed` on sites 1-4),
     so the registered gate cannot block one. No migration was run against
     development and no development Hall was enrolled or suspended.
-  - **Pre-existing, environment-caused harness failure — `tests/portal-sync-admin.php`
-    (NOT an access-enforcement defect).** The suite stops at `missing Portal
-    configuration maps to the not_configured category`, receiving
-    `snapshot_stale`. Cause: `tests/portal-sync-admin-worker.php` proves the
-    unconfigured path by NOT defining the Portal constants, but the local
-    git-ignored `wp-config.php` has defined `BINGOCOMMERCE_PORTAL_BASE_URL` and
-    `BINGOCOMMERCE_PORTAL_INTEGRATION_TOKEN` since the Phase 3G browser test, so
-    `wp-load.php` supplies them anyway and the scenario cannot occur on this
-    machine. Verified pre-existing: the identical failure reproduces at pristine
-    commit `f0114f7` with none of this increment present, and the suite reaches
-    **107 passing assertions before it in both cases** — identical with and
-    without the change, including the updated 53-mapping error-category
-    assertion. Re-run again after the shared-reader correction: still **107**,
-    still the same stopping point, so that correction does not regress it
-    either. Live configuration was NOT altered to satisfy it. Same class as the
-    `tests/hall-staff-phase-a-fixes.php` item below: a harness precondition that
-    no longer matches local configuration, needing a decision before the
-    recorded 411/411 figure can be reproduced.
+  - **Historical environment-blocked Portal Sync Admin stop — RESOLVED by
+    fixture isolation (`7f3e332`).** On 2026-09-11 the suite stopped at
+    `missing Portal configuration maps to the not_configured category` after
+    **107** assertions because operator Portal constants in git-ignored
+    `wp-config.php` overrode the unconfigured worker path. Commit `7f3e332`
+    isolates configuration fixtures: `wp-config.php` still executes and
+    evaluates its definitions, but fixture constants remain authoritative; no
+    operator credential becomes the effective runtime test credential or
+    reaches HTTP. Current measured result: **467 passing assertions**. The
+    historical 107 stop and the earlier 411 landing figure are retained as
+    history only.
   - **What is proved, at three different strengths.** GATE REFUSAL is proved for
     a blocked Hall as a real request with real 503 headers. ROUTE ADMISSION is
     proved for the approved callback and runner paths, and is now asserted as a
@@ -1903,6 +1905,43 @@
     boot the plugin in-process. No marker is ever created, deleted or backfilled
     here, no state is mutated, and no scheduled or automatic synchronization was
     introduced.
+- **[2026-09-12] ADR-042 / BR-076 — automatic Portal-controlled BingoCommerce
+  enablement and suspension: DOCUMENTATION DECISION COMPLETE; implementation
+  NOT started.** Documentation-only increment. Adds ADR-042 and BR-076 and
+  reconciles AGENTS.md, PROJECT_STATUS.md, and the Portal/plugin/technical/
+  Catalog architecture docs. Supersedes only BR-074/ADR-035’s requirement that
+  webhooks and reconciliation precede tenant provisioning. Approves the machine
+  REST contract, Application Password + `bc_receive_portal_provisioning`
+  auth, operations table (ProvisioningMigrations 1 -> 2), empty-store MVP
+  (narrowing ADR-027/BR-047), suspend/re-enable rules, plugin ownership split,
+  and delivery order with automatic provisioning before webhooks/SSO. Contract
+  follow-up closed implementation blockers and final passes resolved remaining
+  contradictions: durable vs request slug/name columns; exact-retry before
+  post-ownership null rules; unbound `site_slug` replaceable until durable
+  ownership (immutable after); permanent internal `site_ownership_id` with
+  `bc_commerce_managed = site_ownership_id` (never rotating Portal
+  `operation_id`; absent from fingerprint/response/audit); eight-record
+  injective length-prefixed fingerprint; classification with current-UUID
+  conflict before lower-sequence superseded; Hall-scoped provisioning mutex
+  and stale-command fencing; WordPress REST boundary with custom schema only
+  after BingoCommerce callbacks; stored-row validation before classification;
+  pre-bind no-site cancellation and marker-matched partial-site suspend with
+  mapping absent/exact/`mapping_invalid` branches; recoverable marker-matched
+  partial create; fully fixed custom response rules (`api_version` exact
+  `"1"`); independent UNIQUE handling including three `site_ownership_id`
+  allocation attempts; `bc_portal_provisioning_db_version` target 2 with
+  verified migration and pre-mutex schema-readiness gate; non-overlapping
+  `conflict`/`slug_conflict`; `last_error_category` clearing; MVP UUID
+  semantics without historical uniqueness claims; Hall name aligned to Portal
+  snapshot 255 Unicode characters; `archived=1` create plus
+  clear-with-read-back before operational success; platform filter only for
+  operational create/init/resume; billing-neutral `effective_access` until a
+  BR-016 resolver exists; `BINGOCOMMERCE_HALL_SITE_ADMIN_USER_ID` as the sole
+  Hall site-admin contract; full HTTP/audit matrices with exact audit action
+  mapping; App Password request-scoped proof. Does **not** implement PHP,
+  migrations, endpoints, Portal buttons, automatic site creation, BR-016
+  billing, or SSO. Commerce-state persistence, SetupReadiness, and access
+  enforcement remain the implemented foundations.
 - No Hall Staff Management work currently in progress.
 - No other Catalog or Session implementation work is in progress. Package
   Increment 1 and Session Increment 1 remain COMPLETE and are recorded under
@@ -1928,49 +1967,32 @@
    passed with one persistent mapping (Portal Hall 2 -> site 2; first run
    imported 7 Game Types and 26 Session templates, second run was a domain
    no-op, tenant isolation and Commerce non-interference passed).**
-   **Phase 3F — the multi-Hall tenant-isolation proof — is COMPLETE:** building
-   on the Phase 3E automated harness and persistent real mapping, Phase 3F
-   provided the separate practical proof with two simultaneously active
-   mappings against the real local Portal endpoint. Both Halls synchronized
-   independently, Hall B imported 3 Game Types and 5 Session templates, repeat
-   synchronizations of both Halls changed zero domain rows, Portal identities
-   never crossed sites, and all disposable resources were cleanly removed.
-   Production deployment is not claimed. **Phase 3G — manual Hall-scoped
-   synchronization — is COMPLETE** (ADR-041): a hall-local `Portal Sync` page and
-   authenticated `admin_post_bc_portal_sync` handler let an authorized Hall
-   Manager synchronize their own Hall through the dedicated `bc_sync_portal`
-   capability, Network Super Admin retains emergency and oversight access, and
-   ordinary Hall staff receive no sync authority. Source review passed, the local
-   harness passes 411/411, and the practical browser test PASSED: three
-   deliberate clicks produced one correctly attributed audit event each (applied,
-   then two domain no-ops), refresh performed no synchronization, site 2 changed
-   only in its Portal Game Type replica and sync marker, Tampa and Orlando stayed
-   byte-identical, the Game Operator was denied and Super Admin admitted.
-   **Production deployment is NOT claimed, and scheduling and webhooks do not
-   exist.** Local writer restrictions and reconciliation remain deferred and
-   unimplemented.
+   **Phase 3F — the multi-Hall tenant-isolation proof — is COMPLETE.**
+   **Phase 3G — manual Hall-scoped synchronization — is COMPLETE** (ADR-041):
+   source review passed; after fixture isolation (`7f3e332`) the local harness
+   reports **467 passing assertions**; the practical browser test PASSED.
+   Commerce-state persistence (**252/252**), SetupReadiness (**199/199**), and
+   Hall Commerce access enforcement (**833/833**; handlers **361/361**) are
+   implemented foundations.
+   **ADR-042 / BR-076 decide automatic Commerce enable/suspend provisioning —
+   documentation complete; PHP/endpoint/table/Portal button NOT implemented.**
+   **Production deployment is NOT claimed. Scheduling and webhooks do not
+   exist.** Local writer restrictions and reconciliation remain deferred.
    Commerce selection remains separate and is not implemented.
 
 Everything below is tracked work that is NOT a blocker to that demo.
 
 ## Before Customer-Facing Digital Launch
 1. Complete the remaining Portal integration delivery increments. Phase 3B
-   Hall mapping/config, Phase 3C1 Game Type identity persistence, Phase 3C2
-   Session-template replica persistence, Phase 3D1 read-only HTTP transport,
-   and Phase 3D2 strict snapshot validation are complete. ADR-039's tested
-   name-validation amendment is COMPLETE, and the Catalog v5 migration is
-   implemented and tested; COMPLETE. Phase 3E snapshot application/full-pull
-   idempotent synchronization is COMPLETE (automated harness verified multiple
-   disposable mappings; real run used persistent mapping), and the separate
-   practical proof with two simultaneously active mappings against the real local
-   Portal endpoint — Phase 3F — is COMPLETE. Phase 3G, manual Hall-scoped
-   synchronization, is COMPLETE (ADR-041): source-reviewed, 411/411 automated,
-   and practically browser-tested. It is manual only — scheduling and webhooks do
-   not exist. Remaining work is the separately reviewed webhook, reconciliation,
-   and tenant-provisioning increments, which stay deferred and unimplemented.
-   Any further Game Type/Session schema or writer change requires its own
-   reviewed compatibility/application design. SSO remains a later integration
-   phase and is not a customer-launch prerequisite.
+   through Phase 3G are complete as recorded above. **Current next
+   implementation work is automatic Commerce enable/suspend provisioning under
+   ADR-042 / BR-076** (decision complete; not implemented), followed by a
+   practical local end-to-end provisioning test. Webhooks, scheduling, and
+   reconciliation remain later, separately reviewed work — they are **not**
+   prerequisites for automatic provisioning. SSO remains a later integration
+   phase and is not a customer-launch prerequisite. Any further Game
+   Type/Session schema or writer change requires its own reviewed
+   compatibility/application design.
 2. The BR-066 storefront mechanism that enforces Bingo Play Product
    non-purchasability. Deferred by decision; requires a new reviewed entry
    before any implementer selects a mechanism.
@@ -1986,7 +2008,9 @@ Everything below is tracked work that is NOT a blocker to that demo.
    entitlement activation. The business rule is resolved; only the integration
    mapping is open.
 7. Coordinated starter-product catalog copy at provisioning (BR-047, ADR-027);
-   Game Types instead follow ADR-035 synchronization.
+   Game Types instead follow ADR-035 synchronization. ADR-042 / BR-076 narrow
+   this for the automatic-provisioning MVP: no starter Product / Play Product
+   copy runs until that deferred mechanism is separately designed.
 8. Package hard delete, including BR-065's mandatory linked-product
    disposition. No hard delete exists in any Catalog entity today.
 
@@ -2072,18 +2096,20 @@ Everything below is tracked work that is NOT a blocker to that demo.
   §"Catalog lock-order review" is accurate as written. ADR-033 locks
   `bingo_packages` then `bingo_play_products` ascending, and locks no component
   rows at all.
-- Latest verified results **[2026-09-11, Commerce access enforcement]**: Hall
-  Commerce access enforcement **833/833 PASS** (run twice, exit 0); installed
-  payment/runner handler integration **361/361 PASS** (run twice, exit 0);
-  Commerce state persistence **252/252 PASS**. `tests/portal-sync-admin.php` reaches
-  **107 passing assertions** and then stops on the pre-existing, environment-
-  caused `not_configured` precondition described above — identical at pristine
-  commit `f0114f7`, so it is not a regression, and its previously recorded
-  411/411 figure cannot be reproduced until that precondition is decided.
-- Latest verified results **[2026-09-09, Phase 3G gate]**: Phase 3G practical
-  browser test **PASSED** (3 clicks -> 3 correctly attributed audit events, 0 on
-  refresh); Phase 3G Portal sync admin **411/411 PASS** (twice, identical count);
-  Phase 3E Portal snapshot application **387/387 PASS**; Phase 3D2 Portal
+- Latest verified results **[2026-09-12, ADR-042 documentation + current
+  measured harness status]**: Portal Sync Admin **467 passing assertions**
+  (after fixture isolation `7f3e332`; historical 107 stop and earlier 411
+  landing figure are not current). Hall Commerce access enforcement
+  **833/833 PASS**; installed payment/runner handler integration **361/361
+  PASS**; Commerce state persistence **252/252 PASS**; SetupReadiness
+  **199/199 PASS**; Phase 3E Portal snapshot application **387/387 PASS**.
+  Automatic provisioning endpoint/table/Portal button remain unimplemented.
+  Production deployment is NOT claimed.
+- Latest verified results **[2026-09-09, Phase 3G gate — historical landing]**:
+  Phase 3G practical browser test **PASSED** (3 clicks -> 3 correctly
+  attributed audit events, 0 on refresh); Phase 3G Portal sync admin landed at
+  **411/411 PASS** before later fixture-isolation raised the current count to
+  467; Phase 3E Portal snapshot application **387/387 PASS**; Phase 3D2 Portal
   snapshot validation **1638/1638
   PASS**; Phase 3D1 Portal HTTP transport **67/67 PASS**; Phase
   3B Portal integration foundation regression **75/75 PASS**; Phase 3C2 Portal
@@ -2161,16 +2187,21 @@ Everything below is tracked work that is NOT a blocker to that demo.
   COMPLETE. Phase 3G, manual Hall-scoped synchronization, adds `PortalSyncAdmin`
   (hall-local `Portal Sync` page plus the authenticated
   `admin_post_bc_portal_sync` handler) and is **COMPLETE** — manual
-  synchronization only, with no REST route, cron event, scheduler or webhook.
+  synchronization only, with no REST route, cron event, scheduler or webhook
+  for sync. SetupReadiness is implemented (**199/199 PASS**). ADR-042 / BR-076
+  decide automatic Commerce enable/suspend provisioning; the provisioning
+  operations table, machine endpoint, Portal Enable/Disable button, and
+  automatic site creation are **NOT implemented**. SSO does not exist.
   **The plugin is now network-active on this local environment**, and the ADR-036
   Portal constants are configured in the git-ignored `wp-config.php` for ongoing
   manual synchronization; both are local test-environment state, not a
   deployment. The plugin also carries `ProvisioningMigrations` and
-  `HallCommerceState` (Commerce-state persistence, migration NOT applied here)
-  and `HallCommerceAccess` / `HallCommerceGate` (Commerce access enforcement).
-  The gate IS registered on `plugins_loaded`; every development Hall is a legacy
-  Hall (no state table, no `bc_portal_provisioning_db_version`, no
-  `bc_commerce_managed`), so it allows every one of them
+  `HallCommerceState` (Commerce-state persistence, migration NOT applied here;
+  DB version remains 1 — the ADR-042 operations-table migration 1 -> 2 is not
+  implemented) and `HallCommerceAccess` / `HallCommerceGate` (Commerce access
+  enforcement). The gate IS registered on `plugins_loaded`; every development
+  Hall is a legacy Hall (no state table, no `bc_portal_provisioning_db_version`,
+  no `bc_commerce_managed`), so it allows every one of them
 - **Catalog schema:** per-site `bc_catalog_db_version` = **5**
   (`bingo_game_types`, `bingo_play_products`, `bingo_packages`,
   `bingo_package_components`); v4 added nullable, unique

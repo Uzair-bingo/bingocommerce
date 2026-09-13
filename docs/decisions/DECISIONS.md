@@ -1445,8 +1445,10 @@ reconciliation.
   Synchronization: Capability, Tenant Derivation, Request Mechanism, Notices and
   Audit:**
 
-**Status and scope. COMPLETE.** Source review passed, the local harness passes
-411/411, and the practical browser test PASSED against a local Portal test
+**Status and scope. COMPLETE.** Source review passed, the local harness landed at
+a historical **411/411** and currently reports **467 passing assertions** after
+fixture-isolation commit `7f3e332`, and the practical browser test PASSED against
+a local Portal test
 environment. Production deployment is NOT claimed, and scheduling and webhooks do
 not exist. This entry decides only how an authorized person triggers the
 already-complete Phase 3E synchronization from inside one hall's wp-admin. It
@@ -1554,9 +1556,16 @@ the POST handler still leaves authoritative mapping resolution to Phase 3E.
 **Testing.** `tests/portal-sync-admin.php`, with
 `tests/portal-sync-admin-worker.php` (required because the handler terminates in
 `exit()` or `wp_die()`), exercises the real registered page and handler, with the
-Portal intercepted at `pre_http_request` and throwaway fixture constants. The
-operator's token is never read. It passes **411/411** across two consecutive runs
-with an identical count, asserts HTTP **303** on applied, no-change and error
+Portal intercepted at `pre_http_request` and throwaway fixture constants.
+`wp-config.php` executes and evaluates its definitions, including the Portal
+constants; the fixture constants defined earlier remain the effective runtime
+constants because PHP keeps the first definition, so the operator values do not
+become the effective runtime test credential and do not reach an Authorization
+header, Portal request, output, redirect, audit context or test artifact. The
+harness landed at a historical **411/411** across two consecutive runs with an
+identical count, and after fixture-isolation commit `7f3e332` the current
+measured result is **467 passing assertions**. It
+asserts HTTP **303** on applied, no-change and error
 redirects, and asserts the error-category table contains **52** mappings across
 17 categories. Its cleanup removes current-run audit rows only when BOTH the row
 is newer than the opening high-water mark AND its `blog_id` is a site that run
@@ -1605,6 +1614,1198 @@ request removes cross-tenant tampering as a class instead of validating against
 it; and reducing every outcome to an allowlisted category makes the disclosure
 surface a fixed table that can be reviewed in one place, rather than whatever an
 upstream error happens to contain.
+
+- **ADR-042 — [2026-09-12] — Automatic Portal-Controlled BingoCommerce
+  Enablement and Suspension:**
+
+**Status.** Decision and documentation COMPLETE. Automatic provisioning,
+the provisioning-operations table (DB v1 -> v2), the machine REST endpoint, the
+Portal Enable/Disable Ecommerce control, automatic site creation, and SSO are
+**NOT implemented**. Commerce-state persistence (`HallCommerceState`),
+`SetupReadiness`, and Hall Commerce access enforcement (`HallCommerceAccess` /
+`HallCommerceGate`) are implemented foundations this lifecycle will use.
+Production deployment is NOT claimed. The first practical proof will use a
+disposable local Portal Hall and disposable BingoCommerce site.
+
+**What this supersedes or narrows.**
+
+- Supersedes only BR-074 / ADR-035’s requirement that Portal webhooks and
+  reconciliation precede tenant provisioning. Authority boundaries and v1
+  exclusions from ADR-035 through ADR-041 remain in force and are not altered.
+- Narrows ADR-027 and BR-047 for this MVP only: the first automatic-provisioning
+  release creates a ready but EMPTY Commerce store and does **not** copy starter
+  WooCommerce Products or starter Bingo Play Products. Starter-product copying
+  remains separately deferred because its template source and copy mechanism
+  have not been designed or implemented. Game Types continue to synchronize
+  under ADR-035 rather than copy-on-provision.
+- Extends BR-075’s Portal Global Admin-only enablement authority with the
+  concrete enable / suspend / re-enable lifecycle, machine authentication,
+  REST contract, operations table, and plugin ownership below. BR-075’s future
+  SSO requirement remains later and is not part of this MVP.
+
+**Approved delivery order (current).**
+
+1. authenticated snapshot read and full-pull synchronization — complete;
+2. idempotent Hall/Game Type/Session mapping and multi-Hall proof — complete;
+3. manual Hall-scoped synchronization — complete;
+4. automatic Commerce enable/suspend provisioning — current work (this ADR;
+   not yet implemented);
+5. practical local end-to-end provisioning test;
+6. SSO — later;
+7. webhooks, scheduling, and reconciliation — later, separately reviewed.
+
+Manual Hall-scoped Portal synchronization remains the current sync model.
+Scheduling, webhooks, and reconciliation are not prerequisites for this MVP.
+
+**Business contract.**
+
+1. Only an authenticated Portal Global Admin may invoke Enable Ecommerce or
+   Disable Ecommerce. Ordinary Portal Hall Settings authority does not grant
+   this permission.
+2. Enable Ecommerce automatically creates and connects the Hall’s BingoCommerce
+   site. A WordPress Network Super Admin must not need to create or connect it
+   manually.
+3. Before enablement, the Portal suggests a lowercase Hall subdomain/slug. The
+   Global Admin can edit it and must explicitly confirm it.
+4. Names and domains remain attributes, never identity. Portal `halls.id` is
+   the only cross-system Hall identity.
+5. BingoCommerce is the authoritative source for address availability and the
+   final site URL. The Portal must not construct or assume the final URL.
+6. If the confirmed address is already occupied or reserved, enablement refuses
+   clearly and changes no existing Hall, site, or mapping.
+7. The first automatic-provisioning release creates a ready but EMPTY Commerce
+   store: WordPress/WooCommerce and required BingoCommerce schemas are prepared;
+   Portal Game Types and owner-only Session templates are synchronized; no
+   starter WooCommerce Products or starter Bingo Play Products are copied; the
+   Hall may create its products manually.
+8. Disable Ecommerce means SUSPEND: stop new customer purchases; show the
+   existing fixed maintenance response to customers, Hall Managers, and Game
+   Operators; preserve the site, domain, mapping, products, orders, settings,
+   and all data; allow already-started approved payment callbacks and required
+   scheduled processing under the committed HallCommerceGate rules; retain
+   Network Super Admin recovery access; do not delete or archive the WordPress
+   site.
+9. Re-enable must reuse the same WordPress site, mapping, domain, data, and
+   permanent `site_ownership_id`. It must never create a second site for the
+   same Portal Hall.
+10. Manual Hall-scoped Portal synchronization remains the current sync model.
+11. SSO remains later. Automatic provisioning does not synchronize Portal users
+    or automatically log them into WordPress. Before SSO, Hall staff use a
+    separately invited BingoCommerce account through the existing Hall Staff
+    workflow. The Portal Ecommerce link may open the store URL, but wp-admin
+    still requires a separate BingoCommerce login.
+12. Production deployment is not claimed.
+
+**Authority split (roles).**
+
+- Portal Global Admin (Portal-side): sole initiator of automatic Enable Ecommerce
+  / Disable Ecommerce through the machine API (BR-075, BR-076).
+- WordPress Platform Admin / Network Super Admin: does **not** initiate automatic
+  Enable/Disable. Retains network recovery access through HallCommerceGate,
+  explicit legacy backfill/enrolment of an existing Hall, and explicit operator
+  recovery of an ownership-unproven orphan site. Those operator actions are
+  separate, reviewed procedures — not the Portal machine endpoint.
+- Hall Managers / Game Operators: never invoke this endpoint.
+
+**Billing interaction (BR-016) — current increment vs future authority.**
+
+Portal administrative Commerce intent (`HallCommerceState`: `provisioning` /
+`operational` / `suspended`) is distinct from BR-016 billing lifecycle state
+(`Active` → `Overdue` → `Restricted` → `Suspended` → `Terminated`). Neither
+subsystem may overwrite the other’s stored state or sequence.
+
+**Source-checked current state:** No authoritative BR-016 billing persistence
+or billing-status resolver exists in the BingoCommerce plugin tree today
+(Portal Commerce state / `HallCommerceAccess` / `HallCommerceGate` exist;
+billing lifecycle does not). This provisioning increment does **not**
+implement BR-016 persistence or billing transitions.
+
+**Until the separately reviewed BR-016 implementation exists**, the billing
+dimension is **neutral** for `effective_access` calculation:
+
+- Portal `operational` → `effective_access` = `allowed`;
+- Portal `provisioning` / `suspended` → `effective_access` = `portal_blocked`;
+- `billing_restricted` is **not** produced by this increment;
+- No provisioning code may invent, persist, or infer a billing status.
+
+Portal re-enable still cannot erase or bypass **future** authoritative billing
+state once that resolver exists.
+
+**After** an authoritative BR-016 resolver is implemented (name that exact
+source in the implementing decision; do not assume one here), the
+most-restrictive rule for managed Halls (customers and ordinary Hall Manager /
+Game Operator storefront or wp-admin) becomes:
+
+- Allowed only when Portal Commerce state is `operational` **and** billing
+  status is in {`Active`, `Overdue`}.
+- Portal `suspended` or `provisioning` blocks even when billing is
+  `Active`/`Overdue`.
+- Billing `Restricted` / `Suspended` / `Terminated` blocks even when Portal
+  Commerce state is `operational`.
+- Approved HallCommerceGate payment-callback and scheduled-processing
+  exemptions are unchanged; this ADR adds no new bypass.
+
+If a Portal `operational` intent is then successfully enforced while that
+resolver reports restrictive billing, the provisioning command is still
+**applied** (or `already_applied`). The response MUST NOT use HTTP 409 or
+`billing_restricted` as an operation failure that would cause Portal to retry
+a completed command. Deterministic success response in that future state:
+
+- HTTP 200;
+- `outcome` = `applied` or `already_applied`;
+- `commerce_state` = `operational`;
+- `effective_access` = `billing_restricted`;
+- `error_category` = null.
+
+**Plugin ownership.**
+
+- `bingocommerce-portal-integration` owns: the Portal-facing machine endpoint;
+  request authentication and validation; provisioning-operation persistence and
+  sequencing; Portal Hall mapping coordination; HallCommerceState /
+  managed-marker coordination; Portal snapshot synchronization; safe API
+  responses; and integration audit attribution.
+- `bingocommerce-platform` owns: actual WordPress Multisite site creation;
+  WooCommerce/site initialization; triggering the existing per-site
+  BingoCommerce migrations and role provisioning; and returning a structured
+  setup result through the single filter below.
+- `bingocommerce-catalog` continues to own Catalog rules. No starter-product
+  copy runs in this MVP.
+- `bingocommerce-core` remains shared infrastructure only (including AuditLog).
+
+**Cross-plugin hook contract (decided; not implemented).**
+
+`bingocommerce_platform_provision_hall_site` is invoked **only** when an
+`operational` command needs initial creation or idempotent
+initialization/resume. An ordinary `suspended` command for an existing valid
+site MUST NOT invoke the platform initialization filter, and
+`platform_unavailable` MUST NOT prevent safe suspension.
+
+When that filter is used for an operational create/init/resume attempt:
+
+- Hook name: `bingocommerce_platform_provision_hall_site`
+- Mechanism: `apply_filters( 'bingocommerce_platform_provision_hall_site', $seed, $command )`
+- Caller: `bingocommerce-portal-integration` orchestrator, after intent
+  classification and locks, **exactly once** for that attempt (never a second
+  “initialize later through the hook” step in the same attempt).
+- Consumer: `bingocommerce-platform` only. No competing consumers.
+- Seed rule: caller always passes `$seed = null`. The platform consumer acts
+  **only** when `$seed === null`. If `$seed` is non-null (including
+  `WP_Error`), the consumer returns that seed unchanged and performs **no**
+  side effects. The orchestrator validates the final return value.
+- `$command` exact keys:
+  - `portal_hall_id` (int)
+  - `operation_id` (string, lowercase UUID v4) — current Portal command only;
+    never used as the site ownership marker
+  - `site_ownership_id` (string, lowercase UUID v4) — permanent BingoCommerce
+    internal ownership identity already persisted on the Hall operation row
+  - `site_slug` (string) — durable reserved/bound slug for this command
+  - `hall_name` (string|null) — current request hall name (null on every new
+    suspended command and on post-ownership operational new commands)
+  - `blog_id` (int|null) — `null`: resolve reserved address then create or
+    recover partial create, and perform platform-owned initialization in this
+    invocation; non-null: verify ownership and idempotently resume
+    platform-owned initialization only
+  - `request_fingerprint` (string, 64 lowercase hex)
+- Internal defensive validation: the platform consumer MUST validate `$command`
+  defensively. A malformed internal hook command is a programming/integration
+  failure: return fixed `WP_Error( 'internal_error' )`, perform **no** platform
+  side effects, and disclose no raw value or diagnostic. Client
+  `validation_failed` exists only before operation identity/row mutation and
+  keeps the reduced HTTP 400 response; it is **not** a platform-filter error
+  code.
+- When `blog_id` is null and `site_ownership_id` is already persisted, platform
+  MUST resolve the reserved network address **before** creating, and MUST
+  evaluate this recoverable branch **before** generic `address_occupied`
+  handling so a retry does not reject its own safely identifiable partial
+  creation:
+  - No site at the reserved address: create via supported Multisite APIs
+    (`wpmu_create_blog` / `wp_insert_site` path) with `archived` = 1 from
+    insertion, initial site option `bc_commerce_managed` = this
+    `site_ownership_id` (never `operation_id`), and `public` left at the API
+    default (not an access-control barrier).
+  - Site exists and `bc_commerce_managed` exactly equals the persisted
+    `site_ownership_id`: treat as this operation’s recoverable partial create;
+    return its verified `blog_id` with `created=false` and continue guarded
+    attachment and initialization. The marker match — not slug alone —
+    authorizes automatic recovery.
+  - Site exists with an absent, different, or unreadable marker:
+    `site_ownership_unproven`; never bind, rewrite, delete, or create another
+    site.
+- When `blog_id` is non-null, platform MUST verify
+  `bc_commerce_managed === site_ownership_id` and MUST NOT derive or rewrite
+  the marker from the current Portal `operation_id`.
+- Success result exact keys: `blog_id` (positive int), `site_url` (non-empty
+  string — advisory only; orchestrator MUST independently read `site_url` from
+  the verified WordPress site and MUST NOT trust the filter return alone),
+  `created` (bool), `managed_marker_present` (bool — true when
+  `bc_commerce_managed` read-back equals this `site_ownership_id`).
+- Failure: `WP_Error` with `code` exactly one of
+  `site_create_failed`, `site_ownership_unproven`, `platform_unavailable`,
+  `internal_error`. No SQL/paths/traces/raw values in message/data.
+- Platform unavailable (filter returns null unchanged): orchestrator maps to
+  `platform_unavailable`; no local create fallback.
+- Exception containment: platform catches `\Throwable` →
+  `WP_Error( 'internal_error' )`; orchestrator also wraps `apply_filters`.
+- After the filter returns successfully, the orchestrator — **not** a second
+  filter call — attaches `blog_id` with a current-sequence guarded write and
+  read-back before three-fact ownership becomes durable, independently reads
+  `site_url` from the verified WordPress site, then runs mapping, Portal
+  full-pull synchronization, SetupReadiness, HallCommerceState writes, clears
+  `archived=1` with read-back (enable path), and `enforced_sequence`
+  confirmation.
+- If the marker is absent after create, or ownership is ambiguous: treat as
+  `site_ownership_unproven`; explicit Network Super Admin operator recovery;
+  never silently bind or delete.
+
+Business logic MUST NOT be duplicated between plugins.
+
+**WordPress REST execution boundary (installed core order).**
+
+Application Password / core authentication may execute before dispatch. Route
+and method matching are controlled by WordPress core. For a matched route,
+WordPress parses JSON and runs any registered-argument validation/sanitization
+**before** `permission_callback`. Therefore:
+
+- Malformed JSON returns WordPress core `rest_invalid_json` HTTP 400 **before**
+  the custom permission callback or endpoint callback.
+- Route/method mismatches and any registered REST argument validation failures
+  may likewise return WordPress core response bodies.
+- Only requests that reach the BingoCommerce callbacks can receive the complete
+  custom ADR-042 response schema.
+
+This ADR does **not** claim that Application Password rejection is the sole
+core response-body exception. Core auth failures, malformed JSON, route/method
+mismatches, and any core registered-argument failures are all outside the
+custom schema.
+
+**Machine authentication (ADR-011) — request-scoped Application Password proof.**
+
+Installed WordPress REST Application Password flow
+(`wp-includes/user.php`, `wp-includes/rest-api.php`):
+
+- Successful App Password auth sets global
+  `$wp_rest_application_password_status` to a `WP_User` and records the App
+  Password UUID via `rest_application_password_collect_status()` /
+  `rest_get_authenticated_app_password()`.
+- Invalid App Password credentials may be rejected through
+  `rest_authentication_errors` before BingoCommerce callbacks run. Those
+  failures use WordPress’s core REST error response.
+- Custom reduced `authentication_failed` bodies apply only when the request
+  reaches BingoCommerce route handling (`permission_callback` / callback).
+
+`permission_callback` MUST require **all** of:
+
+1. `rest_get_authenticated_app_password()` returns a non-null UUID for this
+   request (proves this request authenticated with an Application Password);
+2. `$wp_rest_application_password_status instanceof \WP_User` and that user’s
+   ID equals `get_current_user_id()`;
+3. `current_user_can( 'bc_receive_portal_provisioning' )`.
+
+Insufficient alone (explicitly rejected as proof): Authorization header
+presence, Basic-auth syntax shape, `wp_is_application_passwords_in_use()`,
+cookies/session login, or `current_user_can()` without (1)–(2).
+
+Account rules:
+
+- One dedicated nonhuman Portal provisioning account holds
+  `bc_receive_portal_provisioning` only; it is not Network Super Admin and
+  receives no Hall Manager or Game Operator role.
+- Production requires HTTPS.
+- Credentials remain server-side in Portal environment configuration.
+- No custom HMAC, shared-secret signature, or nonce/replay table.
+
+**New-site administrator identity.**
+
+Supported Multisite creation requires a WordPress `$user_id` site
+administrator. The exact server-only contract is the PHP constant
+`BINGOCOMMERCE_HALL_SITE_ADMIN_USER_ID`. It MUST:
+
+- be defined outside version control (deployment/local config only; this
+  documentation increment does **not** modify `wp-config.php`);
+- resolve to a positive existing WordPress user ID;
+- identify an authorized Network Super Admin used for Hall recovery;
+- differ from the authenticated Portal provisioning machine user;
+- never come from the Portal request or `portal_actor_id`.
+
+Missing, malformed, nonexistent, non-Super-Admin, or machine-account-equal
+configuration MUST fail **before** site creation as `platform_unavailable`,
+with no raw constant value or user information disclosed in the API response.
+The least-privilege Portal provisioning machine account MUST NOT silently
+become Administrator of every new Hall site.
+
+Application-level retry safety uses `intent_sequence`, current `operation_id`,
+and the request fingerprint below. Permanent site ownership uses
+`site_ownership_id` / `bc_commerce_managed`, never the rotating Portal
+`operation_id`.
+
+**REST contract.**
+
+```text
+PUT /wp-json/bingocommerce/v1/portal-halls/{portal_hall_id}/commerce
+```
+
+**Route registration and manual validation (no WordPress REST args
+validation for this contract).**
+
+- Do **not** require WordPress REST `args` validation/sanitization callbacks
+  for the provisioning path or request-body contract.
+- Register a path pattern broad enough to match one non-empty path segment for
+  `{portal_hall_id}`.
+- After `permission_callback`, validate the complete `portal_hall_id` text
+  **manually**: digits-only; canonical spelling with no leading zeroes;
+  integer in `1 .. PHP_INT_MAX`. Failure → custom reduced
+  `validation_failed` HTTP 400.
+- Validate **every** body field manually in the endpoint callback after
+  `permission_callback`. Missing, scalar, list, or otherwise invalid JSON body
+  shapes that reach the callback → fixed custom `validation_failed`.
+- Malformed JSON remains WordPress core HTTP 400 (`rest_invalid_json`) and
+  MUST NOT be intercepted merely to manufacture the custom schema.
+
+**Body object — every accepted key must be explicitly present; unknown keys
+rejected; missing keys rejected (JSON null ≠ missing key).**
+
+Exact keys:
+
+| Key | Presence | Nullability |
+|---|---|---|
+| `operation_id` | required | never null |
+| `intent_sequence` | required | never null |
+| `desired_state` | required | never null |
+| `site_slug` | required | see retry/null rules below |
+| `hall_name` | required | see retry/null rules below |
+| `portal_actor_id` | required | never null |
+
+**Null rules versus exact-retry classification (exact precedence order).**
+
+1. After BingoCommerce `permission_callback` succeeds, manually parse and
+   type-validate path + every body field (including allowing JSON null only
+   for `site_slug` / `hall_name`). Client `validation_failed` uses the reduced
+   HTTP 400 body and creates no operation row, acquires no Hall mutex, and
+   writes no provisioning audit.
+2. Provisioning-schema readiness check (no DDL/repair). Unready → reduced 503
+   `platform_unavailable`; no Hall mutex; no row access; no audit.
+3. Acquire the Hall provisioning mutex. Then load the current Hall operation
+   row and distinguish: verified row absence; verified readable valid row;
+   unreadable storage/read failure; readable but corrupt or internally
+   impossible row. **Validate stored operation state before classification**
+   (see below). Only then classify against a verified-absent or verified-valid
+   row **before** applying post-ownership null rules, in this exact order:
+   - **(a)** Exact current `operation_id` + `intent_sequence` +
+     `request_fingerprint` → retry/resume or `already_applied` classification.
+     Accept the request’s `site_slug` / `hall_name` exactly as stored in
+     `request_site_slug` / `request_hall_name` for that command (including the
+     original non-null first-enable values after `blog_id` became bound
+     mid-flight, and including JSON-null values for a suspended command). Exact
+     retries retain the same durable slug and the same `site_ownership_id`. Do
+     not reject a matching in-progress first-enable retry merely because a site
+     is now bound.
+   - **(b)** Same current `operation_id` with any different sequence or
+     fingerprint/payload → `conflict`, **regardless of whether the supplied
+     sequence is lower or higher**.
+   - **(c)** Different `operation_id` with a lower sequence → `superseded`.
+   - **(d)** Different `operation_id` with an equal sequence → `conflict`.
+   - **(e)** Only a different `operation_id` with a higher valid sequence →
+     **new command**.
+4. Every **new** `desired_state=suspended` command uses JSON-null `site_slug`
+   and `hall_name` (before or after durable ownership). Those nulls MUST NOT
+   erase durable `site_slug` or `site_ownership_id` when present.
+5. For a new `desired_state=operational` command when **durable ownership**
+   already exists: `site_slug` and `hall_name` MUST be JSON null. Those nulls
+   MUST NOT erase durable `site_slug` or `site_ownership_id`. A non-null
+   `site_slug` that differs from the durable value is `conflict` (identity
+   conflict / attempted rename; zero row mutation — not `slug_conflict`).
+6. For a new `desired_state=operational` command **before** durable ownership
+   exists: `site_slug` and `hall_name` MUST be non-null and valid. A newer
+   valid operational command may **atomically replace** this Hall operation’s
+   previously reserved unbound `site_slug`. That replacement releases only this
+   Hall operation’s previous reservation and MUST NEVER alter another
+   Hall/site/mapping. It MUST NOT regenerate `site_ownership_id` if one is
+   already persisted.
+7. **Pre-durable-ownership suspended commands** (higher valid suspended new
+   command; must supersede and prevent any older Enable from resuming). Exact
+   branches:
+   - **`site_ownership_id` is null:** automatic create could not previously
+     have started. Complete pre-bind suspended cancellation without binding or
+     modifying an unrelated site at the reserved address; no platform filter;
+     no new ownership ID; no mapping; no per-site HallCommerceState.
+     Response: `commerce_state=suspended`, `effective_access=portal_blocked`,
+     `blog_id=null`, `site_url=null`, `error_category=null`. First processing
+     `applied`; exact confirmed retry `already_applied`.
+   - **`site_ownership_id` exists and no site exists at the reserved address:**
+     complete the same no-site pre-bind cancellation while **preserving** that
+     ownership ID (never regenerate). Same null `blog_id`/`site_url` success
+     response as above.
+   - **`site_ownership_id` exists, `blog_id` is null, a site exists at the
+     reserved address, and `bc_commerce_managed` exactly equals that
+     `site_ownership_id` (marker-matched partial site):** do **not** invoke
+     `bingocommerce_platform_provision_hall_site`. Resolve the candidate through
+     the same address-and-marker verification used by partial-create recovery.
+     Guardedly attach `blog_id` under the current command fence and read it
+     back; verify all three durable-ownership facts; keep `archived=1` if the
+     partial site remains archived; do **not** perform platform initialization
+     merely to suspend. **Before confirming suspension, inspect mapping state
+     (tenant-local; never disclose a foreign Hall or blog identity):**
+     - no mapping: do **not** create one during suspend; continue the verified
+       suspension;
+     - exact mapping for this `portal_hall_id` and `blog_id`: preserve it;
+     - any mapping that associates this Hall with another blog, or this blog
+       with another Hall: return `mapping_invalid`; keep the site archived;
+       perform no mapping, HallCommerceState, or confirmation mutation; return
+       the fixed non-200 custom response with `blog_id`/`site_url`/
+       `commerce_state`/`effective_access` null; require explicit operator
+       recovery; never repair silently.
+     On the success path: write settled suspended HallCommerceState; confirm
+     `enforced_sequence` and clear `last_error_category` under the current
+     command fence. Return `applied` (exact confirmed retry
+     `already_applied`) with verified positive `blog_id` and independently read
+     authoritative `site_url`, `commerce_state=suspended`,
+     `effective_access=portal_blocked`, `error_category=null`. Preserve the
+     site, slug, marker, ownership ID, exact mapping if already present, and
+     partial data. A later operational command resumes platform initialization
+     and clears `archived` only after readiness succeeds.
+   - **Candidate marker absent, different, or unreadable:**
+     `site_ownership_unproven`; operator recovery. Never claim successful
+     cancellation.
+   - If guarded attachment/read-back fails or ownership cannot be confirmed,
+     never report suspension success (`state_write_failed` or `unverified` per
+     the documented distinction).
+8. If an ownership-unproven orphan exists for this Hall’s prior create attempt,
+   a new slug MUST NOT silently abandon or bypass it; return
+   `site_ownership_unproven` and require explicit operator recovery.
+
+**Stored operation-row validation (before classification).**
+
+After schema readiness and Hall-mutex acquisition, before casting, comparing,
+hashing, or classifying an existing row, validate all persisted
+external-derived values and relational invariants, including:
+
+- `portal_hall_id` equals the requested Hall;
+- canonical `operation_id` UUID;
+- `intent_sequence` and `enforced_sequence` integer bounds;
+- `enforced_sequence <= intent_sequence`;
+- closed `desired_state` values on the operation row;
+- when HallCommerceState is consulted, closed `commerce_state` values
+  (`provisioning`|`operational`|`suspended`) only;
+- `request_canonical_version` exactly `1`;
+- valid `request_fingerprint`;
+- recomputed fingerprint equals the stored fingerprint;
+- nullable request and durable slug/name fields satisfy their documented
+  format;
+- `portal_actor_id` and `last_error_category` satisfy their closed contracts;
+- `blog_id != null` requires non-null `site_ownership_id` and durable
+  `site_slug`;
+- `site_ownership_id != null` requires durable `site_slug`;
+- no ownership-null branch may treat a non-null `blog_id` as “no site
+  created.”
+
+Unreadable or corrupt / internally impossible existing state must fail closed:
+
+- no row insert/update;
+- no platform filter;
+- no site, mapping, or HallCommerceState mutation;
+- no confirmation;
+- release every acquired lock;
+- HTTP 503; full custom body; `outcome=unverified`;
+  `error_category=unverified`;
+- `blog_id`, `site_url`, `commerce_state`, and `effective_access` null;
+- fixed safe generic server diagnostics only;
+- no raw stored value or database diagnostic in response, audit, or logs;
+- exactly one terminal `portal.commerce.unverified` audit attempt using only
+  safe request identity and `blog_id` null.
+
+Verified row absence and verified readable valid rows continue into
+classification. Schema unreadiness remains the earlier reduced 503 path and
+does not acquire the Hall mutex.
+
+**Field validation (closed)**
+
+- `operation_id`: string; lowercase UUID v4 with hyphens;
+  `\A[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\z`.
+- `intent_sequence`: JSON integer (reject floats/strings);
+  `1 .. (PHP_INT_MAX >> 8)`.
+- `desired_state`: exactly `operational` or `suspended`.
+- `site_slug` when non-null: string; DNS label
+  `\A[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\z`; max 63 octets.
+- `hall_name` when non-null: reuse the committed Portal snapshot Hall-name
+  contract in `PortalSnapshotValidator` (`HALL_NAME_MAX = 255` Unicode
+  characters; valid UTF-8; reject `\p{Cc}`/`\p{Cf}`/`\p{Zl}`/`\p{Zp}`; require
+  at least one non-whitespace/non-`Z` character; **do not trim or rewrite** the
+  accepted string). The tested 255-character multibyte Hall name (765 bytes)
+  must be accepted. Display attribute only, never identity.
+- `portal_actor_id`: JSON integer `1 .. PHP_INT_MAX`; Portal attribution only;
+  never a WordPress user ID; never authorization proof.
+
+Portal retries reuse the same operation ID, sequence, and canonical request
+values. A timeout or unreadable response is unconfirmed; the Portal MUST NOT
+report completion.
+
+**Response object (full body)** — exact custom-response rules:
+
+All custom bodies:
+
+- `api_version` is the exact string `"1"`.
+- `portal_hall_id` is the validated path ID.
+- `operation_id` and `intent_sequence` echo the validated request.
+- Never return `site_ownership_id`, fingerprint, foreign identity, SQL,
+  internal diagnostics, credentials, paths, or lock names.
+
+Exact keys on every custom full body: `api_version`, `portal_hall_id`,
+`operation_id`, `intent_sequence`, `outcome`, `commerce_state`,
+`effective_access`, `blog_id`, `site_url`, `error_category`.
+
+HTTP 200 `applied` / `already_applied` with verified durable ownership:
+
+- `blog_id` MUST be a positive integer.
+- `site_url` MUST be the independently read authoritative WordPress site URL.
+- Neither may be null.
+- Operational success: `commerce_state=operational`;
+  `effective_access=allowed` in the billing-neutral MVP.
+- Durable-site suspended success (including marker-matched partial-site
+  suspend that verified three-fact ownership): `commerce_state=suspended`;
+  `effective_access=portal_blocked`.
+- `error_category=null`.
+
+HTTP 200 pre-bind suspended cancellation with no site:
+
+- `blog_id=null`;
+- `site_url=null`;
+- `commerce_state=suspended`;
+- `effective_access=portal_blocked`;
+- `error_category=null`.
+
+Every custom non-200 response (full or reduced where applicable):
+
+- Full bodies set `blog_id=null`, `site_url=null`, `commerce_state=null`,
+  `effective_access=null`, and `error_category` equal to the exact HTTP-matrix
+  condition.
+- A null error-response field must **never** instruct Portal to erase a
+  previously confirmed site connection.
+- Reduced bodies use exact keys only: `api_version` (`"1"`), `error_category`,
+  and `portal_hall_id` when the path id was validly parsed.
+
+WordPress core response bodies apply whenever BingoCommerce callbacks are
+not reached — including Application Password / core authentication failures,
+malformed JSON (`rest_invalid_json`), route/method mismatches, and any core
+registered-argument validation failures. Only requests that reach BingoCommerce
+callbacks can receive the complete custom ADR-042 schema.
+
+**UUID / sequence / ownership-identity semantics (MVP — one mutable row per
+Hall).**
+
+- `intent_sequence` is the durable anti-replay / ordering authority.
+- `operation_id` identifies **only** the current Portal command on that row.
+- `site_ownership_id` is the permanent BingoCommerce-internal site ownership
+  identity. It is never supplied by Portal, is not part of Canonical Request v1
+  or `request_fingerprint`, is not returned in REST responses, and is not
+  written into audit context.
+- Classification precedence is exactly (a)–(e) above: current-UUID mismatch is
+  `conflict` **before** any lower-sequence `superseded` evaluation.
+- A higher accepted sequence with a different `operation_id` replaces the
+  current command identity but **never** replaces `site_ownership_id` or an
+  established `blog_id`. Accepting that newer command clears
+  `last_error_category` as part of the guarded command replacement.
+- Confirmations and mutations remain guarded by the current command sequence.
+- With one mutable row per Hall, **historical** Portal `operation_id`
+  uniqueness across replaced commands cannot be guaranteed detectable and MUST
+  NOT be claimed. Global historical UUID uniqueness would require a separate
+  append-only UUID registry (not part of this MVP).
+
+**Canonical Request fingerprint v1 (injective).**
+
+SHA-256 over the UTF-8 bytes of exactly eight newline-terminated records in
+this order (the digest input ends with the eighth record’s trailing `\n`).
+Encoding is typed and length-prefixed so JSON null cannot collide with any
+string (including the literal characters `null`):
+
+```text
+v1\n
+u:portal_hall_id:<decimal>\n
+s:operation_id:<byte_length>:<raw utf-8 bytes>\n
+u:intent_sequence:<decimal>\n
+s:desired_state:<byte_length>:<raw utf-8 bytes>\n
+<site_slug_record>\n
+<hall_name_record>\n
+u:portal_actor_id:<decimal>\n
+```
+
+where `<site_slug_record>` is exactly `n:site_slug` or
+`s:site_slug:<byte_length>:<raw utf-8 bytes>`, and `<hall_name_record>` is
+exactly `n:hall_name` or `s:hall_name:<byte_length>:<raw utf-8 bytes>`.
+
+Rules:
+
+- `u:` = unsigned decimal integer token (no leading zeros).
+- `n:name` = JSON null for that field (exactly those bytes).
+- `s:name:<len>:` = non-null string; `<len>` is the exact UTF-8 byte length in
+  decimal; following bytes are the raw string bytes with no escaping. Length is
+  authoritative. Accepted Hall names forbid `Cc`/`Cf`/`Zl`/`Zp` and accepted
+  slugs are DNS-safe, so line boundaries cannot be injected through accepted
+  values. `site_ownership_id` is not a fingerprint input.
+- Fingerprint hex is lowercase 64 chars.
+- Store `request_canonical_version = 1` and `request_fingerprint`.
+
+**Provisioning operations table.**
+
+Exact migration contract (`ProvisioningMigrations`):
+
+- Version option: `bc_portal_provisioning_db_version`.
+- Target version: `2`.
+- Clean installation creates the final v2 commerce-state and provisioning-
+  operations schemas.
+- A genuine v1→v2 upgrade adds the operations table without recreating,
+  rewriting, truncating, or changing `bingo_hall_commerce_state` or any
+  existing row.
+- After DDL, verify: operations table existence; every required column and
+  type; InnoDB engine; table charset/collation; `ascii_bin` on required ASCII
+  identity columns; primary key; and UNIQUE indexes for `operation_id`,
+  `site_ownership_id`, `blog_id`, and `site_slug`.
+- Set version=`2` only after all verification succeeds. Version value alone
+  never proves schema readiness.
+- Missing version is clean-install state only when option storage was read
+  successfully and expected schema absence/presence was safely classified.
+- Unreadable version storage, database error, exception, failed DDL, missing
+  or incorrect schema, or failed verification must never falsely advance
+  version.
+- Re-running a verified v2 migration is idempotent.
+- If version=`2` exists but schema verification fails, do not report the
+  schema as current.
+- Migration failures use fixed safe errors without SQL, table prefix, database
+  driver diagnostics, filesystem paths, or credentials.
+
+**Runtime endpoint gate (before locks / operation-row access).**
+
+- The REST request must never execute DDL or attempt schema repair.
+- After BingoCommerce authentication and manual client request validation,
+  but before Hall-mutex acquisition or operation-row access, perform a safe
+  provisioning-schema readiness check.
+- The check may use safely cached verified migration state, but a failed
+  required storage read must invalidate readiness.
+- If v2 storage is unavailable, unreadable, or unverified: HTTP 503; reduced
+  custom body; `error_category=platform_unavailable`; outcome absent; create/
+  mutate no operation row; invoke no platform filter; create no site or
+  mapping; write no provisioning audit (classification not reached); same
+  request retryable after operator repair.
+
+Network table `{base_prefix}bingo_portal_provisioning_operations`:
+
+- ENGINE=`InnoDB`
+- Default charset/collation: `$wpdb->get_charset_collate()`
+- ASCII binary columns: `CHARACTER SET ascii COLLATE ascii_bin`
+
+| Column | Definition |
+|---|---|
+| `portal_hall_id` | BIGINT UNSIGNED NOT NULL PRIMARY KEY |
+| `blog_id` | BIGINT UNSIGNED NULL |
+| `site_ownership_id` | CHAR(36) NULL, ascii_bin — permanent BingoCommerce-internal ownership UUID; never Portal-supplied; stable across retries, unbound-slug replacement, suspend, re-enable, and later Portal commands |
+| `site_slug` | VARCHAR(63) NULL, ascii_bin — **durable** reserved/bound slug; never overwritten with null; atomically replaceable only before durable ownership; immutable once durable ownership exists |
+| `request_site_slug` | VARCHAR(63) NULL, ascii_bin — current command’s request value (null allowed) |
+| `request_hall_name` | VARCHAR(255) NULL — current command’s request value; table/default utf8mb4 charset; sized for 255 Unicode characters per Portal Hall-name contract |
+| `portal_actor_id` | BIGINT UNSIGNED NOT NULL |
+| `operation_id` | CHAR(36) NOT NULL, ascii_bin — current Portal command only |
+| `intent_sequence` | BIGINT UNSIGNED NOT NULL |
+| `enforced_sequence` | BIGINT UNSIGNED NOT NULL DEFAULT 0 |
+| `desired_state` | VARCHAR(16) NOT NULL, ascii_bin |
+| `request_canonical_version` | TINYINT UNSIGNED NOT NULL |
+| `request_fingerprint` | CHAR(64) NOT NULL, ascii_bin |
+| `last_error_category` | VARCHAR(64) NULL, ascii_bin |
+| `created_at` | DATETIME NOT NULL (UTC) |
+| `updated_at` | DATETIME NOT NULL (UTC) |
+
+Indexes: PRIMARY (`portal_hall_id`); UNIQUE (`operation_id`); UNIQUE
+(`site_ownership_id`); UNIQUE (`blog_id`); UNIQUE (`site_slug`). Operational
+state only — not an audit log.
+
+**Sequence and outcome contract.**
+
+Six outcomes:
+
+- `applied` — this call confirmed `enforced_sequence == intent_sequence` for
+  this current `operation_id` after performing needed work, including (on the
+  operational enable path) successful `archived=1` clear with read-back when
+  that clear is required, and including pre-durable-ownership suspended
+  cancellation when no blog/orphan exists. Do not return `applied` if a
+  required clear/confirmation fails or is unverifiable.
+- `already_applied` — before workflow work, read-back already proves the same
+  current `operation_id`, sequence, fingerprint, full enforcement,
+  `last_error_category` is null, and (when already operational) that `archived`
+  is cleared; or (for a confirmed pre-bind no-site suspended cancellation)
+  `commerce_state=suspended` with `blog_id`/`site_url` null; or (for a
+  confirmed marker-matched partial-site / durable-site suspended command)
+  `commerce_state=suspended` with verified positive `blog_id` and authoritative
+  `site_url`. Exact retries that are **not** yet confirmed MUST resume; they
+  MUST NOT return `already_applied`.
+- `superseded` — different `operation_id` with a lower sequence (precedence
+  (c)); zero mutation.
+- `conflict` — request/sequence identity conflict with **zero row mutation**,
+  including: same current `operation_id` with any different sequence or
+  fingerprint/payload (precedence (b)); different `operation_id` with equal
+  sequence (precedence (d)); a new request trying to rename an already durably
+  bound slug; and foreign UNIQUE collisions that prevent establishing this
+  Hall’s row. `conflict` is **not** `slug_conflict`.
+- `failed` — ordinary domain failure after identity (see HTTP matrix),
+  including `slug_conflict`.
+- `unverified` — mutation may have occurred but confirmation/read-back failed;
+  never report success.
+
+Writer MUST NOT use SELECT-then-INSERT as concurrency guarantee. Sequence
+assigned last. Read-back is authoritative.
+
+**`last_error_category` lifecycle.**
+
+- Accepting a newer command clears the previous command’s error category as
+  part of the guarded command replacement.
+- A failed current command stores its allowlisted category only while that
+  identity/sequence remains current.
+- Successful confirmation clears `last_error_category` with guarded write and
+  read-back.
+- `already_applied` requires confirmed enforcement and a null stale-error
+  field.
+- `superseded`, `conflict`, authentication, authorization, validation, and
+  unsafe foreign-collision paths never change another/current row’s error
+  field.
+- Failure to verify the guarded clearing MUST NOT return success; use
+  `unverified` according to the existing contract.
+
+**Closed error allowlists (no additions without a new reviewed decision).**
+
+Response `error_category` set:
+
+`authentication_failed`, `authorization_failed`, `validation_failed`,
+`lock_unavailable`, `superseded`, `conflict`, `address_invalid`,
+`address_occupied`, `slug_conflict`, `mapping_invalid`, `site_missing`,
+`site_create_failed`, `site_ownership_unproven`, `readiness_failed`,
+`sync_failed`, `state_write_failed`, `confirmation_failed`,
+`platform_unavailable`, `unverified`, `internal_error`.
+
+`last_error_category` set (persist only after Hall operation identity is
+safely established):
+
+`address_invalid`, `address_occupied`, `slug_conflict`, `mapping_invalid`,
+`site_missing`, `site_create_failed`, `site_ownership_unproven`,
+`readiness_failed`, `sync_failed`, `state_write_failed`,
+`confirmation_failed`, `platform_unavailable`, `unverified`, `internal_error`.
+
+MUST NOT create/mutate a Hall operation row:
+
+core pre-callback failures (auth / malformed JSON / route-method / core args),
+`authentication_failed`, `authorization_failed`, `validation_failed`,
+provisioning-schema unreadiness (`platform_unavailable` reduced 503 before
+Hall mutex), `lock_unavailable` when the Hall operation cannot be safely
+established, unreadable/corrupt/impossible existing operation rows, and foreign
+UNIQUE (`site_slug`) / current UNIQUE (`operation_id`) collisions that prevent
+establishing or mutating this Hall’s row.
+
+`address_invalid`: slug fails DNS/WordPress checks while this Hall’s
+operation row is safely established — `failed`; Portal issues a **new**
+operational command with a corrected slug (may replace an unbound reservation
+for this Hall only). Evaluated only after the recoverable marker-matching
+partial-create branch does not apply.
+
+`address_occupied`: an existing WordPress site or foreign reservation at the
+reserved address that is **not** this Hall’s recoverable marker-matched partial
+create — `failed`; new operational command with a different confirmed slug
+before durable ownership. The recoverable partial-create branch is evaluated
+**before** this category.
+
+`conflict` versus `slug_conflict` (non-overlapping):
+
+- `conflict`: request/sequence identity conflict, including a new request
+  trying to rename an already durably bound slug, and foreign UNIQUE collisions
+  that prevent establishing this Hall’s row. Outcome `conflict`; **zero** row
+  mutation; does not persist `last_error_category`.
+- `slug_conflict`: an internal same-Hall invariant failure discovered **after**
+  safe operation identity establishment — for example, the operation row’s
+  durable slug disagrees with the verified bound site/network address or
+  reservation state. Outcome `failed`; full body; may persist
+  `last_error_category`. Recovery: explicit Network Super Admin / Platform
+  Admin operator repair of the bound address/reservation invariant; Portal MUST
+  NOT treat a new slug command as an automatic rename of a durably bound site.
+
+**UNIQUE constraint handling (each independently).**
+
+`UNIQUE(operation_id)` — foreign current-UUID collision: `conflict`, zero
+mutation, no foreign disclosure, no `last_error_category` persistence when this
+Hall has no safely established row; terminal conflict audit with `blog_id`
+null; Portal submits a new UUID and higher sequence when appropriate.
+
+`UNIQUE(site_slug)` — preserve address reservation, recoverable-marker partial
+create, and foreign collision behavior (`conflict` with zero mutation and no
+foreign disclosure when this Hall’s row cannot be established/mutated). Cross-
+Hall slug exclusion uses this UNIQUE only; do **not** introduce a global slug
+mutex.
+
+`UNIQUE(site_ownership_id)` — internally generated; never a client conflict.
+Use exactly **three** UUIDv4 allocation attempts. Each attempt is allowed only
+while `site_ownership_id` remains null and the current operation fence still
+matches. A collision leaves the field null and causes another internally
+generated lowercase UUIDv4 attempt. After three collisions: `internal_error`;
+do not invoke platform creation; do not expose the candidate UUID or conflicting
+row; never replace an already-persisted `site_ownership_id`.
+
+`UNIQUE(blog_id)` — a collision during guarded attachment must not overwrite
+either Hall row; do not establish durable ownership or confirmation; return
+`site_ownership_unproven` with explicit operator recovery; return no `blog_id`,
+`site_url`, foreign Hall ID, mapping, slug, or ownership ID.
+
+A Hall-mapping-table disagreement remains `mapping_invalid` and must never be
+silently repaired by the machine endpoint.
+
+**Hall-scoped provisioning mutex and stale-command fencing.**
+
+Define one provisioning mutex per `portal_hall_id`. It must never serialize
+different Halls globally. Hold it from current-row load/classification through
+the final provisioning mutation and confirmation snapshot. Protected scope
+includes: accepted-command persistence; `site_ownership_id` assignment;
+platform filter invocation; `blog_id` attachment; ownership verification; Hall
+mapping mutation; Portal snapshot application; HallCommerceState mutation;
+`archived`-status clearing; `last_error_category` clearing; and
+`enforced_sequence` confirmation.
+
+If the existing snapshot synchronizer acquires its Hall sync lock, provisioning
+acquires the provisioning mutex **first** and the sync lock **second**. No path
+may acquire them in reverse order. Cross-Hall slug exclusion continues to use
+`UNIQUE(site_slug)` only.
+
+Immediately before each irreversible or externally visible mutation, revalidate
+mutex ownership and the current `operation_id` / `intent_sequence` fence. If
+the mutex is lost or the fence cannot be verified: stop further work; never
+clear `archived`; never write `operational` state; never overwrite a newer
+`suspended` state; never confirm success; return `lock_unavailable` if no
+mutation occurred, otherwise `unverified`. If platform creation already produced
+an archived marked site before stale or lost-lock detection, leave it archived;
+a later current command must handle it through marker-matched partial recovery.
+A stale Enable must never resume after a newer Disable. Release the mutex only
+after the terminal response snapshot is fixed. The terminal audit attempt may
+occur afterward using the immutable captured outcome.
+
+**Deterministic HTTP matrix (no implementation choice).**
+
+| Condition | HTTP | Body | `outcome` | Row may change | Same-operation retryable |
+|---|---|---|---|---|---|
+| applied (incl. pre-bind cancel / marker-matched partial suspend) | 200 | full | `applied` | yes (confirmed) | n/a |
+| already_applied (incl. confirmed pre-bind cancel / partial suspend) | 200 | full | `already_applied` | no | n/a |
+| `authentication_failed` (reached BingoCommerce `permission_callback`) | 401 | reduced | absent | no | yes, with valid App Password |
+| Core Application Password / authentication rejection before BingoCommerce callbacks | 401 | WordPress core REST body | absent | no | yes, with valid App Password |
+| Core malformed JSON (`rest_invalid_json`) before BingoCommerce callbacks | 400 | WordPress core REST body | absent | no | no (fix JSON) |
+| Core route/method mismatch or core registered-argument validation failure | 4xx per core | WordPress core REST body | absent | no | no (fix route/method/registration) |
+| `authorization_failed` | 403 | reduced | absent | no | no |
+| `validation_failed` (manual path/body validation after permission; before mutex/row) | 400 | reduced | absent | no | no (fix request) |
+| Provisioning schema unreadiness (after auth+manual validation; before Hall mutex) | 503 | reduced | absent | no | yes (after operator repair) |
+| `lock_unavailable` | 503 | reduced | absent | no | yes |
+| Unreadable or corrupt/impossible existing operation row (after mutex; before classify) | 503 | full | `unverified` | **no** | yes (after operator repair) |
+| `superseded` (different `operation_id`, lower sequence) | 409 | full | `superseded` | no | no |
+| `conflict` (identity/payload/rename/foreign `operation_id` or `site_slug` UNIQUE; zero mutation) | 409 | full | `conflict` | **no** | no |
+| `address_invalid` (Hall row safely established; after recoverable-partial branch) | 400 | full | `failed` | yes (`last_error_category`) | no (new operational command; may replace unbound reservation) |
+| `address_occupied` (Hall row safely established; not marker-matched partial create) | 409 | full | `failed` | yes | no (new operational command with different slug before durable ownership) |
+| `slug_conflict` (same-Hall invariant after identity; not rename conflict) | 409 | full | `failed` | yes | no (operator repair of bound address/reservation invariant) |
+| `mapping_invalid` | 409 | full | `failed` | yes | no (operator repair; never silent machine repair) |
+| `site_missing` | 409 | full | `failed` | yes | no (operator recovery) |
+| `site_create_failed` | 503 | full | `failed` | yes | yes |
+| `site_ownership_unproven` (incl. `UNIQUE(blog_id)` attach collision) | 409 | full | `failed` | yes | no (operator recovery) |
+| `readiness_failed` | 503 | full | `failed` | yes | yes |
+| `sync_failed` | 503 | full | `failed` | yes | yes |
+| `state_write_failed` | 503 | full | `failed` | yes | yes |
+| `platform_unavailable` (after classification / filter unavailable) | 503 | full | `failed` | yes | yes |
+| `internal_error` (incl. three `site_ownership_id` allocation collisions) | 503 | full | `failed` | yes | yes |
+| `confirmation_failed` | 503 | full | `unverified` | maybe | yes |
+| `unverified` (incl. lost mutex/fence after possible mutation) | 503 | full | `unverified` | maybe | yes |
+
+On every custom response, fields follow the exact custom-response rules above.
+Schema-unreadiness uses reduced body, `error_category=platform_unavailable`,
+outcome absent, no Hall mutex, and no operation-row mutation. Corrupt/unreadable
+stored-row failures use full body, `outcome=unverified`,
+`error_category=unverified`, all four state/site fields null, no row mutation,
+locks released, and one terminal `portal.commerce.unverified` audit with
+`blog_id` null.
+
+Custom reduced authentication/authorization/validation bodies apply **only**
+when BingoCommerce callbacks are reached. Core auth, malformed JSON,
+route/method, and core argument failures keep WordPress core bodies. No
+operation row, Hall mutex, provisioning audit, or site action occurs when
+execution never reaches custom classification.
+
+**Permanent site ownership identity (`site_ownership_id`).**
+
+- BingoCommerce generates a lowercase canonical UUIDv4 and stores it in
+  `site_ownership_id`.
+- Never supplied by Portal; absent from Canonical Request v1,
+  `request_fingerprint`, REST responses, and audit context.
+- UNIQUE across provisioning-operation rows.
+- Stable across retries, unbound-slug replacement, suspend, re-enable, and
+  every later Portal command.
+- Site marker definition: `bc_commerce_managed` = `site_ownership_id`.
+  **Never** use current Portal `operation_id` as the marker.
+
+**Assignment before first platform create.** Before the first platform create
+attempt for a Hall, assign `site_ownership_id` to that Hall’s operation row
+with a guarded write and read-back verification under the Hall mutex and
+current-command fence:
+
+- If the row already has a persisted `site_ownership_id`, reuse it (same or
+  newer valid command) — do not generate another; never replace it.
+- Allocation uses exactly three lowercase UUIDv4 attempts per the
+  `UNIQUE(site_ownership_id)` rules above. After three collisions return
+  `internal_error` without invoking platform creation.
+- If assignment or read-back cannot be verified, do **not** invoke the platform
+  creation filter. Return `state_write_failed` or `unverified` according to the
+  documented distinction (`failed` when the write is known unsuccessful;
+  `unverified` when mutation may have occurred but confirmation/read-back
+  failed).
+
+**Address / durable-slug mutability contract.**
+
+Portal suggestion is UX only. BingoCommerce validates against the network,
+WordPress restrictions, existing sites, and active operation-table
+reservations, re-checking while holding the reservation.
+
+Durable `site_slug` mutability:
+
+- **Before durable site ownership exists**, a newer valid first-enable command
+  may atomically replace the reserved `site_slug` for this Hall’s operation row
+  only (for example after `address_invalid` / `address_occupied`).
+- **Durable ownership begins only when all three facts agree**, or an existing
+  valid Hall mapping has been adopted through explicitly authorized
+  recovery/backfill that also establishes a permanent `site_ownership_id`
+  (see recovery below).
+- **Once durable ownership exists**, `site_slug` is immutable.
+- Exact retries retain the same slug and the same `site_ownership_id`.
+- If an ownership-unproven orphan exists, a new slug MUST NOT silently abandon
+  or bypass it; explicit operator recovery is required.
+- Replacing an unbound reservation releases only that Hall operation’s previous
+  reservation and never alters another Hall/site/mapping.
+
+**Durable ownership (three-fact agreement).**
+
+Create and BingoCommerce witnesses are not one atomic cross-system transaction.
+Durable ownership for automatic provisioning requires **all three**:
+
+1. The Hall operation row contains `blog_id`;
+2. The same row contains `site_ownership_id`;
+3. That blog has `bc_commerce_managed` exactly equal to that
+   `site_ownership_id`.
+
+Slug equality alone remains insufficient. The current Portal `operation_id` is
+not an ownership witness.
+
+**Partial-site-creation recovery.**
+
+When an operational attempt has persisted `site_ownership_id` but `blog_id` is
+null, the platform consumer resolves the reserved address using the recoverable
+marker-matching branch defined in the filter contract (create / recover /
+`site_ownership_unproven`) **before** generic `address_occupied`. After the
+filter returns successfully, the orchestrator attaches `blog_id` with a
+current-sequence guarded write and read-back before three-fact ownership
+becomes durable, independently reads `site_url` from the verified WordPress
+site, then continues mapping/sync/readiness/state. Clear `archived` only when
+those facts hold and Portal Commerce can enforce HallCommerceGate; operational
+enable success (`applied` / `already_applied`) is confirmed **only after**
+clearing `archived=1` is itself successful and read back. Failure or
+unverifiable read-back of that clear MUST NOT return `applied` /
+`already_applied` (map to `state_write_failed` or `unverified` per the
+documented distinction). Never re-archive from an older/resumed command after
+that clearing. Ambiguous orphans → `site_ownership_unproven` + explicit
+operator recovery; never silent bind/delete or silent slug bypass.
+
+Recovery/backfill for legacy or ambiguous sites may establish a permanent
+`site_ownership_id` **only** through the separately authorized Network Super
+Admin / Platform Admin procedure. Never infer or reclaim ownership from a slug
+or from a current Portal command UUID.
+
+**Enable / cancel / suspend workflow (conceptual order).**
+
+1. WordPress core may authenticate and match the route/method, parse JSON, and
+   run any registered-argument checks before BingoCommerce callbacks. Malformed
+   JSON / core route-method / core-arg failures never reach custom handling.
+2. BingoCommerce `permission_callback` (App Password proof + capability). Custom
+   auth/authorization failures only here; no operation-row write.
+3. Endpoint callback: manual path + body validation (`validation_failed` →
+   reduced 400; no mutex; no row write; no audit).
+4. Provisioning-schema readiness check (no DDL/repair). Unready → reduced 503
+   `platform_unavailable`; no Hall mutex; no row access; no audit.
+5. Acquire the Hall provisioning mutex. Lock failure → `lock_unavailable`; no
+   row write. If snapshot sync is needed later, acquire sync lock only after
+   this mutex.
+6. Load and **validate stored operation state** before classification. Verified
+   absence or valid row continues; unreadable/corrupt/impossible row → fail
+   closed as `unverified` (full 503; release locks; one terminal unverified
+   audit; no mutation).
+7. Classify by exact precedence (a)–(e); on accepted new command, guarded
+   replace of current command columns clears `last_error_category`. Never
+   replace `site_ownership_id` or established `blog_id` on a higher sequence.
+   Revalidate mutex + fence before each irreversible/externally visible
+   mutation.
+8. Apply the exact pre-durable-ownership suspended branches from null-rule 7
+   (no-site cancel; marker-matched partial-site suspend with mapping
+   absent/exact/conflict handling and without platform filter; or
+   `site_ownership_unproven`).
+9. Before first platform create on an operational path: assign/verify
+   `site_ownership_id` (three allocation attempts) with guarded write +
+   read-back; on failure do not invoke the platform filter.
+10. For operational create/init/resume only: single platform filter invocation
+   (resolve address → create or recover partial → init, or resume init) using
+   the persisted `site_ownership_id`. Suspend commands skip this filter.
+11. Attach `blog_id` with current-sequence guarded write/read-back (handle
+   `UNIQUE(blog_id)` as `site_ownership_unproven`); verify three-fact
+   ownership; independently read `site_url`.
+12. Orchestrator: HallCommerce `provisioning`/`suspended` as required when a
+    blog exists, mapping, full-pull sync (enable path; mutex before sync lock),
+    SetupReadiness (never repair inside evaluator), clear `archived=1` with
+    successful read-back before reporting operational enable success only while
+    the current fence still owns the mutex, confirm `enforced_sequence` and
+    clear `last_error_category`, fix the terminal response snapshot, then
+    release the mutex. Terminal audit may run afterward from the immutable
+    captured outcome.
+
+Portal must ensure the snapshot credential has a Hall grant before requesting
+provisioning; payload never contains snapshot token plaintext.
+
+**Audit contract (ordinary ADR-023 AuditLog; not ADR-025 transactional).**
+
+- Storage: `{base_prefix}audit_log` only.
+- Before durable `blog_id` bind: `blog_id` key present with null.
+- After bind: that site id.
+- `actor_user_id`: Application Password provisioning account’s WordPress user
+  id (never `portal_actor_id`).
+- Allowlisted context keys only: `portal_actor_id`, `portal_hall_id`,
+  `operation_id`, `intent_sequence`, `desired_state`, `outcome`,
+  `error_category`, `effective_access`. `site_ownership_id` MUST NOT appear.
+- Allowlisted actions (terminal only — no `intent_accepted` event):
+  `portal.commerce.applied`,
+  `portal.commerce.already_applied`,
+  `portal.commerce.superseded`,
+  `portal.commerce.conflict`,
+  `portal.commerce.failed`,
+  `portal.commerce.unverified`,
+  `portal.commerce.suspended`.
+- Exact one-action mapping (keep exactly one terminal audit attempt):
+  - `desired_state=suspended` and outcome `applied` or `already_applied`
+    (including pre-bind no-site cancellation with `blog_id` null, and
+    marker-matched partial-site suspend with verified `blog_id`) →
+    `portal.commerce.suspended`;
+  - `desired_state=operational` and outcome `applied` →
+    `portal.commerce.applied`;
+  - `desired_state=operational` and outcome `already_applied` →
+    `portal.commerce.already_applied`;
+  - every other outcome maps to its matching terminal action
+    (`superseded` → `portal.commerce.superseded`, `conflict` →
+    `portal.commerce.conflict`, `failed` → `portal.commerce.failed`,
+    `unverified` → `portal.commerce.unverified`).
+- Exactly **one** terminal provisioning audit **attempt** for every
+  authenticated, valid request that reaches operation classification —
+  including `already_applied`, `superseded`, and `conflict` even when the
+  operation row is not mutated (and including foreign UNIQUE collision
+  conflict with `blog_id` null).
+- “Mandatory” means the application must attempt `AuditLog::record()`. Ordinary
+  AuditLog failure MUST NOT roll back an already-confirmed cross-system
+  provisioning result; keep the confirmed result and write one fixed generic
+  server log line with no error payload.
+- Unauthenticated requests, core pre-callback failures (auth / malformed
+  JSON / route-method / core args), pre-mutex validation failures, and
+  pre-mutex schema-unreadiness: no operation row and no provisioning audit.
+- Unreadable/corrupt stored-row failures that reach mutex acquisition: exactly
+  one terminal `portal.commerce.unverified` audit with safe request identity
+  and `blog_id` null; no raw stored values.
+- Terminal audit may run after mutex release using the immutable captured
+  outcome snapshot.
+
+**Suspend and re-enable.**
+
+Every new suspended command uses JSON-null `site_slug` / `hall_name` (before or
+after durable ownership). Suspend/re-enable are new commands only under
+precedence (e) (higher sequence + different `operation_id`). Durable
+`site_slug`, `blog_id`, and `site_ownership_id` are retained and immutable
+once established; an already-persisted `site_ownership_id` is preserved even on
+pre-bind cancellation and is never regenerated. A stale Enable must never
+resume after a newer Disable.
+
+**Before durable ownership:** follow null-rule 7 exactly — no-site
+cancellation (`blog_id`/`site_url` null), or marker-matched partial-site
+suspend (attach `blog_id`, keep `archived=1`, inspect mapping
+absent/exact/`mapping_invalid`, write suspended HallCommerceState only on the
+success path, return verified `blog_id`/`site_url`), or
+`site_ownership_unproven`. Never invoke the platform filter on these paths.
+
+**After durable ownership:** suspend skips
+`bingocommerce_platform_provision_hall_site` but MUST verify permanent site
+ownership using `site_ownership_id` (three-fact agreement) before mutating the
+bound site’s Commerce state; `platform_unavailable` MUST NOT block safe
+suspension. Suspend writes `suspended` settled; preserves
+marker/mapping/domain/site/data; does not archive/delete. Re-enable reuses the
+same site; never creates another; never regenerates `site_ownership_id`; again
+requires JSON-null `site_slug`/`hall_name`. A later higher operational command
+**before** durable ownership again requires valid non-null `site_slug` and
+`hall_name` and may replace only this Hall’s unbound reservation; after a
+marker-matched partial suspend it resumes platform initialization and clears
+`archived` only after readiness succeeds.
+
+Under the billing-neutral MVP rule, successful Portal `operational` yields
+`effective_access=allowed` only after `archived=1` clear + read-back succeeds
+when that clear is part of the enable path. After a future authoritative
+BR-016 resolver exists, Portal re-enable still cannot erase or bypass that
+billing state (`effective_access` may then be `billing_restricted` on HTTP 200
+success).
+
+**Portal-side behaviour (later Portal increment).**
+
+- One monotonic intent sequence per Hall.
+- New desired-state commands get a new lowercase UUID v4.
+- Retries reuse UUID, sequence, and canonical body values.
+- Global Admin confirms slug before first enable.
+- Store/display only BingoCommerce’s authoritative URL from a custom HTTP 200
+  success that returned non-null verified `blog_id`/`site_url`.
+- A custom non-200 response with null `blog_id`/`site_url` must never erase a
+  previously confirmed site connection.
+- Ecommerce link opens that URL; no WP login before SSO; no Portal user copy.
+- Disable shows suspended; connection retained when previously confirmed.
+- Unconfirmed responses stay pending and retryable.
+- Treat any response lacking the exact successful custom response schema as
+  non-success. Core HTTP 401 is authentication failure; core malformed-request
+  400 and route/method errors are protocol/configuration failures. None may
+  create, change, or erase a confirmed Portal connection.
+
+**Future deterministic test contract (not implemented).**
+
+Mutex/fencing: different Halls remain concurrent; the same Hall is serialized;
+a newer Disable wins over an older Enable; an older process cannot clear
+`archived` or restore operational state; loss of the mutex after a possible
+mutation returns `unverified`.
+
+REST boundary: malformed JSON returns core `rest_invalid_json` before custom
+callbacks; custom `validation_failed` covers only callback-reached invalid
+shapes; core route/method errors never create rows/audits/sites.
+
+Stored-row validation: verified absence vs valid row vs unreadable vs
+corrupt/impossible ownership invariants; corrupt rows fail closed as
+`unverified` with null state/site fields and one safe unverified audit.
+
+Partial-site suspend: marker-matched success returns verified
+`blog_id`/`site_url` while keeping `archived=1`; no mapping created on
+suspend; exact mapping preserved; conflicting mapping → `mapping_invalid`
+with site kept archived and no confirmation; no-site cancel returns nulls;
+absent/different/unreadable marker → `site_ownership_unproven`.
+
+UNIQUE paths: foreign `operation_id` collision; foreign `site_slug` collision;
+three `site_ownership_id` allocation collisions → `internal_error`;
+`UNIQUE(blog_id)` attach collision → `site_ownership_unproven`.
+
+Migration/runtime: clean install; repeated verified v2; genuine v1→v2 with
+byte-identical commerce-state preservation; failed DDL; failed verification;
+unreadable version/schema storage; version=`2` with damaged/missing schema; no
+false version advancement; no request-time DDL; schema unreadiness → reduced
+503 `platform_unavailable` before locks; no fixture residue.
+
+**Legacy halls.**
+
+Sites 1–4 and Portal Hall 2 → site 2 remain legacy/untouched. Backfill requires
+explicit Network Super Admin / Platform Admin operator action.
+
+*Rationale:* Custom responses apply only after BingoCommerce callbacks are
+reached; WordPress core owns malformed JSON and unmatched routes; stored
+operation rows must be validated before classification so corrupt state fails
+closed; marker-matched partial suspend must respect tenant-local mapping
+absence/exact/conflict; and Portal must treat any non-successful custom schema
+as non-success without erasing a confirmed connection.
+
 
 ---
 
@@ -3012,27 +4213,53 @@ delete_users.
   Platform Admin, or Super Admin permissions defined by BR-018/BR-023/BR-026,
   and it does not waive ADR-012 authentication requirements.
 
+- **BR-076 — [2026-09-12] — Automatic Portal-Controlled Commerce Enablement
+  and Suspension:**
+
+  Portal Global Admin Enable Ecommerce / Disable Ecommerce MUST automatically
+  provision, suspend, and re-enable a Hall’s BingoCommerce site under ADR-042.
+  Ordinary Portal Hall Settings authority does not grant this permission.
+  WordPress Platform Admin / Network Super Admin do not initiate automatic
+  Enable/Disable; they retain explicit legacy backfill and ownership-unproven
+  orphan recovery only. BingoCommerce owns address availability and the
+  authoritative site URL. Disable means suspend with full data preservation,
+  not delete or archive. Re-enable reuses the same site, mapping, domain, and
+  data. Until a separately reviewed BR-016 billing resolver exists,
+  `effective_access` is billing-neutral (`operational` → `allowed`;
+  `provisioning`/`suspended` → `portal_blocked`); provisioning MUST NOT invent
+  billing status. After that resolver exists, Portal re-enable still cannot
+  erase or bypass authoritative billing state (`billing_restricted` on HTTP 200
+  success must not become a failed/retryable 409). The first automatic-
+  provisioning MVP creates an empty ready store (no starter Product / Play
+  Product copy).
+  Manual Hall-scoped synchronization remains the sync model for this MVP. SSO,
+  webhooks, scheduling, and reconciliation remain later work.
+
+  Relationship to prior rules: supersedes only BR-074 / ADR-035’s requirement
+  that webhooks and reconciliation precede tenant provisioning; narrows
+  ADR-027 / BR-047 for this MVP’s empty-store scope; extends BR-075 with the
+  concrete lifecycle. ADR-035 through ADR-041 authority boundaries and v1
+  exclusions are unchanged. Implementation is authorized by ADR-042 and is
+  not claimed complete by this rule alone.
+
 
 ---
 
 ## Still Open / TBD Items (Unresolved)
 
-- Portal integration persistence and contract details deferred by ADR-035 and
-  not yet resolved by ADR-036/ADR-037/ADR-038/ADR-039: Portal API authentication
-  lifecycle;
-  other endpoint paths and payloads; webhook signing, retry, replay and
-  ordering; snapshot application/import writers; reconciliation and transitional
-  conflict policy; commerce-schedule recurrence horizon, timezone/DST and
-  regeneration rules; enablement/provisioning lifecycle; and SSO
-  protocol/account/tenant mapping. ADR-036 fixed the Hall snapshot transport URL
-  and ADR-037 froze the Hall snapshot v1 validation contract. ADR-038 freezes
-  completeness and zero-write rejection of missing linked Game Types. ADR-039
-  approves the Catalog v5 name/index and imported-code design, a narrow name-
-  validation amendment, and the allowlisted index-removal exception; all three
-  are now implemented and tested. ADR-040 authorizes and implements Phase 3E
-  snapshot application, including imported-code allocation; it is COMPLETE,
-  source-reviewed, and validated by an authenticated real Portal test against a
-  local Portal test environment.
+- Portal integration details still open after ADR-036 through ADR-042: webhook
+  signing, retry, replay and ordering; reconciliation and transitional conflict
+  policy; commerce-schedule recurrence horizon, timezone/DST and regeneration
+  rules; and SSO protocol/account/tenant mapping. ADR-036 fixed the Hall
+  snapshot transport URL. ADR-037 froze the Hall snapshot v1 validation
+  contract. ADR-038 freezes completeness and zero-write rejection of missing
+  linked Game Types. ADR-039’s Catalog v5 name/index, imported-code design,
+  name-validation amendment, and allowlisted index-removal exception are
+  implemented and tested. ADR-040’s Phase 3E snapshot application is COMPLETE.
+  ADR-041’s Phase 3G manual Hall-scoped synchronization is COMPLETE. ADR-042 /
+  BR-076 decide automatic Commerce enable/suspend provisioning; the PHP
+  endpoint, operations table, Portal button, and automatic site creation are
+  NOT implemented.
 - ADR-040 resolves the former pre-Phase 3E design work: snapshot
   replay/stale-order protection, Phase 3E transaction and locking mechanics, and
   Session-template application behavior are decided and implemented. Game Type
@@ -3042,20 +4269,13 @@ delete_users.
   Portal test environment (Portal Hall 2 -> site 2; 7 Game Types and 26 Session
   templates imported, second run a domain no-op), so Phase 3E is COMPLETE.
   The separate multi-Hall tenant-isolation proof — Phase 3F — also PASSED and is
-  COMPLETE: building on the Phase 3E automated harness (which already tested
-  multiple disposable Hall mappings and tenant isolation) and persistent real
-  mapping, Phase 3F proved two simultaneously active mappings against the real
-  local Portal endpoint. Both Halls synchronized independently, identity sets
-  never crossed, disposable resources were cleanly removed, and the harness was
-  brought to 387/387 assertions. Production deployment is not claimed. Still
-  open after ADR-040 and all future work: **Phase 3G, manual Hall-scoped
-  synchronization — the next increment, unimplemented, and manual
-  synchronization only (Hall Manager authorized for own Hall, Super Admin
-  emergency/oversight access, ordinary Hall staff denied; exact capability,
-  provisioning, and UI mechanics undecided until source inspection)**; local
-  writer restrictions after synchronization, which stay deliberately
-  transitional until reconciliation and recovery are proven; webhooks and
-  scheduling, which remain deferred and unimplemented; and reconciliation.
+  COMPLETE (387/387 assertions). Production deployment is not claimed. Phase 3G
+  is COMPLETE (ADR-041). Current next implementation work is automatic Commerce
+  enable/suspend provisioning under ADR-042 / BR-076 (decision complete;
+  implementation not started). Local writer restrictions after synchronization
+  stay deliberately transitional until reconciliation and recovery are proven.
+  Webhooks, scheduling, and reconciliation remain deferred and unimplemented.
+  SSO remains later.
 - Schema-specific compatibility/refactoring review for the implemented local
   Game Type and Session models. The review must not assume either domain or the
   existing Session tables are deleted or replaced.
