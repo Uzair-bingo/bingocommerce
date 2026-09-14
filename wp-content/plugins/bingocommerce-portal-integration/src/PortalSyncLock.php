@@ -58,6 +58,18 @@ final class PortalSyncLock {
 	public const REENTRANT = 'portal_sync_lock_reentrant';
 
 	/**
+	 * Does this PHP request currently hold any synchronization lock?
+	 *
+	 * Read-only, and added for ADR-042's lock-ordering rule: provisioning must
+	 * acquire its Hall provisioning mutex FIRST and this sync lock SECOND.
+	 * ProvisioningMutex enforces that by refusing to acquire while a sync lock
+	 * is held, which needs this question answered without exposing lock names.
+	 */
+	public static function hasAnyHeld(): bool {
+		return [] !== self::$held_names;
+	}
+
+	/**
 	 * The ONLY message any release failure logs.
 	 *
 	 * One fixed string on every branch, so a lock name, a connection id, an SQL

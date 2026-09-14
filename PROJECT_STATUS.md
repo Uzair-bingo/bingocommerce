@@ -1942,6 +1942,90 @@
   migrations, endpoints, Portal buttons, automatic site creation, BR-016
   billing, or SSO. Commerce-state persistence, SetupReadiness, and access
   enforcement remain the implemented foundations.
+- **[2026-09-13] ADR-042 provisioning persistence foundation — IMPLEMENTED
+  (persistence primitives only).** `ProvisioningMigrations` advances
+  `bc_portal_provisioning_db_version` from 1 to 2 and creates the network
+  `{base_prefix}bingo_portal_provisioning_operations` table (InnoDB,
+  `$wpdb->get_charset_collate()`, `ascii_bin` identity columns, PRIMARY KEY on
+  `portal_hall_id` plus UNIQUE on `operation_id`, `site_ownership_id`,
+  `blog_id` and `site_slug`). A genuine v1 -> v2 upgrade issues no statement at
+  the commerce-state table, because the state DDL runs only when the state
+  schema does not already verify; measured in the harness against a populated
+  v1 table whose rows and checksum are unchanged afterwards. `is_ready()` is
+  the runtime gate: it performs no DDL and no repair, requires structural
+  verification rather than the recorded version, and caches only a verified
+  positive result for the life of one request. A failed or unreadable version,
+  DDL or verification never advances the version.
+  - `ProvisioningCanonicalRequest` validates the closed seven-field command in
+    its original representation before any cast, shift, hash, SQL or
+    persistence, and produces the eight newline-terminated typed records with
+    exact UTF-8 byte-length prefixes and lowercase SHA-256. JSON null (`n:name`)
+    cannot collide with any string (`s:name:<len>:<bytes>`), including the
+    literal characters `null`.
+  - `ProvisioningOperationRepository` is the one-row-per-Hall ledger. It keeps
+    verified absence, verified-valid row, unreadable read and corrupt row
+    apart, revalidates and re-fingerprints every stored row before
+    classification, and implements precedence (a)-(e) with current-UUID
+    conflict ahead of lower-sequence superseded. `require_canonical()` enforces
+    the ADR lifecycle shape (suspend => both request fields null; operational
+    => both null or both non-null); `insert_first_command()` additionally
+    refuses an operational first command unless both fields are non-null;
+    `validate_stored_row()` refuses the corresponding impossible stored rows
+    and never casts integer textual fields into strings. Concurrency is
+    resolved in the database: the first command is a plain INSERT decided by
+    the PRIMARY KEY, every later mutation is a single conditional UPDATE
+    carrying the Hall, `operation_id` and `intent_sequence` fence, and there
+    is no SELECT-then-INSERT. After every attempted write in
+    `insert_first_command()`, `replace_command()`, `replace_unbound_slug()`,
+    `write_error_category()`, `confirm_enforced_sequence()`,
+    `assign_site_ownership_id()` and `attach_blog_id()`, an authoritative
+    read-back — never an affected-row count — decides the result.
+    `replace_command()` itself re-validates and re-classifies before writing
+    and mutates only for a different UUID with a strictly higher sequence.
+    `replace_unbound_slug()` and a null `assign_site_ownership_id()` operate
+    only on the current operational command. A null `site_ownership_id` is
+    allocated only while that command is operational, both request fields are
+    non-null, and the durable `site_slug` exactly equals `request_site_slug`.
+    After `execute()` in `replace_unbound_slug()`, `assign_site_ownership_id()`,
+    `attach_blog_id()`, `write_error_category()` and
+    `confirm_enforced_sequence()`, a failed, unreadable, absent or superseded
+    read-back is `unverified`, never `lock_unavailable`. A fence miss before
+    those methods write remains `lock_unavailable`. `site_ownership_id` allocation
+    spends one of its three UUIDv4 attempts only when a COUNT-only probe
+    positively proves a foreign holder of that exact candidate. A preflight
+    occupied address is `address_occupied`; an atomic `UNIQUE(site_slug)`
+    refusal is `conflict`. Errors are a fixed closed set and disclose no SQL,
+    table name, driver text, stored payload, candidate UUID or foreign Hall
+    identity.
+  - `ProvisioningMutex` is one advisory lock per `portal_hall_id` — never
+    global — on a name space distinct from `PortalSyncLock`'s, refuses
+    acquisition while a sync lock is already held (ADR-042 lock order),
+    contains every Throwable from `acquire()` and `isStillHeld()`, locally
+    suppresses wpdb SQL/driver diagnostics around every lock probe and restores
+    the previous display flags afterwards, and clears the request-local
+    reservation only when the server proves the lock was not acquired,
+    `RELEASE_LOCK` proves release, or a valid changed connection identity
+    proves the acquiring session is gone.
+  - Measured: the focused harness `tests/portal-provisioning-foundation.php`
+    passes **551/551 assertions** on two consecutive runs with identical
+    totals; `tests/hall-commerce-state.php` passes **254/254**. Regression:
+    Hall Commerce access **833/833**, installed handler integration
+    **361/361**, Phase 3E snapshot application **387/387**, Phase 3G Portal
+    sync admin **467 passing assertions**, SetupReadiness **199/199**.
+    Same-Hall/different-Hall mutex contention and two-process first-writer
+    races through `insert_first_command()` are proven by worker processes with
+    pipe/barrier coordination, not by sleep timing.
+  - The persistent development database was proven unchanged before and after:
+    no provisioning version option, no provisioning tables, sites 1-4, Hall
+    mapping 2 -> 2, and all Catalog/Session table checksums byte-identical, and
+    `wp-config.php` unchanged by SHA-256.
+  - Still **NOT implemented**: the REST route and Application Password
+    controller, the platform provisioning filter, WordPress site creation or
+    initialization, Hall mapping mutation, Portal snapshot synchronization from
+    a provisioning command, HallCommerceState writes on this path, the Portal
+    Enable/Disable Ecommerce UI, SSO, webhooks, scheduling and reconciliation.
+    Nothing loads on a request trigger, so no request behaviour changed and
+    automatic provisioning still cannot occur.
 - No Hall Staff Management work currently in progress.
 - No other Catalog or Session implementation work is in progress. Package
   Increment 1 and Session Increment 1 remain COMPLETE and are recorded under
@@ -1971,11 +2055,13 @@
    **Phase 3G — manual Hall-scoped synchronization — is COMPLETE** (ADR-041):
    source review passed; after fixture isolation (`7f3e332`) the local harness
    reports **467 passing assertions**; the practical browser test PASSED.
-   Commerce-state persistence (**252/252**), SetupReadiness (**199/199**), and
+   Commerce-state persistence (**254/254**), SetupReadiness (**199/199**), and
    Hall Commerce access enforcement (**833/833**; handlers **361/361**) are
    implemented foundations.
    **ADR-042 / BR-076 decide automatic Commerce enable/suspend provisioning —
-   documentation complete; PHP/endpoint/table/Portal button NOT implemented.**
+   documentation complete; the persistence foundation is implemented
+   (551/551); REST/site creation/platform filter/Portal button remain
+   unimplemented.**
    **Production deployment is NOT claimed. Scheduling and webhooks do not
    exist.** Local writer restrictions and reconciliation remain deferred.
    Commerce selection remains separate and is not implemented.
@@ -2096,15 +2182,18 @@ Everything below is tracked work that is NOT a blocker to that demo.
   §"Catalog lock-order review" is accurate as written. ADR-033 locks
   `bingo_packages` then `bingo_play_products` ascending, and locks no component
   rows at all.
-- Latest verified results **[2026-09-12, ADR-042 documentation + current
-  measured harness status]**: Portal Sync Admin **467 passing assertions**
-  (after fixture isolation `7f3e332`; historical 107 stop and earlier 411
-  landing figure are not current). Hall Commerce access enforcement
+- Latest verified results **[2026-09-13, ADR-042 documentation + provisioning
+  persistence foundation + current measured harness status]**: Portal Sync Admin
+  **467 passing assertions** (after fixture isolation `7f3e332`; historical 107
+  stop and earlier 411 landing figure are not current). ADR-042 provisioning
+  persistence foundation **551/551 PASS** (two consecutive runs with identical
+  totals). Hall Commerce access enforcement
   **833/833 PASS**; installed payment/runner handler integration **361/361
-  PASS**; Commerce state persistence **252/252 PASS**; SetupReadiness
+  PASS**; Commerce state persistence **254/254 PASS**; SetupReadiness
   **199/199 PASS**; Phase 3E Portal snapshot application **387/387 PASS**.
-  Automatic provisioning endpoint/table/Portal button remain unimplemented.
-  Production deployment is NOT claimed.
+  The provisioning REST endpoint, platform filter, site creation and Portal
+  Enable/Disable button remain unimplemented; only the persistence primitives
+  exist. Production deployment is NOT claimed.
 - Latest verified results **[2026-09-09, Phase 3G gate — historical landing]**:
   Phase 3G practical browser test **PASSED** (3 clicks -> 3 correctly
   attributed audit events, 0 on refresh); Phase 3G Portal sync admin landed at
@@ -2190,16 +2279,21 @@ Everything below is tracked work that is NOT a blocker to that demo.
   synchronization only, with no REST route, cron event, scheduler or webhook
   for sync. SetupReadiness is implemented (**199/199 PASS**). ADR-042 / BR-076
   decide automatic Commerce enable/suspend provisioning; the provisioning
-  operations table, machine endpoint, Portal Enable/Disable button, and
-  automatic site creation are **NOT implemented**. SSO does not exist.
+  persistence primitives now exist in code (`ProvisioningCanonicalRequest`,
+  `ProvisioningOperationRepository`, `ProvisioningMutex`, and the v2 migration),
+  while the machine endpoint, platform provisioning filter, Portal
+  Enable/Disable button, and automatic site creation are **NOT implemented**.
+  SSO does not exist.
   **The plugin is now network-active on this local environment**, and the ADR-036
   Portal constants are configured in the git-ignored `wp-config.php` for ongoing
   manual synchronization; both are local test-environment state, not a
   deployment. The plugin also carries `ProvisioningMigrations` and
   `HallCommerceState` (Commerce-state persistence, migration NOT applied here;
-  DB version remains 1 — the ADR-042 operations-table migration 1 -> 2 is not
-  implemented) and `HallCommerceAccess` / `HallCommerceGate` (Commerce access
-  enforcement). The gate IS registered on `plugins_loaded`; every development
+  `ProvisioningMigrations::DB_VERSION` is now **2**, carrying the ADR-042
+  operations table, but no migration has been run against this database, so the
+  recorded `bc_portal_provisioning_db_version` option is still absent and
+  neither provisioning table exists here) and `HallCommerceAccess` /
+  `HallCommerceGate` (Commerce access enforcement). The gate IS registered on `plugins_loaded`; every development
   Hall is a legacy Hall (no state table, no `bc_portal_provisioning_db_version`,
   no `bc_commerce_managed`), so it allows every one of them
 - **Catalog schema:** per-site `bc_catalog_db_version` = **5**

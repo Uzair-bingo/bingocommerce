@@ -35,6 +35,13 @@ require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/SetupReadiness.php';
 // apply the schema, and HallCommerceState changes no request's behaviour.
 require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/ProvisioningMigrations.php';
 require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/HallCommerceState.php';
+// ADR-042 provisioning persistence foundation. Definitions only: there is no
+// REST route, no platform provisioning filter, no site creation, no Hall-mapping
+// mutation and no automatic trigger, so loading these files cannot provision
+// anything or change any request's behaviour.
+require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/ProvisioningCanonicalRequest.php';
+require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/ProvisioningMutex.php';
+require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/ProvisioningOperationRepository.php';
 // Commerce access enforcement. HallCommerceAccess reads only; HallCommerceGate
 // refuses requests to a blocked Hall and is registered by Plugin::boot() at the
 // earliest boundary where the current user can be resolved.

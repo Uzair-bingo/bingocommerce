@@ -308,19 +308,35 @@ final class HallCommerceAccess {
 	 * @return string One of MARKER_VALID, MARKER_INVALID, MARKER_ABSENT, MARKER_UNREADABLE.
 	 */
 	public static function read_marker( $blog_id ): string {
+		return self::read_marker_value( $blog_id )['status'];
+	}
+
+	/**
+	 * The same witness read, keeping the stored value for callers that need it.
+	 *
+	 * ADR-042's durable ownership requires comparing the witness against the
+	 * operation row's permanent `site_ownership_id`, which a classification
+	 * alone cannot answer. The value is returned ONLY for a valid witness; an
+	 * invalid, absent or unreadable one yields null, so no unvalidated stored
+	 * text can escape this method.
+	 *
+	 * @param mixed $blog_id
+	 * @return array{status:string,value:?string}
+	 */
+	public static function read_marker_value( $blog_id ): array {
 		if ( ! is_int( $blog_id ) || $blog_id < 1 ) {
-			return self::MARKER_UNREADABLE;
+			return self::marker_result( self::MARKER_UNREADABLE );
 		}
 
 		global $wpdb;
 
 		if ( ! $wpdb instanceof \wpdb ) {
-			return self::MARKER_UNREADABLE;
+			return self::marker_result( self::MARKER_UNREADABLE );
 		}
 
 		$table = $wpdb->get_blog_prefix( $blog_id ) . 'options';
 		if ( 1 !== preg_match( '/^[A-Za-z0-9_]+$/', $table ) ) {
-			return self::MARKER_UNREADABLE;
+			return self::marker_result( self::MARKER_UNREADABLE );
 		}
 
 		$previous = $wpdb->suppress_errors( true );
@@ -340,7 +356,7 @@ final class HallCommerceAccess {
 		} catch ( \Throwable $throwable ) {
 			unset( $throwable );
 
-			return self::MARKER_UNREADABLE;
+			return self::marker_result( self::MARKER_UNREADABLE );
 		} finally {
 			// Restored on every path, including a throw, so one witness read
 			// cannot alter error reporting for the rest of the request.
@@ -350,13 +366,20 @@ final class HallCommerceAccess {
 		if ( '' !== $error ) {
 			// A missing options table lands here too: the Hall could not be
 			// asked, which is not the same as answering "no".
-			return self::MARKER_UNREADABLE;
+			return self::marker_result( self::MARKER_UNREADABLE );
 		}
 		if ( ! is_array( $row ) || ! array_key_exists( 'option_value', $row ) ) {
-			return self::MARKER_ABSENT;
+			return self::marker_result( self::MARKER_ABSENT );
 		}
 
-		return self::is_valid_marker( $row['option_value'] ) ? self::MARKER_VALID : self::MARKER_INVALID;
+		return self::is_valid_marker( $row['option_value'] )
+			? self::marker_result( self::MARKER_VALID, (string) $row['option_value'] )
+			: self::marker_result( self::MARKER_INVALID );
+	}
+
+	/** @return array{status:string,value:?string} */
+	private static function marker_result( string $status, ?string $value = null ): array {
+		return [ 'status' => $status, 'value' => $value ];
 	}
 
 	/**

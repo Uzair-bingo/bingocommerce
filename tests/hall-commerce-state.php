@@ -253,11 +253,13 @@ final class HallCommerceStateTest {
 	private const OP_DROP_STATE_TABLE     = 'drop_state_table';
 	private const OP_DELETE_STATE_ROWS    = 'delete_state_rows';
 	private const OP_DELETE_VERSION       = 'delete_version_option';
+	private const OP_DROP_OPERATIONS      = 'drop_operations_table';
 
 	private const PERMITTED_OPERATIONS = [
 		self::OP_DROP_STATE_TABLE,
 		self::OP_DELETE_STATE_ROWS,
 		self::OP_DELETE_VERSION,
+		self::OP_DROP_OPERATIONS,
 	];
 
 	/**
@@ -311,6 +313,17 @@ final class HallCommerceStateTest {
 				// fixture-owned state and deleting it in the wrong database would
 				// disable a real installation's schema registration.
 				$result = delete_site_option( ProvisioningMigrations::VERSION_OPTION ) ? 1 : 0;
+				break;
+
+			case self::OP_DROP_OPERATIONS:
+				// The v2 migration creates the ADR-042 operations table alongside
+				// the state table, so this suite must remove it too or the next
+				// run inherits a table it did not create.
+				$operations = ProvisioningMigrations::operations_table();
+				if ( $operations !== $wpdb->base_prefix . ProvisioningMigrations::OPERATIONS_TABLE ) {
+					return $refuse( 'the operations table name did not resolve as expected' );
+				}
+				$result = $wpdb->query( 'DROP TABLE IF EXISTS `' . $operations . '`' );
 				break;
 
 			default:
@@ -367,6 +380,13 @@ final class HallCommerceStateTest {
 			$this->assert_true(
 				null === $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $wpdb->esc_like( $table ) ) ),
 				'teardown removed the state table'
+			);
+
+			$operations = ProvisioningMigrations::operations_table();
+			$this->fixture_operation( self::OP_DROP_OPERATIONS );
+			$this->assert_true(
+				null === $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $wpdb->esc_like( $operations ) ) ),
+				'teardown removed the provisioning operations table'
 			);
 		}
 
