@@ -371,8 +371,21 @@ final class PortalSnapshotTransactionTransport {
 		if ( (int) $site['blog_id'] === $plan->main_site_id ) {
 			return self::error( self::MAPPING_CHANGED, 'The mapped WordPress site is the main network site.' );
 		}
-		if ( 0 !== (int) $site['archived'] || 0 !== (int) $site['deleted'] || 0 !== (int) $site['spam'] ) {
-			return self::error( self::MAPPING_CHANGED, 'The mapped WordPress site is archived, deleted, or flagged as spam.' );
+		if ( 0 !== (int) $site['deleted'] || 0 !== (int) $site['spam'] ) {
+			return self::error( self::MAPPING_CHANGED, 'The mapped WordPress site is deleted or flagged as spam.' );
+		}
+		if ( 0 !== (int) $site['archived'] && ! $plan->allow_archived_site ) {
+			/*
+			 * ARCHIVED IS THE ONE FACT A PROVISIONING PLAN MAY WAIVE, and only
+			 * because ADR-042 requires the enable path to synchronize BEFORE it
+			 * clears `archived`: the site is quarantined on purpose until
+			 * mapping, this synchronization, readiness and operational state have
+			 * all succeeded. The permission travels on the plan, which
+			 * PortalSnapshotApplicationPlan::forProvisioning() issues only
+			 * against a held Hall provisioning mutex, so an ordinary
+			 * synchronization still refuses an archived site exactly as before.
+			 */
+			return self::error( self::MAPPING_CHANGED, 'The mapped WordPress site is archived.' );
 		}
 
 		return $mapping;

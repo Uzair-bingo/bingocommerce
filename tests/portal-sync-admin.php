@@ -106,7 +106,20 @@ set_error_handler(
 );
 
 try {
-	require dirname( __DIR__ ) . '/wp-load.php';
+	/*
+	 * This suite asserts on the Hall Manager role's NATIVE baseline, which
+	 * Roles::sync_hall_manager() copies from the LIVE WooCommerce Shop Manager
+	 * role. WooCommerce is network-active on the development installation, so in
+	 * fixture mode it has to be asked for explicitly — otherwise the baseline is
+	 * absent, the versioned role sync correctly refuses to record itself as
+	 * complete, and the suite would be measuring the fixture rather than the
+	 * code. Ignored entirely outside fixture mode.
+	 */
+	if ( '' !== (string) getenv( 'BC_TEST_DB' ) && '' === (string) getenv( 'BC_FIXTURE_WOOCOMMERCE' ) ) {
+		putenv( 'BC_FIXTURE_WOOCOMMERCE=1' );
+	}
+
+	require __DIR__ . '/fixtures/wordpress-bootstrap.php';
 } finally {
 	restore_error_handler();
 }
@@ -175,6 +188,9 @@ final class PortalSyncAdminTest {
 	/** @var array<int,array{id:int,blog_id:int,action:string}> */
 	private array $audit_ids_removed = [];
 
+	/** Highest WooCommerce session id present before this run created any. */
+	private int $wc_session_high_water = 0;
+
 	private int $assertions = 0;
 	private int $super_admin_id = 0;
 	private int $audit_high_water = 0;
@@ -190,6 +206,16 @@ final class PortalSyncAdminTest {
 
 		$this->persistent_snapshot = $this->snapshot_domain_tables( self::PERSISTENT_SITES );
 		$this->audit_high_water    = $this->max_audit_id();
+
+		/*
+		 * WOOCOMMERCE'S OWN GUEST SESSIONS ARE RESIDUE TOO. This suite now opts
+		 * into WooCommerce in fixture mode, and WC_Session_Handler writes a row
+		 * to the network MAIN site's `woocommerce_sessions` table when it
+		 * initialises. Nothing here asks for that and nothing else removes it,
+		 * so the high-water mark is recorded before the first mutating group and
+		 * cleanup() removes exactly the rows created above it.
+		 */
+		$this->wc_session_high_water = $this->wc_session_max_id();
 
 		try {
 			$this->capability_model_group();
@@ -1336,6 +1362,8 @@ final class PortalSyncAdminTest {
 			restore_current_blog();
 		}
 
+		$this->remove_wc_session_residue();
+
 		foreach ( array_keys( $this->bound_mappings ) as $portal_hall_id ) {
 			$portal_hall_id = (int) $portal_hall_id;
 			if ( $portal_hall_id < 970101 || $portal_hall_id > 970199 ) {
@@ -1665,6 +1693,67 @@ final class PortalSyncAdminTest {
 	 * @param mixed $expected
 	 * @param mixed $actual
 	 */
+	/** The main site's WooCommerce session table, or '' when it does not exist. */
+	private function wc_session_table(): string {
+		global $wpdb;
+
+		$table = $wpdb->base_prefix . 'woocommerce_sessions';
+		if ( 1 !== preg_match( '/^[A-Za-z0-9_]+$/', $table ) ) {
+			return '';
+		}
+
+		$found = (string) $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $wpdb->esc_like( $table ) ) );
+
+		return $found === $table ? $table : '';
+	}
+
+	private function wc_session_max_id(): int {
+		global $wpdb;
+
+		$table = $this->wc_session_table();
+
+		return '' === $table ? 0 : (int) $wpdb->get_var( "SELECT COALESCE(MAX(session_id), 0) FROM `{$table}`" );
+	}
+
+	/**
+	 * Remove ONLY the WooCommerce guest sessions this run caused.
+	 *
+	 * Bounded by the high-water mark taken before the first mutating group, so a
+	 * row that was already in the fixture is never touched. A second sweep runs
+	 * last on `shutdown`, because WC_Session_Handler saves at priority 20 —
+	 * after every assertion this harness can make — and would otherwise write a
+	 * session back once the first sweep had already passed.
+	 */
+	private function remove_wc_session_residue(): void {
+		global $wpdb;
+
+		$table = $this->wc_session_table();
+		if ( '' === $table ) {
+			return;
+		}
+
+		$wpdb->query( $wpdb->prepare( "DELETE FROM `{$table}` WHERE session_id > %d", $this->wc_session_high_water ) );
+
+		$this->assert_same(
+			$this->wc_session_high_water,
+			$this->wc_session_max_id(),
+			'the WooCommerce guest sessions this run created were removed'
+		);
+
+		$high_water = $this->wc_session_high_water;
+		add_action(
+			'shutdown',
+			static function () use ( $table, $high_water ): void {
+				global $wpdb;
+
+				if ( $wpdb instanceof wpdb ) {
+					$wpdb->query( $wpdb->prepare( "DELETE FROM `{$table}` WHERE session_id > %d", $high_water ) );
+				}
+			},
+			PHP_INT_MAX
+		);
+	}
+
 	private function assert_same( $expected, $actual, string $message ): void {
 		++$this->assertions;
 		if ( $expected !== $actual ) {

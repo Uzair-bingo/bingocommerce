@@ -51,8 +51,29 @@ if ( ! $bc_fixture_sapi_allowed ) {
 }
 unset( $bc_fixture_sapi_allowed );
 
-/** Databases this fixture may create, own, write and drop tables in. */
-const BC_FIXTURE_DB_ALLOWLIST = [ 'bingocommerce_state_test', 'bingocommerce_state_test_scratch' ];
+/**
+ * Databases this fixture may create, own, write and drop tables in.
+ *
+ * Three names, with different jobs, so no suite has to run before or after
+ * another:
+ *
+ *   - `bingocommerce_state_test` — the general fixture.
+ *   - `bingocommerce_state_test_scratch` — reserved for the ownership CONTROLS
+ *     in tests/hall-commerce-state.php, which prove the fixture refuses a
+ *     database it does not own. Those controls require the name to be ABSENT
+ *     when they run, so nothing else may leave a database there.
+ *   - `bingocommerce_state_test_suites` — for the suites that boot through
+ *     tests/fixtures/wordpress-bootstrap.php. They need a different fixture
+ *     SHAPE (four legacy halls, each initialized and role-provisioned, to match
+ *     the development installation they were written against), which would
+ *     otherwise collide with the bare seeded halls the other harnesses create
+ *     and drop themselves.
+ */
+const BC_FIXTURE_DB_ALLOWLIST = [
+	'bingocommerce_state_test',
+	'bingocommerce_state_test_scratch',
+	'bingocommerce_state_test_suites',
+];
 
 /** Sentinel table and the exact identity this fixture claims. */
 const BC_FIXTURE_SENTINEL_TABLE = 'bc_fixture_sentinel';
@@ -76,8 +97,11 @@ final class BC_Fixture {
 
 	/** Tables whose STRUCTURE the fixture mirrors from the development schema. */
 	private const STRUCTURE = [
-		// Network-global.
-		'site', 'sitemeta', 'blogs', 'blogmeta', 'users', 'usermeta',
+		// Network-global. `registration_log` is included because WordPress writes
+		// to it from `wp_initialize_site` on EVERY site creation
+		// (wpmu_log_new_registrations), so a fixture that exercises provisioning
+		// needs it to exist rather than to log a database error per site.
+		'site', 'sitemeta', 'blogs', 'blogmeta', 'users', 'usermeta', 'registration_log',
 		// Per-blog set for the fixture's main site. is_blog_installed() verifies
 		// the full set exists, so a partial copy makes WordPress refuse to boot.
 		'options', 'posts', 'postmeta', 'comments', 'commentmeta',
@@ -534,11 +558,32 @@ final class BC_Fixture {
 
 		define( 'WP_ALLOW_MULTISITE', true );
 		define( 'MULTISITE', true );
-		define( 'SUBDOMAIN_INSTALL', true );
-		define( 'DOMAIN_CURRENT_SITE', BC_FIXTURE_DOMAIN );
-		define( 'PATH_CURRENT_SITE', '/' );
-		define( 'SITE_ID_CURRENT_SITE', 1 );
-		define( 'BLOG_ID_CURRENT_SITE', 1 );
+
+		/*
+		 * NETWORK TOPOLOGY: DEFAULTS ONLY, for the same reason as the $_SERVER
+		 * values above. A caller that has already described the network it wants
+		 * to simulate keeps its own definition, so a worker can boot this fixture
+		 * as a SUBDIRECTORY network and exercise the address rules that only
+		 * exist there. Defining these unconditionally would emit a redefinition
+		 * warning and silently keep the first value anyway, which is a worse
+		 * version of the same behaviour.
+		 *
+		 * The default is unchanged: subdomain, matching ADR-001 and the
+		 * development installation.
+		 */
+		foreach (
+			[
+				'SUBDOMAIN_INSTALL'    => true,
+				'DOMAIN_CURRENT_SITE'  => BC_FIXTURE_DOMAIN,
+				'PATH_CURRENT_SITE'    => '/',
+				'SITE_ID_CURRENT_SITE' => 1,
+				'BLOG_ID_CURRENT_SITE' => 1,
+			] as $constant => $value
+		) {
+			if ( ! defined( $constant ) ) {
+				define( $constant, $value );
+			}
+		}
 
 		// No outbound HTTP from this process, established before any plugin can
 		// run. WP_ACCESSIBLE_HOSTS is deliberately left empty: nothing is allowed.

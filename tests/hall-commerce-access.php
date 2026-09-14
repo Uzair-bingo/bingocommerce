@@ -222,12 +222,25 @@ final class HallCommerceAccessTest {
 	private const OP_DELETE_MARKER       = 'delete_marker';
 	private const OP_INSERT_RAW_STATE    = 'insert_raw_state';
 	private const OP_DROP_MAPPING_TABLE  = 'drop_mapping_table';
+
+	/**
+	 * The ADR-042 provisioning-operations table.
+	 *
+	 * `ProvisioningMigrations::migrate()` installs the whole v2 schema, which is
+	 * BOTH the commerce-state table and this one, so a run that migrates owns
+	 * both and must remove both. Without this the operations table survives the
+	 * run and the next harness to start — `portal-provisioning-foundation.php`,
+	 * which correctly refuses to adopt a schema it did not create — aborts,
+	 * making the suite order-dependent.
+	 */
+	private const OP_DROP_OPERATIONS_TABLE = 'drop_operations_table';
 	private const OP_DELETE_MAPPING_VERSION = 'delete_mapping_version';
 	private const OP_DELETE_FIXTURE_USER = 'delete_fixture_user';
 	private const OP_SET_PERMALINKS      = 'set_permalink_structure';
 
 	private const PERMITTED_OPERATIONS = [
 		self::OP_DROP_STATE_TABLE,
+		self::OP_DROP_OPERATIONS_TABLE,
 		self::OP_DELETE_STATE_ROWS,
 		self::OP_DELETE_VERSION,
 		self::OP_CREATE_HALL_OPTIONS,
@@ -297,6 +310,14 @@ final class HallCommerceAccessTest {
 
 			case self::OP_DELETE_STATE_ROWS:
 				$result = $wpdb->query( 'DELETE FROM `' . $state_table . '`' );
+				break;
+
+			case self::OP_DROP_OPERATIONS_TABLE:
+				$operations = ProvisioningMigrations::operations_table();
+				if ( $operations !== $wpdb->base_prefix . ProvisioningMigrations::OPERATIONS_TABLE ) {
+					return $refuse( 'the operations table name did not resolve as expected' );
+				}
+				$result = $wpdb->query( 'DROP TABLE IF EXISTS `' . $operations . '`' );
 				break;
 
 			case self::OP_DELETE_VERSION:
@@ -2920,6 +2941,9 @@ final class HallCommerceAccessTest {
 
 		if ( $this->owns_state_table ) {
 			$this->fixture_operation( self::OP_DROP_STATE_TABLE );
+			// The v2 migration installs BOTH tables, so a run that owns one owns
+			// the other; the version goes with them.
+			$this->fixture_operation( self::OP_DROP_OPERATIONS_TABLE );
 			$this->fixture_operation( self::OP_DELETE_VERSION );
 		}
 		if ( $this->owns_mapping_table ) {
@@ -2946,6 +2970,9 @@ final class HallCommerceAccessTest {
 		$leftovers = [];
 		if ( $this->table_exists( ProvisioningMigrations::state_table() ) ) {
 			$leftovers[] = 'state table';
+		}
+		if ( $this->table_exists( ProvisioningMigrations::operations_table() ) ) {
+			$leftovers[] = 'provisioning operations table';
 		}
 		if ( $this->table_exists( Migrations::hall_mappings_table() ) ) {
 			$leftovers[] = 'mapping table';

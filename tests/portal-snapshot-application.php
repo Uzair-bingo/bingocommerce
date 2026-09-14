@@ -28,7 +28,7 @@ $_SERVER['REQUEST_URI']    = '/';
 $_SERVER['REQUEST_METHOD'] = 'GET';
 $_SERVER['REMOTE_ADDR']    = '127.0.0.1';
 
-require dirname( __DIR__ ) . '/wp-load.php';
+require __DIR__ . '/fixtures/wordpress-bootstrap.php';
 require_once ABSPATH . 'wp-admin/includes/ms.php';
 
 if ( ! class_exists( '\BingoCommerce\Catalog\Migrations' ) ) {

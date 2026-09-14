@@ -2026,6 +2026,261 @@
     Enable/Disable Ecommerce UI, SSO, webhooks, scheduling and reconciliation.
     Nothing loads on a request trigger, so no request behaviour changed and
     automatic provisioning still cannot occur.
+- **[2026-09-13] ADR-042 / BR-076 — BingoCommerce-side machine provisioning
+  path — IMPLEMENTED.** The authenticated REST endpoint, the ADR-042
+  orchestration state machine, the `bingocommerce-platform` plugin and its
+  single provisioning filter, Hall mapping coordination, the trusted
+  provisioning Portal full pull, SetupReadiness gating, HallCommerceState
+  writes, `archived` clearing with read-back, `enforced_sequence` confirmation,
+  the exact response matrix and the terminal audit all exist in code and are
+  exercised end to end through real `WP_REST_Server` dispatch.
+  - **New plugin `bingocommerce-platform`** (network-only). It owns actual
+    WordPress Multisite site creation and platform-owned site/WooCommerce
+    initialization and nothing else: `HallSiteAddress` (read-only network
+    topology resolution), `HallSiteAdminUser`
+    (`BINGOCOMMERCE_HALL_SITE_ADMIN_USER_ID` validation),
+    `HallSiteCommand` (defensive command validation) and `HallSiteProvisioner`
+    (the one `bingocommerce_platform_provision_hall_site` consumer). A new site
+    is created `archived = 1` FROM INSERTION, and `bc_commerce_managed` is set to
+    the permanent `site_ownership_id` DURING INITIALIZATION — the site row is
+    inserted first and the marker is supplied as an initial site option, so it is
+    not present from the row's first moment and a crash in between leaves an
+    archived, unmarked, ownership-unproven orphan for operator recovery. `public`
+    is left at the `wpmu_create_blog()` default, and the configured recovery
+    Super Admin — not the machine account — is its administrator. No starter WooCommerce Product
+    and no starter Bingo Play Product is copied.
+  - **REST**: exactly one handler on
+    `PUT /wp-json/bingocommerce/v1/portal-halls/{portal_hall_id}/commerce`,
+    PUT only, with no registered REST `args`. `permission_callback` requires all
+    three of a request-scoped Application Password UUID, a recorded `WP_User`
+    status equal to `get_current_user_id()`, and
+    `bc_receive_portal_provisioning` — a capability this plugin grants to no
+    role. Malformed JSON, unmatched routes, wrong methods and core
+    registered-argument failures keep WordPress core's own bodies; the custom
+    reduced 401/403 conversion is scoped to this route, this handler callback
+    and this controller's own private marker.
+  - **Source-review correction pass [2026-09-14].** Eleven defects found by
+    review were corrected before this increment was accepted:
+    - `portal_hall_id` now comes from `WP_REST_Request::get_url_params()`.
+      `get_param()` resolves JSON, then POST, then GET and only then URL, so
+      `PUT /portal-halls/5/commerce?portal_hall_id=9` would have locked,
+      classified and mutated Hall 9.
+    - A Network Super Admin with valid Application Password proof is now
+      refused with HTTP 403 BEFORE classification. `WP_User::has_cap()` answers
+      true for every capability when `is_super_admin()` is true, so the
+      capability check never kept one out; every comment claiming a Super Admin
+      "does not carry" the capability was corrected.
+    - The `rest_request_after_callbacks` conversion now also requires the exact
+      ADR-042 route pattern, so a route registered against these public
+      callbacks keeps WordPress core's error shape.
+    - The reserved-address probe is a prepared read against `$wpdb->blogs`
+      keeping verified absence, one valid site, corrupt and unreadable apart.
+      `get_sites()`, `WP_Site_Query` and `domain_exists()` are all filterable
+      and cached, and an ownership identity is permanent.
+    - Mapping inspection returns exact / absent / conflict / unreadable rather
+      than overloading null; a mapping is created only from verified absence.
+    - `already_applied` re-proves every enforced fact including SetupReadiness.
+    - Currentness-failure normalisation is centralised; the mutex and fence are
+      re-proven after the platform filter BEFORE its result is interpreted; and
+      `lock_unavailable` is ruled out at the single response exit point once a
+      mutation may have occurred.
+    - The platform consumer validates network, address, main-site, deleted,
+      spam, marker and lifecycle before initializing; an unarchived unbound
+      marker-matched partial site is `site_ownership_unproven`; and a create
+      command with a null Hall name is `internal_error`.
+    - A JSON Content-Type is required through `WP_REST_Request::is_json_content_type()`.
+    - Provisioning synchronization opens its `try` around `switch_to_blog()` and
+      unwinds by switched-stack depth.
+  - **Second source-review correction pass [2026-09-14].** Nine further defects
+    were corrected:
+    - The Hall mutex and command fence are now proven immediately before EVERY
+      terminal snapshot that speaks for a current operation row — success as
+      well as failure — through one `prove_current()` used by both the workflow
+      guards and the snapshot methods. Proving before the last MUTATION left a
+      window in which a newer command could arrive and still be answered
+      `applied` or `already_applied`. Superseded / conflict classification and
+      an unreadable pre-classification row are deliberately NOT fenced: they
+      have no matching current row.
+    - `record_error_category()` is treated as the row mutation it is: guarded
+      before, marked as a possible mutation, and re-proven after, so a stale
+      category can never be stamped onto a row that has moved on.
+    - A pre-bind marker-matched suspend candidate must now prove unique address,
+      expected network, not-main-site, not-deleted, not-spam and `archived = 1`
+      — in addition to the exact marker — before `attach_blog_id()`.
+    - `HallSiteProvisioner` now performs `switch_to_blog()` inside its protected
+      boundary, records entry depth, blog id and `$wpdb->prefix`, contains
+      Throwables from switching, work and restoration, and NEVER reports success
+      when restoration cannot be proven.
+    - `PortalSyncService::run_provisioning()` no longer returns from inside a
+      `try` whose `finally` merely logs: it calculates the outcome, restores,
+      proves depth/blog/prefix, and only then returns. Its declared
+      result/WP_Error boundary no longer leaks Throwable, and an unproven
+      context maps through the orchestrator as `unverified` rather than a
+      retryable `sync_failed`.
+    - `is_blog_installed()` is gone from the platform consumer. On a site with
+      missing tables it ends in `wpdb::bail()`, which TERMINATES the request
+      rather than returning false. The branch it guarded was unreachable anyway:
+      every path into initialization has already read a VALID
+      `bc_commerce_managed` marker out of that site's own options table, so the
+      table provably exists. An unmarked orphan is never adopted or initialized.
+    - The Portal-facing URL is read from the site's own options table and
+      verified against the already-verified site row — absolute http/https, no
+      userinfo, query, fragment or control characters, matching host, path and
+      configured port. `site_url`, `option_siteurl` and `pre_option_siteurl`
+      filters can no longer decide what Portal stores, and the platform filter's
+      advisory `site_url` is still never trusted.
+    - Bound resume, ordinary bound verification, re-enable and `already_applied`
+      now re-prove that the authoritative address resolves UNIQUELY to the same
+      `blog_id`; a duplicate, different, corrupt or unreadable result fails
+      closed without naming either row.
+    - A false-positive assertion (`$response['filter_calls'] > 0 ? 1 : 1`, which
+      is always 1 and read the wrong response) and a self-comparison
+      (`assert_same( site_count(), site_count() )`) were replaced with exact
+      facts; the complete new test code was swept for the same patterns.
+  - **Measured**: `tests/portal-provisioning-endpoint.php` passes
+    **50352/50352 assertions** and
+    `tests/platform-hall-site-provisioning.php` passes **491/491**, each on two
+    consecutive runs with identical totals. Regression, all re-run after these
+    changes: ADR-042 provisioning foundation **551/551**, Commerce state
+    **254/254**, installed handler integration **364/364**, Hall Commerce access
+    **834/834**, SetupReadiness **199/199**.
+  - `tests/portal-snapshot-application.php` (**387/387**),
+    `tests/portal-sync-admin.php` (**468/468**) and
+    `tests/portal-integration-foundation.php` (**77/77**) now RUN, against the
+    isolated fixture rather than the persistent development database. Each
+    creates disposable Multisite sites, so they boot through the new additive
+    `tests/fixtures/wordpress-bootstrap.php`: without `BC_TEST_DB` it does
+    exactly what those files did before — `require wp-load.php` — and with it
+    they boot the guarded fixture instead. They use their own allowlisted
+    database (`bingocommerce_state_test_suites`) because they need a
+    development-shaped fixture — four legacy halls, each initialized and
+    role-provisioned — which would otherwise collide with the bare seeded halls
+    the other harnesses create and drop themselves.
+  - **Fixture integrity.** `tests/hall-commerce-access.php` and
+    `tests/hall-commerce-handlers.php` both applied the v2 provisioning schema
+    but dropped only the commerce-state table, leaving
+    `{base_prefix}bingo_portal_provisioning_operations` behind and making
+    `tests/portal-provisioning-foundation.php` abort when it ran second. Both
+    now drop the operations table with the same guarded mechanism and assert it
+    is gone. `tests/portal-integration-foundation.php` now also removes the
+    Multisite-global `registration_log` rows its disposable halls leave behind,
+    which no core deletion path touches. Every suite was re-run in BOTH
+    directions; none requires another to run first. Per-run residue is proven
+    separately for each fixture database by a structural snapshot taken before
+    and after a full run: both are byte-identical, so the suites add nothing
+    beyond the baseline the bootstrap establishes. `bingocommerce_state_test` is
+    left with exactly its three seeded sites, no users, no Application
+    Passwords, no provisioning, mapping or audit tables, no orphaned per-site
+    tables and no schema-version options.
+  - The REAL Application Password path is exercised with a disposable
+    credential: `WP_Application_Passwords::create_new_application_password()`,
+    authentication through `wp_authenticate_application_password()`, and core's
+    own `application_password_did_authenticate` collection hook, with the
+    credential destroyed and its absence asserted afterwards.
+  - **Development-database preservation**, measured before and after all
+    testing: `bc_portal_provisioning_db_version` still absent, both provisioning
+    tables still absent, 239 tables, sites 1-4 with an identical row checksum,
+    Hall mapping 2 -> 2 unchanged, all 21 Catalog/Session tables identical by
+    count and checksum, no `bc_commerce_managed` option on any existing site, 11
+    users and **0 Application Password meta rows**, and `wp-config.php` unchanged
+    by SHA-256. **No development migration was run, no development site was
+    created, and no Application Password was issued there.** No live Portal HTTP request was made — the fixture blocks
+    outbound HTTP and the harness short-circuits only the `.invalid` Portal
+    snapshot URL — and no mail was sent.
+  - Three narrow ADR-042 corrections were recorded in `docs/decisions/DECISIONS.md`
+    and nothing else was changed there: a genuinely pre-mutation, reduced,
+    outcome-absent `lock_unavailable` is exempt from the terminal provisioning
+    audit because it has no outcome to map to an action (once a mutation may
+    have occurred, currentness loss is `unverified` and IS audited); the
+    no-DDL rule is about the NETWORK provisioning schema and not about a new
+    Hall site's own per-site tables, which approved platform initialization
+    necessarily creates; and the managed marker is NOT present from the site
+    row's first moment — the row is inserted archived and the marker is supplied
+    as an initial option during initialization, so a crash in between leaves an
+    ownership-unproven orphan for operator recovery. No new outcome, audit
+    action or migration mechanism was introduced.
+  - **Four source blockers corrected in a final review pass**, with no change to
+    any accepted ADR-042 response, audit, authentication, ownership, sequencing,
+    migration or plugin-ownership contract, and no new outcome, audit action,
+    error category or migration mechanism.
+    - **Blog-context restoration is contained per ATTEMPT**, in both production
+      restoration sites — `PortalSyncService::run_provisioning()` and
+      `HallSiteProvisioner::initialize()`. `restore_current_blog()` pops the
+      switched-blog stack FIRST and fires `switch_blog` LAST, so a listener that
+      throws has already consumed one level; a single `try` around the whole
+      unwind loop abandoned every remaining level, and with two or more switches
+      open the request carried on with `$wpdb` still pointing at the Hall. Each
+      attempt is now contained on its own: the depth is recorded before it and
+      re-read after it returns or throws, unwinding continues only on valid
+      progress toward the recorded entry depth, and it stops safely on no
+      progress, on underflow, on a stack that is no longer a list, and on an
+      exhausted budget. No WordPress global is ever assigned. Success still
+      requires exact agreement on depth, blog id and table prefix, and a
+      restoration Throwable still fails the operation even when the unwind
+      afterwards lands on the entry facts.
+    - **The network site-URL authority is a verified fact, not a default.** The
+      helper that decided whether a per-site URL may carry a port returned
+      `?int`, which merged a VERIFIED network that uses no port with a network
+      row that was absent, duplicated, corrupt, unparseable or unreadable — so
+      every storage failure asserted "no port", matched a portless site URL, and
+      confirmed it to Portal. It is now a structured fail-closed read of
+      `$wpdb->sitemeta` that keeps verified-with-port, verified-without-port and
+      unverified apart, and `authoritative_site_url()` returns no URL unless the
+      authority is positively verified. `LIMIT 2` is deliberate: the installed
+      schema declares no `UNIQUE (site_id, meta_key)` and `get_network_option()`
+      takes whichever row the server returns first, so a duplicated row is a
+      state the schema permits and this read refuses rather than picks between.
+    - **Bound suspend distinguishes an ABSENT resolver from a FAILED one.**
+      ADR-042 licenses exactly one thing — `platform_unavailable` must not block
+      safe suspension when the platform component is missing, because the
+      three-fact marker agreement is the authority and needs nothing from it.
+      The previous shape stretched that licence over every WP_Error the resolver
+      could produce, so an unreadable `blogs` lookup, a duplicated address or a
+      thrown lookup stood in for a passed identity check. Component absence is
+      now established POSITIVELY through `PlatformGateway::resolverInstalled()`;
+      an installed resolver that fails is `platform_unavailable` on both paths, a
+      verified absence is `site_missing`, and a different resolved blog is
+      `slug_conflict`. No foreign identity is named on any of them.
+    - **An escaped Throwable is finalized like any other failure.** The state
+      machine's outer catch answered with a bare terminal snapshot: it never
+      proved currentness, so a Throwable arriving after a newer command had
+      replaced this one produced a terminal audit against a fence that no longer
+      existed, and it never persisted the category, so the one failure mode
+      nobody planned for was the only one a later retry could not see standing
+      on the row. It now routes through a guarded, non-recursive finalizer that
+      proves currentness, persists an allowlisted category when it is safe to,
+      treats that persistence as a possible mutation, re-proves, and never
+      audits a current result for a superseded fence. Post-mutation uncertainty
+      is `unverified`; a pre-mutation loss keeps the reduced `lock_unavailable`
+      with no audit; and a Throwable before any row is established touches no
+      row at all.
+  - **Tests added for each of the four**, and each was verified to FAIL against
+    the previous behaviour before being kept: deterministic nested-switch
+    restoration cases for both production paths (two extra switches open, a
+    `switch_blog` listener throwing on the middle of three restores, with depth,
+    blog id and prefix captured immediately after the production call and before
+    any harness cleanup); ten network-authority cases covering verified with and
+    without a port, a mismatched port in both directions, and absent, duplicated,
+    empty, non-http, userinfo-bearing, query-bearing, control-character,
+    out-of-range-port, unreadable and thrown storage; four resolver faults across
+    BOTH bound suspend paths plus a genuine component-absence case in a worker
+    process that never loads `bingocommerce-platform`
+    (`tests/portal-platform-absent-worker.php`); and Throwables before a row is
+    established, after classification pre-mutation, post-mutation, and with a
+    newer command replacing the fence in both mutation states. Three vacuous
+    `assert_true( true, ... )` assertions were removed from the two new
+    harnesses.
+  - **Fixture residue.** Both harnesses that load WooCommerce now remove the
+    guest sessions `WC_Session_Handler` writes to the network main site — bounded
+    by a high-water mark taken before the first mutating test, with a final sweep
+    on `shutdown` at last priority because WooCommerce saves at priority 20,
+    after every assertion a harness can make. A full ten-suite matrix now leaves
+    both fixture databases structurally byte-identical.
+  - Still **NOT implemented**: the Portal Enable/Disable Ecommerce UI and any
+    Portal-side work; SSO; webhooks; scheduling; reconciliation; BR-016 billing
+    persistence or any billing resolver; and starter Product / Play Product
+    copy. The manual cross-repository Portal end-to-end test has **not** been
+    performed. **Production deployment is NOT claimed.**
 - No Hall Staff Management work currently in progress.
 - No other Catalog or Session implementation work is in progress. Package
   Increment 1 and Session Increment 1 remain COMPLETE and are recorded under
@@ -2053,14 +2308,18 @@
    no-op, tenant isolation and Commerce non-interference passed).**
    **Phase 3F — the multi-Hall tenant-isolation proof — is COMPLETE.**
    **Phase 3G — manual Hall-scoped synchronization — is COMPLETE** (ADR-041):
-   source review passed; after fixture isolation (`7f3e332`) the local harness
-   reports **467 passing assertions**; the practical browser test PASSED.
-   Commerce-state persistence (**254/254**), SetupReadiness (**199/199**), and
-   Hall Commerce access enforcement (**833/833**; handlers **361/361**) are
-   implemented foundations.
+   source review passed; the local harness currently reports **468 passing
+   assertions** (467 at fixture isolation `7f3e332`, plus the WooCommerce
+   session-residue assertion added with the ADR-042 machine path); the practical
+   browser test PASSED. Commerce-state persistence (**254/254**), SetupReadiness
+   (**199/199**), and Hall Commerce access enforcement (**834/834**; handlers
+   **364/364**) are implemented foundations.
    **ADR-042 / BR-076 decide automatic Commerce enable/suspend provisioning —
    documentation complete; the persistence foundation is implemented
-   (551/551); REST/site creation/platform filter/Portal button remain
+   (551/551), and the BingoCommerce-side machine path — REST endpoint,
+   orchestrator, `bingocommerce-platform` and its single provisioning filter —
+   is implemented and measured (endpoint **50352/50352**, platform
+   **491/491**). The Portal Enable/Disable Ecommerce button remains
    unimplemented.**
    **Production deployment is NOT claimed. Scheduling and webhooks do not
    exist.** Local writer restrictions and reconciliation remain deferred.
@@ -2182,6 +2441,23 @@ Everything below is tracked work that is NOT a blocker to that demo.
   §"Catalog lock-order review" is accurate as written. ADR-033 locks
   `bingo_packages` then `bingo_play_products` ascending, and locks no component
   rows at all.
+- Latest verified results **[2026-09-14, ADR-042 BingoCommerce machine
+  provisioning path, after three source-review correction passes]**:
+  `tests/portal-provisioning-endpoint.php` **50352/50352** and
+  `tests/platform-hall-site-provisioning.php` **491/491**, each on two
+  consecutive runs with identical totals. Every other affected suite was re-run
+  and every one passes, none skipped: ADR-042 provisioning foundation
+  **551/551**, Commerce state **254/254**, installed handler integration
+  **364/364**, Hall Commerce access **834/834**, SetupReadiness **199/199**,
+  Phase 3E Portal snapshot application **387/387**, Phase 3G Portal sync admin
+  **468/468**, Phase 3B Portal integration foundation **77/77**. No development
+  migration was run, no development site was created, no Application Password
+  was issued in the development database, no live Portal HTTP request was made,
+  and no mail was sent.
+  The Portal Enable/Disable UI, SSO, webhooks, scheduling, reconciliation,
+  BR-016 billing persistence and starter-product copy remain unimplemented, the
+  manual cross-repository Portal end-to-end test has not been performed, and
+  production deployment is NOT claimed.
 - Latest verified results **[2026-09-13, ADR-042 documentation + provisioning
   persistence foundation + current measured harness status]**: Portal Sync Admin
   **467 passing assertions** (after fixture isolation `7f3e332`; historical 107
@@ -2281,13 +2557,22 @@ Everything below is tracked work that is NOT a blocker to that demo.
   decide automatic Commerce enable/suspend provisioning; the provisioning
   persistence primitives now exist in code (`ProvisioningCanonicalRequest`,
   `ProvisioningOperationRepository`, `ProvisioningMutex`, and the v2 migration),
-  while the machine endpoint, platform provisioning filter, Portal
-  Enable/Disable button, and automatic site creation are **NOT implemented**.
-  SSO does not exist.
-  **The plugin is now network-active on this local environment**, and the ADR-036
-  Portal constants are configured in the git-ignored `wp-config.php` for ongoing
-  manual synchronization; both are local test-environment state, not a
-  deployment. The plugin also carries `ProvisioningMigrations` and
+  and the machine endpoint, the platform provisioning filter, automatic site
+  creation and the orchestration that ties them together are now implemented
+  too — in `ProvisioningRestController`, `ProvisioningOrchestrator`,
+  `PlatformGateway`, `ProvisioningResponse`, `ProvisioningAudit` and the new
+  network-only `wp-content/plugins/bingocommerce-platform/`.
+  `bingocommerce-platform` is **not** network-activated on this local
+  environment and no provisioning has been executed against this database: the
+  whole path is exercised only in the isolated fixture. The Portal Enable/Disable Ecommerce button remains **NOT
+  implemented** and the manual cross-repository Portal end-to-end test has not
+  been performed. SSO does not exist.
+  **`bingocommerce-portal-integration` is network-active on this local
+  environment** — and `bingocommerce-platform`, as stated above, is not — and the
+  ADR-036 Portal constants are configured in the git-ignored `wp-config.php` for
+  ongoing manual synchronization; both are local test-environment state, not a
+  deployment. `bingocommerce-portal-integration` also carries
+  `ProvisioningMigrations` and
   `HallCommerceState` (Commerce-state persistence, migration NOT applied here;
   `ProvisioningMigrations::DB_VERSION` is now **2**, carrying the ADR-042
   operations table, but no migration has been run against this database, so the

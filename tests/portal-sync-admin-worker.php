@@ -152,7 +152,7 @@ set_error_handler(
 );
 
 try {
-	require dirname( __DIR__ ) . '/wp-load.php';
+	require __DIR__ . '/fixtures/wordpress-bootstrap.php';
 } finally {
 	// Restored immediately, on every path, so the rest of this process reports
 	// warnings and errors exactly as it would have.

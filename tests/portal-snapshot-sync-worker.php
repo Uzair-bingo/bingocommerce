@@ -21,7 +21,7 @@ $_SERVER['REQUEST_URI']    = '/';
 $_SERVER['REQUEST_METHOD'] = 'GET';
 $_SERVER['REMOTE_ADDR']    = '127.0.0.1';
 
-require dirname( __DIR__ ) . '/wp-load.php';
+require __DIR__ . '/fixtures/wordpress-bootstrap.php';
 if ( ! class_exists( '\BingoCommerce\PortalIntegration\PortalSyncLock' ) ) {
 	require dirname( __DIR__ ) . '/wp-content/plugins/bingocommerce-portal-integration/bingocommerce-portal-integration.php';
 }

@@ -161,6 +161,17 @@ final class HallCommerceHandlersTest {
 	private const OP_CREATE_HALL_TABLES = 'create_hall_tables';
 	private const OP_DROP_HALL_TABLES   = 'drop_hall_tables';
 	private const OP_DROP_STATE_TABLE   = 'drop_state_table';
+
+	/**
+	 * The ADR-042 provisioning-operations table.
+	 *
+	 * `ProvisioningMigrations::migrate()` installs the whole v2 schema, which is
+	 * BOTH the commerce-state table and this one, so a run that migrates owns
+	 * both and must remove both. Leaving it behind makes the next harness to
+	 * start — `portal-provisioning-foundation.php`, which correctly refuses to
+	 * adopt a schema it did not create — abort, and the suite order-dependent.
+	 */
+	private const OP_DROP_OPERATIONS_TABLE = 'drop_operations_table';
 	private const OP_DELETE_VERSION     = 'delete_version_option';
 	private const OP_SET_MARKER         = 'set_marker';
 	private const OP_DELETE_USER        = 'delete_fixture_user';
@@ -171,6 +182,7 @@ final class HallCommerceHandlersTest {
 		self::OP_CREATE_HALL_TABLES,
 		self::OP_DROP_HALL_TABLES,
 		self::OP_DROP_STATE_TABLE,
+		self::OP_DROP_OPERATIONS_TABLE,
 		self::OP_DELETE_VERSION,
 		self::OP_SET_MARKER,
 		self::OP_DELETE_USER,
@@ -250,6 +262,14 @@ final class HallCommerceHandlersTest {
 					return $refuse( 'the state table name did not resolve as expected' );
 				}
 				$result = $wpdb->query( 'DROP TABLE IF EXISTS `' . $table . '`' );
+				break;
+
+			case self::OP_DROP_OPERATIONS_TABLE:
+				$operations = ProvisioningMigrations::operations_table();
+				if ( $operations !== $wpdb->base_prefix . ProvisioningMigrations::OPERATIONS_TABLE ) {
+					return $refuse( 'the operations table name did not resolve as expected' );
+				}
+				$result = $wpdb->query( 'DROP TABLE IF EXISTS `' . $operations . '`' );
 				break;
 
 			case self::OP_DELETE_VERSION:
@@ -1681,7 +1701,19 @@ final class HallCommerceHandlersTest {
 		}
 		if ( $this->owns_state_table ) {
 			$this->fixture_operation( self::OP_DROP_STATE_TABLE );
+			// The v2 migration installs BOTH tables, so a run that owns one owns
+			// the other; the version goes with them.
+			$this->fixture_operation( self::OP_DROP_OPERATIONS_TABLE );
 			$this->fixture_operation( self::OP_DELETE_VERSION );
+
+			$this->assert_true(
+				! $this->table_exists( ProvisioningMigrations::operations_table() ),
+				'teardown: the provisioning operations table was removed'
+			);
+			$this->assert_true(
+				! $this->table_exists( ProvisioningMigrations::state_table() ),
+				'teardown: the commerce-state table was removed'
+			);
 		}
 
 		// The fixture rewrites this row on every child boot, so the last

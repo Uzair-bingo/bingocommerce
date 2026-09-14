@@ -40,7 +40,17 @@ final class PortalSnapshotApplicationPlan {
 		public readonly string $generated_at,
 		public readonly array $game_types,
 		public readonly array $sessions,
-		public readonly string $now
+		public readonly string $now,
+		/**
+		 * Whether the transport may apply this plan to an ARCHIVED site.
+		 *
+		 * False for every ordinary synchronization, and settable only through
+		 * forProvisioning() below, which demands a currently held Hall
+		 * provisioning mutex. It relaxes exactly one of the transport's
+		 * re-confirmation checks; deleted, spam, wrong-network, main-site and
+		 * inactive-mapping all still reject the transaction.
+		 */
+		public readonly bool $allow_archived_site = false
 	) {}
 
 	/**
@@ -62,6 +72,54 @@ final class PortalSnapshotApplicationPlan {
 		int $main_site_id,
 		array $snapshot,
 		string $now
+	) {
+		return self::build( $blog_id, $portal_hall_id, $network_id, $main_site_id, $snapshot, $now, false );
+	}
+
+	/**
+	 * The ADR-042 provisioning variant: the same plan, permitted to apply to a
+	 * site that is deliberately still archived.
+	 *
+	 * A newly provisioned Hall site is created `archived = 1` and MUST remain so
+	 * until mapping, synchronization, readiness and operational state have all
+	 * succeeded — so the one synchronization that has to run against an archived
+	 * site is this one. The permission is NOT a boolean a caller may pass: it is
+	 * granted only against a ProvisioningMutex for this exact Portal Hall that
+	 * the SERVER still confirms is held. A caller without that mutex cannot
+	 * build this plan, so no ordinary path can reach the relaxed check by
+	 * accident or by refactor.
+	 *
+	 * @param array<string,mixed> $snapshot Validator output, never a raw payload.
+	 * @return self|\WP_Error
+	 */
+	public static function forProvisioning(
+		ProvisioningMutex $mutex,
+		int $blog_id,
+		int $portal_hall_id,
+		int $network_id,
+		int $main_site_id,
+		array $snapshot,
+		string $now
+	) {
+		if ( $mutex->portalHallId() !== $portal_hall_id || ! $mutex->isStillHeld() ) {
+			return self::error( 'portal_sync_plan_not_current', 'The provisioning command no longer holds this Hall.' );
+		}
+
+		return self::build( $blog_id, $portal_hall_id, $network_id, $main_site_id, $snapshot, $now, true );
+	}
+
+	/**
+	 * @param array<string,mixed> $snapshot
+	 * @return self|\WP_Error
+	 */
+	private static function build(
+		int $blog_id,
+		int $portal_hall_id,
+		int $network_id,
+		int $main_site_id,
+		array $snapshot,
+		string $now,
+		bool $allow_archived_site
 	) {
 		if ( $blog_id < 1 || $portal_hall_id < 1 || $network_id < 1 || $main_site_id < 1 ) {
 			return self::error( 'portal_sync_plan_invalid', 'The Portal synchronization plan context is invalid.' );
@@ -114,7 +172,8 @@ final class PortalSnapshotApplicationPlan {
 			$generated_at,
 			array_values( $game_types ),
 			array_values( $sessions ),
-			$now
+			$now,
+			$allow_archived_site
 		);
 	}
 

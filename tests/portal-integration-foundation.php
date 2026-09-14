@@ -17,7 +17,7 @@ $_SERVER['REQUEST_URI']    = '/';
 $_SERVER['REQUEST_METHOD'] = 'GET';
 $_SERVER['REMOTE_ADDR']    = '127.0.0.1';
 
-require dirname( __DIR__ ) . '/wp-load.php';
+require __DIR__ . '/fixtures/wordpress-bootstrap.php';
 require_once ABSPATH . 'wp-admin/includes/ms.php';
 
 if ( ! class_exists( '\BingoCommerce\PortalIntegration\HallMappingRepository' ) ) {
@@ -388,6 +388,16 @@ final class PortalIntegrationFoundationTest {
 				}
 			}
 
+			/*
+			 * wp_delete_site() removes the site row, its blogmeta and its
+			 * per-site tables, but `registration_log` is a Multisite-GLOBAL table
+			 * that no core deletion path touches — so every disposable hall
+			 * would otherwise leave a permanent row behind and this suite could
+			 * not prove zero residue. Scoped to this one blog_id, which the
+			 * guard above proves is a disposable site created by this run.
+			 */
+			$wpdb->delete( $wpdb->registration_log, [ 'blog_id' => $site_id ], [ '%d' ] );
+
 			$this->deleted_site_tables[ $site_id ] = $this->disposable_tables[ $site_id ] ?? [];
 			unset( $this->disposable_sites[ $site_id ], $this->disposable_tables[ $site_id ] );
 		}
@@ -411,6 +421,11 @@ final class PortalIntegrationFoundationTest {
 				0,
 				(int) $wpdb->get_var( $wpdb->prepare( 'SELECT COUNT(*) FROM ' . Migrations::hall_mappings_table() . ' WHERE blog_id = %d', $site_id ) ),
 				"disposable site {$site_id} mapping was removed"
+			);
+			$this->assert_same(
+				0,
+				(int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->registration_log} WHERE blog_id = %d", $site_id ) ),
+				"disposable site {$site_id} registration log rows were removed"
 			);
 
 			foreach ( $tables as $table ) {

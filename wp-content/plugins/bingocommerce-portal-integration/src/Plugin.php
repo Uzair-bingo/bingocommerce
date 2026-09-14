@@ -41,8 +41,36 @@ final class Plugin {
 		// Phase 3G: the manual hall-scoped synchronization screen and its
 		// authenticated admin-post handler. Registered unconditionally so the
 		// handler itself — not menu visibility — enforces tenancy, capability
-		// and nonce. Still no REST route, cron event, webhook or scheduler.
+		// and nonce.
 		PortalSyncAdmin::register();
+
+		/*
+		 * ADR-042: the Portal-facing machine provisioning endpoint. Registered
+		 * unconditionally for the same reason the sync handler is — the callback
+		 * itself, not route visibility, enforces Application Password proof and
+		 * the dedicated `bc_receive_portal_provisioning` capability, and a route
+		 * that appears only under some conditions is a route whose authorization
+		 * is harder to reason about than its registration.
+		 *
+		 * `bc_receive_portal_provisioning` is granted to NO role here. It belongs
+		 * to one dedicated nonhuman Portal account, and adding it to a role —
+		 * Hall Manager, Game Operator, administrator, or anything network-wide —
+		 * would hand Portal provisioning authority to people who administer
+		 * halls.
+		 *
+		 * A NETWORK SUPER ADMIN DOES CARRY IT, and no role assignment is
+		 * involved: WP_User::has_cap() answers true for every capability when
+		 * is_super_admin() is true. The capability check therefore cannot keep a
+		 * Super Admin out, so ProvisioningRestController::authorize() REFUSES
+		 * Super Admins explicitly, before the capability is consulted and before
+		 * any classification, row or audit — which is what makes BR-076's "Super
+		 * Admins do not initiate automatic Enable/Disable" an enforced rule
+		 * rather than a convention.
+		 *
+		 * Still no cron event, webhook or scheduler: this endpoint is driven by
+		 * an authenticated Portal request and by nothing else.
+		 */
+		ProvisioningRestController::register();
 	}
 
 	/**

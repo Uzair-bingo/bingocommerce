@@ -1823,6 +1823,21 @@ When that filter is used for an operational create/init/resume attempt:
     insertion, initial site option `bc_commerce_managed` = this
     `site_ownership_id` (never `operation_id`), and `public` left at the API
     default (not an access-control barrier).
+    **Marker-timing correction [2026-09-13]:** the site ROW and its `archived`
+    flag are written by the INSERT; the marker is supplied through the same
+    supported call as an INITIAL SITE OPTION and is therefore persisted during
+    `wp_initialize_site()`, when that site's options table first exists. The
+    marker is consequently NOT present from the site row's first moment, and
+    any wording to that effect is wrong. The ordering guarantee that matters is
+    unchanged and is the one the design depends on: the site is quarantined
+    (`archived = 1`) before it exists at all, and the marker is written as part
+    of initializing it rather than by a later separate write. A crash between
+    the row INSERT and marker persistence therefore leaves an archived,
+    UNMARKED site at the reserved address. That is an ownership-unproven orphan:
+    the next attempt must refuse it as `site_ownership_unproven` and an operator
+    must resolve it. It must never be adopted, re-marked, repaired or deleted
+    automatically, because slug equality was never sufficient to prove
+    ownership.
   - Site exists and `bc_commerce_managed` exactly equals the persisted
     `site_ownership_id`: treat as this operation’s recoverable partial create;
     return its verified `blog_id` with `created=false` and continue guarded
@@ -2274,7 +2289,21 @@ Exact migration contract (`ProvisioningMigrations`):
 
 **Runtime endpoint gate (before locks / operation-row access).**
 
-- The REST request must never execute DDL or attempt schema repair.
+- The REST request must never migrate or repair the NETWORK provisioning
+  schema: no `migrate()`, no DDL and no repair against
+  `{base_prefix}bingo_portal_provisioning_operations`,
+  `{base_prefix}bingo_hall_commerce_state` or their version option. An unready
+  network provisioning schema is the reduced 503 `platform_unavailable` above
+  and is repaired by an explicit operator migration.
+  **Clarification [2026-09-13]:** this rule is about the network provisioning
+  schema and not about a new Hall site's own tables. Platform-owned creation of
+  a NEW Hall site necessarily creates that site's required WordPress,
+  WooCommerce, Catalog, Session and related per-site tables as part of the
+  approved initialization in
+  `bingocommerce_platform_provision_hall_site`; that is the "prepared" store
+  clause 7 of the business contract requires, it is performed by invoking the
+  owners of those schemas rather than by reissuing their SQL, and it is scoped
+  to the site being provisioned.
 - After BingoCommerce authentication and manual client request validation,
   but before Hall-mutex acquisition or operation-row access, perform a safe
   provisioning-schema readiness check.
@@ -2702,6 +2731,20 @@ provisioning; payload never contains snapshot token plaintext.
 - Unauthenticated requests, core pre-callback failures (auth / malformed
   JSON / route-method / core args), pre-mutex validation failures, and
   pre-mutex schema-unreadiness: no operation row and no provisioning audit.
+- **`lock_unavailable` clarification [2026-09-13].** A `lock_unavailable`
+  response is by definition the REDUCED body with `outcome` ABSENT, and the
+  one-action mapping above is keyed on the six outcomes, so such a response has
+  no terminal action to record. Every genuinely PRE-MUTATION currentness
+  failure — mutex acquisition refused, or the Hall mutex/command fence lost
+  before this request could have changed anything — is therefore exempt from
+  the terminal provisioning audit, whether or not classification had been
+  reached. This narrows, and does not contradict, the "exactly one terminal
+  audit attempt for every authenticated valid request that reaches operation
+  classification" rule: it applies only where no outcome exists to attribute.
+  ONCE A MUTATION MAY HAVE OCCURRED the same loss is `unverified`, not
+  `lock_unavailable` — full body, `outcome=unverified`, and exactly one
+  `portal.commerce.unverified` audit attempt, as already required. No new
+  outcome and no new audit action is introduced.
 - Unreadable/corrupt stored-row failures that reach mutex acquisition: exactly
   one terminal `portal.commerce.unverified` audit with safe request identity
   and `blog_id` null; no raw stored values.

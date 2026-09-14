@@ -6,7 +6,27 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-/** Network repository and invariant boundary for Portal Hall/site mappings. */
+/**
+ * Network repository and invariant boundary for Portal Hall/site mappings.
+ *
+ * ORDINARY MAPPING RULES ARE UNCHANGED. bind(), findActiveByPortalHallId() and
+ * findActiveByBlogId() still refuse an archived site exactly as they always
+ * have, because for every ordinary caller an archived site is a site that must
+ * not be operated on.
+ *
+ * ONE NARROW PROVISIONING-SCOPED EXCEPTION EXISTS, and only because ADR-042
+ * requires it: an automatically provisioned Hall site is created `archived = 1`
+ * and MUST stay archived until mapping, synchronization, readiness and
+ * operational state have all succeeded. Mapping therefore has to happen while
+ * the site is still archived. The exception is NOT a boolean an argument can
+ * switch on: bindForProvisioning() and findActiveByBlogIdForProvisioning()
+ * demand PROOF — a currently held ProvisioningMutex for this exact Portal Hall,
+ * and a `bc_commerce_managed` witness on the target site that exactly equals the
+ * operation's permanent `site_ownership_id`. Without both, they behave like the
+ * ordinary methods. Nothing else is relaxed: a deleted, spam, wrong-network or
+ * main site is still refused, and a conflicting existing mapping is still a
+ * conflict that is never silently repaired.
+ */
 final class HallMappingRepository {
 
 	public const STATUS_ACTIVE = 'active';
@@ -14,12 +34,95 @@ final class HallMappingRepository {
 
 	/** @return array<string,mixed>|\WP_Error */
 	public function bind( int $portal_hall_id, int $blog_id ) {
+		return $this->bind_internal( $portal_hall_id, $blog_id, false );
+	}
+
+	/**
+	 * Create or confirm this Hall's mapping while its site is still archived.
+	 *
+	 * The ONLY caller this is written for is the ADR-042 provisioning
+	 * orchestrator, on the enable path, between attaching a verified `blog_id`
+	 * and clearing `archived`. It relaxes exactly one check — the archived
+	 * refusal — and only against proof that cannot be forged from arguments:
+	 *
+	 *   - the mutex must be the Hall provisioning mutex for THIS
+	 *     `portal_hall_id`, and the SERVER must still confirm it is held; and
+	 *   - the target site's `bc_commerce_managed` witness must exactly equal the
+	 *     permanent `site_ownership_id` this operation owns.
+	 *
+	 * Everything else is the ordinary bind: same existing-mapping
+	 * classification, same `portal_hall_already_mapped` / `blog_already_mapped`
+	 * / `mapping_disabled` conflicts, same unique-index authority, same
+	 * read-back. It never repairs, re-points or disables an existing mapping.
+	 *
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public function bindForProvisioning( ProvisioningMutex $mutex, int $portal_hall_id, int $blog_id, string $site_ownership_id ) {
+		$proven = $this->provisioning_proof( $mutex, $portal_hall_id, $blog_id, $site_ownership_id );
+		if ( is_wp_error( $proven ) ) {
+			return $proven;
+		}
+
+		return $this->bind_internal( $portal_hall_id, $blog_id, true );
+	}
+
+	/**
+	 * The active mapping for one site, tolerating an archived provisioning target.
+	 *
+	 * Same proof as bindForProvisioning(), and the same single relaxation. Used
+	 * by the trusted provisioning synchronization path, which must resolve the
+	 * Hall identity of a site that is deliberately still archived.
+	 *
+	 * @return array<string,mixed>|null|\WP_Error
+	 */
+	public function findActiveByBlogIdForProvisioning( ProvisioningMutex $mutex, int $portal_hall_id, int $blog_id, string $site_ownership_id ) {
+		$proven = $this->provisioning_proof( $mutex, $portal_hall_id, $blog_id, $site_ownership_id );
+		if ( is_wp_error( $proven ) ) {
+			return $proven;
+		}
+
+		return $this->validate_active_mapping( $this->find_one( 'blog_id', $blog_id, self::STATUS_ACTIVE ), true );
+	}
+
+	/**
+	 * Mutex ownership plus the exact ownership witness, or a fixed refusal.
+	 *
+	 * FAILS CLOSED IN EVERY DIRECTION. A mutex for another Hall, a mutex the
+	 * server no longer confirms, an unreadable witness, an absent witness and a
+	 * different witness all land on the same refusal, because none of them
+	 * proves this operation owns this site.
+	 *
+	 * @return true|\WP_Error
+	 */
+	private function provisioning_proof( ProvisioningMutex $mutex, int $portal_hall_id, int $blog_id, string $site_ownership_id ) {
+		if ( $portal_hall_id < 1 || $blog_id < 1 ) {
+			return $this->error( 'invalid_portal_hall_id', 'The Portal Hall mapping request is invalid.' );
+		}
+		if ( ! HallCommerceAccess::is_valid_marker( $site_ownership_id ) ) {
+			return $this->error( 'mapping_ownership_unproven', 'Site ownership could not be proven for this Portal Hall mapping.' );
+		}
+		if ( $mutex->portalHallId() !== $portal_hall_id || ! $mutex->isStillHeld() ) {
+			return $this->error( 'mapping_provisioning_not_current', 'The provisioning command is no longer current.' );
+		}
+
+		$marker = HallCommerceAccess::read_marker_value( $blog_id );
+		if ( HallCommerceAccess::MARKER_VALID !== $marker['status']
+			|| null === $marker['value']
+			|| ! hash_equals( $site_ownership_id, (string) $marker['value'] ) ) {
+			return $this->error( 'mapping_ownership_unproven', 'Site ownership could not be proven for this Portal Hall mapping.' );
+		}
+
+		return true;
+	}
+
+	/** @return array<string,mixed>|\WP_Error */
+	private function bind_internal( int $portal_hall_id, int $blog_id, bool $allow_archived ) {
 		$ready = $this->validate_input_and_schema( $portal_hall_id, $blog_id );
 		if ( is_wp_error( $ready ) ) {
 			return $ready;
 		}
 
-		$site = $this->validate_site( $blog_id );
+		$site = $this->validate_site( $blog_id, $allow_archived );
 		if ( is_wp_error( $site ) ) {
 			return $site;
 		}
@@ -226,12 +329,12 @@ final class HallMappingRepository {
 	/** @param array<string,mixed>|null|\WP_Error $mapping
 	 *  @return array<string,mixed>|null|\WP_Error
 	 */
-	private function validate_active_mapping( $mapping ) {
+	private function validate_active_mapping( $mapping, bool $allow_archived = false ) {
 		if ( is_wp_error( $mapping ) || null === $mapping ) {
 			return $mapping;
 		}
 
-		$site = $this->validate_site( (int) $mapping['blog_id'] );
+		$site = $this->validate_site( (int) $mapping['blog_id'], $allow_archived );
 		if ( is_wp_error( $site ) ) {
 			return $site;
 		}
@@ -288,8 +391,14 @@ final class HallMappingRepository {
 		return true;
 	}
 
-	/** @return \WP_Site|\WP_Error */
-	private function validate_site( int $blog_id ) {
+	/**
+	 * @param bool $allow_archived Set ONLY by a provisioning-scoped caller that
+	 *                             has already proven mutex ownership and the
+	 *                             exact `bc_commerce_managed` witness. It relaxes
+	 *                             the archived refusal and nothing else.
+	 * @return \WP_Site|\WP_Error
+	 */
+	private function validate_site( int $blog_id, bool $allow_archived = false ) {
 		if ( ! is_multisite() ) {
 			return $this->error( 'multisite_required', 'Portal Hall mappings require WordPress Multisite.' );
 		}
@@ -309,7 +418,11 @@ final class HallMappingRepository {
 		if ( '1' === (string) $site->deleted ) {
 			return $this->error( 'site_deleted', 'A deleted WordPress site cannot be mapped to a Portal Hall.' );
 		}
-		if ( '1' === (string) $site->archived ) {
+		if ( ! $allow_archived && '1' === (string) $site->archived ) {
+			// An ADR-042 provisioning target is archived ON PURPOSE until its
+			// mapping, synchronization, readiness and operational state all
+			// succeed, so the one caller that has proven it owns this exact site
+			// is permitted past this refusal. Every other caller is not.
 			return $this->error( 'site_archived', 'An archived WordPress site cannot be mapped to a Portal Hall.' );
 		}
 		if ( '1' === (string) $site->spam ) {
