@@ -35,8 +35,12 @@ practical browser test PASSED against a local Portal test environment.
 enforcement, and the BingoCommerce-side ADR-042 machine provisioning path are
 implemented and tested.** The latter includes the REST endpoint, operations
 repository, orchestrator, platform plugin/filter and automatic site-creation
-path. The Portal Enable/Disable Ecommerce control and practical cross-repository
-end-to-end workflow remain incomplete. Commerce scheduling and occurrence
+path. The Portal Global Admin Enable, Suspend, Re-enable and Retry Ecommerce
+controls are implemented and tested. Hall Owner Ecommerce access is read-only;
+assigned Hall Managers cannot see the Ecommerce section or store URL; mutation
+remains Global Admin-only. A user-performed local-development Open Store →
+Suspend → Re-enable workflow passed against one mapped WordPress
+multisite test site, and re-enable reused the same site. Commerce scheduling and occurrence
 reconciliation exist in the current repository under approved ADR-043.
 **Production deployment is NOT claimed.** Portal webhooks,
 SSO and transitional local-writer policy remain future work.
@@ -85,7 +89,10 @@ ID persistence foundation through the network-wide
 `bingo_portal_hall_mappings` table and its mapping repository. ADR-042's
 BingoCommerce machine endpoint, orchestrator, operations persistence, platform
 filter and automatic site-creation path are implemented and tested. The Portal
-control and practical cross-repository workflow remain incomplete.
+Global Admin Enable/Suspend/Re-enable/Retry controls are implemented and
+tested. A user-performed local-development Open Store → Suspend → Re-enable
+workflow passed against one mapped WordPress multisite test site, and
+re-enable reused the same site.
 
 ### Game Type
 
@@ -491,8 +498,10 @@ Implementation order is fixed by ADR-042 / BR-076:
 3. manual Hall-scoped synchronization — complete;
 4. BingoCommerce-side automatic Commerce enable/suspend provisioning —
    implemented and tested;
-5. Portal Enable/Disable control and practical cross-repository end-to-end
-   provisioning workflow — incomplete;
+5. Portal Global Admin Enable/Suspend/Re-enable/Retry controls — implemented
+   and tested; a user-performed local-development Open Store → Suspend →
+   Re-enable workflow passed against one mapped WordPress multisite test
+   site, and re-enable reused the same site;
 6. SSO — later;
 7. Portal webhooks — later; Commerce scheduling and occurrence reconciliation
    exist under approved ADR-043.
@@ -515,8 +524,11 @@ remain undecided or deferred until their dedicated reviews:
 
 ADR-042 decides automatic enable/suspend machine authentication, REST path,
 operations table, empty-store MVP, suspend/re-enable, and plugin ownership. The
-BingoCommerce-side implementation exists and is tested; the Portal control and
-practical cross-repository workflow remain incomplete.
+BingoCommerce-side implementation exists and is tested. The Portal Global
+Admin Enable/Suspend/Re-enable/Retry controls are implemented and tested.
+A user-performed local-development Open Store → Suspend → Re-enable
+workflow passed against one mapped WordPress multisite test site, and
+re-enable reused the same site.
 
 ### Phase 3F — Multi-Hall Tenant-Isolation Proof (Verification Summary)
 
@@ -625,8 +637,11 @@ ownership-unproven orphan recovery only.
 (`HallCommerceState`), read-only `SetupReadiness`, Hall Commerce access
 enforcement (`HallCommerceAccess` / `HallCommerceGate`), the provisioning-
 operations table, machine REST endpoint, orchestrator, platform plugin/filter
-and automatic site creation exist and are tested. The Portal Enable/Disable
-control and practical cross-repository workflow remain incomplete.
+and automatic site creation exist and are tested. The Portal Global Admin
+Enable, Suspend, Re-enable and Retry Ecommerce controls are implemented and
+tested. A user-performed local-development Open Store → Suspend → Re-enable
+workflow passed against one mapped WordPress multisite test site, and
+re-enable reused the same site.
 
 **Plugin ownership and hook.** As in ADR-042:
 `bingocommerce-portal-integration` orchestrates;

@@ -82,8 +82,10 @@ deployment is not claimed.
   synchronization (complete); idempotent Hall/Game Type/Session mapping and
   multi-Hall proof (complete); manual Hall-scoped synchronization (complete);
   BingoCommerce-side automatic Commerce enable/suspend provisioning
-  (implemented and tested); Portal Enable/Disable control plus practical
-  cross-repository end-to-end provisioning workflow (incomplete); SSO later;
+  (implemented and tested); Portal Global Admin Enable/Suspend/Re-enable/Retry
+  controls (implemented and tested); a user-performed local-development Open
+  Store → Suspend → Re-enable workflow passed against one mapped WordPress
+  multisite test site, and re-enable reused the same site; SSO later;
   Portal webhooks later. Commerce scheduling and occurrence reconciliation
   exist under approved ADR-043.
 - `Enable BingoCommerce` / Disable Ecommerce is a Portal Global Admin-only
@@ -91,8 +93,11 @@ deployment is not claimed.
   authorization. ADR-042 decides the machine REST contract, operations table,
   empty-store MVP, suspend/re-enable rules, and plugin split above. The
   BingoCommerce endpoint, orchestrator, operations persistence, platform filter
-  and automatic site-creation path are implemented and tested; the Portal
-  control and cross-repository workflow remain incomplete.
+  and automatic site-creation path are implemented and tested. The Portal
+  Global Admin Enable/Suspend/Re-enable/Retry controls are implemented and
+  tested. A user-performed local-development Open Store → Suspend → Re-enable
+  workflow passed against one mapped WordPress multisite test site, and
+  re-enable reused the same site.
 
 See `docs/architecture/portal-integration-architecture.md`. Cross-plugin
 communication for operational create/init/resume uses the synchronous filter

@@ -38,8 +38,11 @@ alwaysApply: false
 - The authenticated Portal read API, initial/full pull, idempotent Hall/Game-
   Type/Session-template mapping and manual Hall synchronization are implemented
   and tested. ADR-042's BingoCommerce machine provisioning endpoint,
-  orchestrator and platform provisioning path are also implemented and tested;
-  its Portal control and practical cross-repository workflow remain incomplete.
+  orchestrator and platform provisioning path are also implemented and tested.
+  The Portal Global Admin Enable/Suspend/Re-enable/Retry controls are
+  implemented and tested. A user-performed local-development Open Store →
+  Suspend → Re-enable workflow passed against one mapped WordPress
+  multisite test site, and re-enable reused the same site.
   Portal webhooks remain deferred.
 - ADR-036/ADR-037 govern the implemented snapshot transport and payload;
   ADR-042 governs the implemented machine endpoint and its Application Password

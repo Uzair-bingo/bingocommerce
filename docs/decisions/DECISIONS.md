@@ -7107,9 +7107,13 @@ delete_users.
   BR-076 decide automatic Commerce enable/suspend provisioning. The
   BingoCommerce machine endpoint, operations table, orchestrator,
   `bingocommerce-platform` provisioning filter and automatic site-creation path
-  are implemented and tested in the repository; the Portal Enable/Disable
-  Ecommerce control and practical cross-repository end-to-end workflow remain
-  incomplete. Production deployment is not claimed.
+  are implemented and tested in the repository. The Portal Global Admin
+  Enable, Suspend, Re-enable and Retry Ecommerce controls are implemented and
+  tested. Hall Owner Ecommerce access is read-only; assigned Hall Managers
+  cannot see the Ecommerce section or store URL; mutation remains Global
+  Admin-only. A user-performed local-development Open Store → Suspend →
+  Re-enable workflow passed against one mapped WordPress multisite test
+  site, and re-enable reused the same site. Production deployment is not claimed.
 - ADR-040 resolves the former pre-Phase 3E design work: snapshot
   replay/stale-order protection, Phase 3E transaction and locking mechanics, and
   Session-template application behavior are decided and implemented. Game Type
@@ -7121,8 +7125,11 @@ delete_users.
   The separate multi-Hall tenant-isolation proof — Phase 3F — also PASSED and is
   COMPLETE (387/387 assertions). Production deployment is not claimed. Phase 3G
   is COMPLETE (ADR-041). The BingoCommerce-side ADR-042 machine path is
-  implemented and tested; its remaining work is the Portal control and a
-  practical cross-repository end-to-end workflow. Local writer restrictions
+  implemented and tested. The Portal Global Admin Enable/Suspend/Re-enable/Retry
+  controls are implemented and tested; a user-performed local-development
+  Open Store → Suspend → Re-enable workflow passed against one mapped
+  WordPress multisite test site, and re-enable reused the same site.
+  Local writer restrictions
   after synchronization stay deliberately transitional until reconciliation
   and recovery are proven. Webhooks remain deferred and unimplemented.
   Commerce scheduling and occurrence reconciliation exist in the current

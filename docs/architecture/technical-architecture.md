@@ -91,8 +91,10 @@ Approved delivery order (ADR-042 / BR-076) is:
 3. manual Hall-scoped synchronization — complete;
 4. BingoCommerce-side automatic Commerce enable/suspend provisioning —
    implemented and tested;
-5. Portal Enable/Disable control and practical cross-repository end-to-end
-   provisioning workflow — incomplete;
+5. Portal Global Admin Enable/Suspend/Re-enable/Retry controls — implemented
+   and tested; a user-performed local-development Open Store → Suspend →
+   Re-enable workflow passed against one mapped WordPress multisite test
+   site, and re-enable reused the same site;
 6. SSO — later;
 7. Portal webhooks — later; Commerce scheduling and occurrence reconciliation
    exist under approved ADR-043.
@@ -312,8 +314,10 @@ Must explicitly support (confirm before committing to a provider, don't assume):
 - Parent domain name
 - Portal webhook contracts, transitional synchronization conflict policy and
   SSO security protocol. The BingoCommerce-side ADR-042 provisioning path is
-  implemented and tested; the Portal control and practical cross-repository
-  workflow remain incomplete.
+  implemented and tested. The Portal Global Admin Enable/Suspend/Re-enable/Retry
+  controls are implemented and tested. A user-performed local-development
+  Open Store → Suspend → Re-enable workflow passed against one mapped
+  WordPress multisite test site, and re-enable reused the same site.
 - Production deployment of approved ADR-043. Its
   non-destructive Session schedule/occurrence implementation exists in the
   current repository.

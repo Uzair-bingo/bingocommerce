@@ -2305,6 +2305,41 @@
   this ratification pass. Production deployment is not claimed. The next
   delivery phase is the Portal-side Enable/Disable Ecommerce control and
   practical cross-repository ADR-042 provisioning workflow.
+- **[2026-09-21] Portal Enable/Disable Ecommerce control verified in the
+  Laravel Portal repository.** Branch `feature/commerce_connection`, HEAD
+  `5a5156f`. Global Admin Enable, Suspend, Re-enable and Retry, the ADR-042
+  HTTP client, operation UUID/sequence persistence, stale-response
+  protection, snapshot-token Hall granting, and outbound HTTP outside Portal
+  database transactions are implemented and committed. Hall Owner Ecommerce
+  access is read-only. Assigned Hall Managers cannot see the Ecommerce
+  section or store URL. Mutation remains Global Admin-only. This
+  documentation pass reran Portal automated tests against isolated SQLite:
+  focused commerce tests **72 passed, 817 assertions**; full Portal suite
+  **738 tests passed, 2,909 assertions**. Those tests used HTTP fakes or a mocked
+  client and did not call WordPress. An earlier 2026-09-15 read-only browser
+  check showed a Hall Owner Open Ecommerce Store link; an actual Hall
+  Manager was not independently browser verified. The last recorded Hall
+  9/blog 870 note is Enabled and mapped; this pass did not re-query that
+  environment. The practical cross-repository Enable → Open Store →
+  Suspend → Re-enable lifecycle against a real WordPress site remains
+  incomplete. Production deployment is not claimed.
+- **[2026-09-21] Local-development Portal commerce lifecycle verification passed.**
+  A user-performed local-development Open Store → Suspend → Re-enable
+  workflow passed against one mapped WordPress multisite test site, and
+  re-enable reused the same site. Local IDs for traceability: Portal Hall
+  ID 8, WordPress blog ID 869. BingoCommerce audit on 2026-09-21 records
+  Suspend (`portal.commerce.suspended`, desired_state=suspended,
+  outcome=applied, effective_access=portal_blocked at 15:43:58) then
+  Re-enable (`portal.commerce.applied`, desired_state=operational,
+  outcome=applied, effective_access=allowed at 15:44:05) on that same local
+  blog ID. Maintenance/access blocking was user-reported; this pass did
+  not independently re-observe a specific maintenance page, user type, or
+  access path. No complete before/after byte comparison was made. Only
+  the data checked during the test remained available. Final Portal and
+  BingoCommerce commerce state: operational. WordPress archived=0,
+  deleted=0, spam=0. Automated tests were not rerun during this
+  documentation-only pass. Real Retry/idempotency testing is not claimed.
+  Production deployment is not claimed.
 - No Hall Staff Management work currently in progress.
 - Package Increment 1 and the legacy Session Increment 1 remain COMPLETE and
   are recorded under Done. No add-on or unrelated Catalog work is in progress.
@@ -2342,8 +2377,12 @@
    (551/551), and the BingoCommerce-side machine path — REST endpoint,
    orchestrator, `bingocommerce-platform` and its single provisioning filter —
    is implemented and measured (endpoint **50352/50352**, platform
-   **491/491**). The Portal Enable/Disable Ecommerce button remains
-   unimplemented.**
+   **491/491**). The Portal Global Admin Enable, Suspend, Re-enable and Retry
+   Ecommerce controls are implemented and tested (Portal automated suite
+   **738 tests passed, 2,909 assertions** on 2026-09-21, isolated SQLite, no WordPress). A
+   user-performed local-development Open Store → Suspend → Re-enable
+   workflow passed against one mapped WordPress multisite test site, and
+   re-enable reused the same site.**
    **Production deployment is NOT claimed.** Commerce scheduling and occurrence
    reconciliation exist in the current repository under approved ADR-043.
    Portal webhooks and transitional local-writer policy remain deferred.
@@ -2353,13 +2392,14 @@ Everything below is tracked work that is NOT a blocker to that demo.
 ## Before Customer-Facing Digital Launch
 1. Complete the remaining Portal integration delivery increments. Phase 3B
    through Phase 3G and the BingoCommerce-side ADR-042 machine provisioning path
-   are implemented and tested. The Portal Enable/Disable Ecommerce control and
-   practical cross-repository end-to-end provisioning workflow remain
-   incomplete. Portal webhooks and SSO remain later integration phases.
+   are implemented and tested. The Portal Global Admin Enable, Suspend,
+   Re-enable and Retry Ecommerce controls are implemented and tested. A
+   user-performed local-development Open Store → Suspend → Re-enable
+   workflow passed against one mapped WordPress multisite test site, and
+   re-enable reused the same site. Portal
+   webhooks and SSO remain later integration phases.
    Commerce scheduling and occurrence reconciliation exist under approved
-   ADR-043; production deployment is not claimed. The next delivery phase is
-   the Portal-side Enable/Disable Ecommerce control and practical
-   cross-repository ADR-042 provisioning workflow.
+   ADR-043; production deployment is not claimed.
 2. The BR-066 storefront mechanism that enforces Bingo Play Product
    non-purchasability. Deferred by decision; requires a new reviewed entry
    before any implementer selects a mechanism.
@@ -2591,10 +2631,12 @@ Everything below is tracked work that is NOT a blocker to that demo.
   `PlatformGateway`, `ProvisioningResponse`, `ProvisioningAudit` and the new
   network-only `wp-content/plugins/bingocommerce-platform/`.
   `bingocommerce-platform` is **not** network-activated on this local
-  environment and no provisioning has been executed against this database: the
-  whole path is exercised only in the isolated fixture. The Portal Enable/Disable Ecommerce button remains **NOT
-  implemented** and the manual cross-repository Portal end-to-end test has not
-  been performed. SSO does not exist.
+  environment. The Portal Global
+  Admin Enable, Suspend, Re-enable and Retry Ecommerce controls are
+  implemented and tested in the Laravel Portal repository. A
+  user-performed local-development Open Store → Suspend → Re-enable
+  workflow passed against one mapped WordPress multisite test site, and
+  re-enable reused the same site. SSO does not exist.
   **`bingocommerce-portal-integration` is network-active on this local
   environment** — and `bingocommerce-platform`, as stated above, is not — and the
   ADR-036 Portal constants are configured in the git-ignored `wp-config.php` for

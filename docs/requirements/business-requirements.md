@@ -303,8 +303,13 @@ deferred.
 - The authenticated snapshot/full-pull path, mapping persistence, manual Hall
   synchronization, machine provisioning endpoint/orchestrator, platform
   provisioning filter and automatic site-creation path are implemented and
-  tested. The Portal Enable/Disable Ecommerce control and practical
-  cross-repository end-to-end workflow remain incomplete. Portal webhooks and
+  tested. The Portal Global Admin Enable, Suspend, Re-enable and Retry
+  Ecommerce controls are implemented and tested. Hall Owner Ecommerce access
+  is read-only; assigned Hall Managers cannot see the Ecommerce section or
+  store URL; mutation remains Global Admin-only. A user-performed
+  local-development Open Store → Suspend → Re-enable workflow passed
+  against one mapped WordPress multisite test site, and re-enable reused
+  the same site. Portal webhooks and
   SSO remain deferred. Commerce schedule persistence, recurrence,
   timezone/DST behavior and occurrence reconciliation exist in the current
   repository under approved ADR-043; production deployment is not
@@ -390,10 +395,13 @@ the same standard regardless of this correction — nothing here is over-built
 for the smaller real starting scale. (BR-014)
 
 ## Still Open (do not build against an assumed answer)
-- Portal integration work still open: the Portal Enable/Disable Ecommerce
-  control, practical cross-repository provisioning workflow, webhook
+- Portal integration work still open: webhook
   signature/retry/order behavior, transitional synchronization conflict policy,
-  and SSO protocol/account mapping.
+  and SSO protocol/account mapping. The Portal Global Admin Enable, Suspend,
+  Re-enable and Retry Ecommerce controls are implemented and tested. A
+  user-performed local-development Open Store → Suspend → Re-enable workflow
+  passed against one mapped WordPress multisite test site, and re-enable
+  reused the same site. Production deployment is not claimed.
 - ADR-043 is approved and implemented; production deployment is not claimed.
 - Offline QR/Package usability **technical implementation** (local-server / cache /
   network architecture). The **business expectation** is locked by BR-060:

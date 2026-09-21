@@ -155,8 +155,10 @@ synchronization remain governed by ADR-040 and later reconciliation work.
 Portal webhooks, SSO and transitional local-writer reconciliation remain open.
 Commerce scheduling and occurrence reconciliation exist in the current
 repository under approved ADR-043. ADR-042's BingoCommerce-side machine provisioning path
-is implemented and tested; the Portal control and practical cross-repository
-workflow remain incomplete.
+is implemented and tested. The Portal Global Admin Enable/Suspend/Re-enable/Retry
+controls are implemented and tested. A user-performed local-development Open
+Store → Suspend → Re-enable workflow passed against one mapped WordPress
+multisite test site, and re-enable reused the same site.
 
 ### 2.2 `$wpdb->prefix . 'bingo_play_products'`
 
@@ -1035,8 +1037,10 @@ coordination, HallCommerceState/managed-marker coordination, Portal snapshot
 synchronization, safe API responses, and integration audit attribution
 (ADR-035–ADR-042). The BingoCommerce machine endpoint, operations repository,
 orchestrator, platform provisioning filter and automatic site-creation path are
-implemented and tested; the Portal control and practical cross-repository
-workflow remain incomplete.
+implemented and tested. The Portal Global Admin Enable/Suspend/Re-enable/Retry
+controls are implemented and tested. A user-performed local-development Open
+Store → Suspend → Re-enable workflow passed against one mapped WordPress
+multisite test site, and re-enable reused the same site.
 
 ### `bingocommerce-core`
 
@@ -1062,8 +1066,10 @@ ADR-042 decides the automatic enable/suspend provisioning operations table
 `bc_portal_provisioning_db_version` target 2) and lifecycle at the
 integration/platform boundary; that table is not a Catalog/Session persistence
 artifact. It and the BingoCommerce-side machine provisioning path are
-implemented and tested; the Portal control and practical cross-repository
-workflow remain incomplete. Starter Product / Play Product copy remains
+implemented and tested. The Portal Global Admin Enable/Suspend/Re-enable/Retry
+controls are implemented and tested. A user-performed local-development Open
+Store → Suspend → Re-enable workflow passed against one mapped WordPress
+multisite test site, and re-enable reused the same site. Starter Product / Play Product copy remains
 separately deferred for the ADR-042 MVP empty-store scope (narrowing ADR-027 /
 BR-047).
 
