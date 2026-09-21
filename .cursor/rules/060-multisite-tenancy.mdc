@@ -34,8 +34,8 @@ network mapping repository and synchronized hall-local replicas are implemented.
 - The additive Session schema's `bingo_portal_session_templates`,
   `bingo_session_schedules`, `bingo_session_schedule_dates`, and
   `bingo_session_schedule_packages` are likewise hall-owned/per-site and use
-  the current site's `$wpdb->prefix`. Their presence in the current repository
-  does not approve DRAFT ADR-043 or claim production deployment. Together with
+  the current site's `$wpdb->prefix`. They implement approved ADR-043;
+  production deployment is not claimed. Together with
   the six implemented baseline tables, they make ten implemented tables total.
 - Portal-authoritative Game Types may be replicated only into the correctly
   mapped Hall's per-site Game Type table. Only Portal Sessions owned by that

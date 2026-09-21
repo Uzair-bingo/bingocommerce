@@ -7,7 +7,7 @@ independently activatable and testable.
 |---|---|---|
 | `bingocommerce-core` | Roles & capabilities, tenant context helpers, audit log service, migration framework | WooCommerce (network) |
 | `bingocommerce-catalog` | Hall-scoped Game Type replica/domain behavior, Bingo Play Product domain metadata/mapping, Bingo Package definitions/components, deferred add-on eligibility, BR-032/BR-065 metadata projections, hall electronic-limit override/current-value resolver, starter-product domain logic when that deferred copy exists (ADR-026/ADR-031/ADR-035; ADR-042 MVP runs no starter copy) | core |
-| `bingocommerce-sessions` | Portal Session-template replica; Commerce schedules with immutable named timezone and structured time; dated occurrence generation/reconciliation; inclusive hall-local 30-day window; centralized current-definition membership; Available for Sale; Package assignment; and customer occurrence-before-Package selection (BR-050–BR-052/BR-063/BR-073/BR-077/BR-078; DRAFT ADR-043) | core, catalog |
+| `bingocommerce-sessions` | Portal Session-template replica; Commerce schedules with immutable named timezone and structured time; dated occurrence generation/reconciliation; inclusive hall-local 30-day window; centralized current-definition membership; Available for Sale; Package assignment; and customer occurrence-before-Package selection (BR-050–BR-052/BR-063/BR-073/BR-077/BR-078; approved ADR-043) | core, catalog |
 | `bingocommerce-digital-tickets` | Purchase-time entitlement snapshot (activated on successful online payment confirmation — BR-053), QR issue/redeem, device binding, staff reactivation, Android REST API, redemption accumulation | core, catalog, sessions |
 | `bingocommerce-portal-integration` | Portal-facing machine endpoint; request authentication/validation; provisioning-operation persistence/sequencing; Portal Hall mapping coordination; HallCommerceState/managed-marker coordination; Portal snapshot synchronization; safe API responses and integration audit attribution (ADR-035–ADR-042) | core |
 | `bingocommerce-platform` | Actual WordPress Multisite site creation; WooCommerce/site initialization; triggering existing per-site BingoCommerce migrations and role provisioning; returning a structured setup result to the integration orchestrator; billing lifecycle (BR-016); retention/deletion (BR-017); network reporting. Does not own Catalog domain rules. ADR-042 MVP does not trigger starter Product/Play Product copy | core |
@@ -41,7 +41,7 @@ effective current value.
 The compatibility review produced the additive Portal-template / Commerce-
 schedule / dated-occurrence implementation in the current repository. It
 preserves the implemented Game Type and Session schemas and existing Package and
-Play Product ownership. ADR-043 remains DRAFT and unapproved; production
+Play Product ownership. ADR-043 is approved and implemented; production
 deployment is not claimed.
 
 ## 1a. Portal Integration Boundary (approved increments implemented; not deployed)
@@ -85,7 +85,7 @@ deployment is not claimed.
   (implemented and tested); Portal Enable/Disable control plus practical
   cross-repository end-to-end provisioning workflow (incomplete); SSO later;
   Portal webhooks later. Commerce scheduling and occurrence reconciliation
-  exist under DRAFT ADR-043.
+  exist under approved ADR-043.
 - `Enable BingoCommerce` / Disable Ecommerce is a Portal Global Admin-only
   platform capability (BR-075, BR-076), separate from normal Hall Settings
   authorization. ADR-042 decides the machine REST contract, operations table,

@@ -81,7 +81,7 @@ manually by the Hall Manager in v1; time is never parsed from display names.
 One Package may be assigned to multiple dated commerce occurrences. The
 compatibility review preserved the existing Game Type and Session tables and
 added separate Portal-template and Commerce-schedule persistence in Session
-schema v3. ADR-043 remains DRAFT and unapproved; the implementation exists in
+schema v3. ADR-043 is approved and implemented; the implementation exists in
 the current repository and production deployment is not claimed.
 
 Approved delivery order (ADR-042 / BR-076) is:
@@ -95,7 +95,7 @@ Approved delivery order (ADR-042 / BR-076) is:
    provisioning workflow — incomplete;
 6. SSO — later;
 7. Portal webhooks — later; Commerce scheduling and occurrence reconciliation
-   exist under DRAFT ADR-043.
+   exist under approved ADR-043.
 
 `Enable BingoCommerce` / Disable Ecommerce is a separate Portal Global
 Admin-only platform capability (BR-075, BR-076). ADR-042 decides the machine
@@ -134,7 +134,7 @@ automatic Enable/Disable. See
   ticket row; Digital and Hybrid/Combo packages create exactly one, covering
   the digital entitlement only (BR-044, ADR-030).
 - Catalog/Session persistence (ADR-031, narrowed by ADR-035 and extended in the
-  current repository by DRAFT ADR-043): WooCommerce
+  current repository by approved ADR-043): WooCommerce
   products are commerce shells. The current implementation has ten per-site
   custom tables: four Catalog v5 tables (`bingo_game_types`,
   `bingo_play_products`, `bingo_packages`, `bingo_package_components`) and six
@@ -314,6 +314,6 @@ Must explicitly support (confirm before committing to a provider, don't assume):
   SSO security protocol. The BingoCommerce-side ADR-042 provisioning path is
   implemented and tested; the Portal control and practical cross-repository
   workflow remain incomplete.
-- Separate ratification and production deployment of DRAFT ADR-043. Its
+- Production deployment of approved ADR-043. Its
   non-destructive Session schedule/occurrence implementation exists in the
   current repository.

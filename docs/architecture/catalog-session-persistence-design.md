@@ -4,8 +4,8 @@ Status: ADR-031's seven-table baseline is approved conceptual architecture. The
 current repository implements four Catalog tables at schema v5 and six Session
 tables at schema v3, for ten implemented tables total. The conceptual
 `bingo_package_addons` table and `PackageAddonService` remain deferred. The
-additive Session schedule/occurrence model exists under DRAFT, unapproved
-ADR-043; production deployment is not claimed.
+additive Session schedule/occurrence model exists under approved ADR-043;
+production deployment is not claimed.
 
 This document expands ADR-031 into the conceptual persistence contract for the
 BingoCommerce Catalog and Session model. It is not executable SQL and does not
@@ -21,7 +21,7 @@ review produced a non-destructive additive model: the existing local Game Type,
 Session and Package-assignment tables remain, while separate Portal-template
 and Commerce-schedule tables support generated dated occurrences. Nothing in
 that model deletes legacy tables or discards existing relationships. ADR-043
-remains DRAFT and unapproved.
+is approved and implemented; production deployment is not claimed.
 
 ADR-039 approves the Game Type name/index and imported-code design below for
 Catalog v4 -> v5. The prerequisite Phase 3D2 name-validation amendment is
@@ -153,8 +153,8 @@ directly. Transaction/locking mechanics, replay/stale-order handling,
 Session-template application, and local writer restrictions after
 synchronization remain governed by ADR-040 and later reconciliation work.
 Portal webhooks, SSO and transitional local-writer reconciliation remain open.
-Commerce scheduling and occurrence reconciliation exist in the current working
-tree under DRAFT ADR-043. ADR-042's BingoCommerce-side machine provisioning path
+Commerce scheduling and occurrence reconciliation exist in the current
+repository under approved ADR-043. ADR-042's BingoCommerce-side machine provisioning path
 is implemented and tested; the Portal control and practical cross-repository
 workflow remain incomplete.
 
@@ -413,7 +413,7 @@ A Package is selectable only when the Session is storefront-eligible, this
 assignment exists, the Package and required base components are active/valid,
 and the linked WooCommerce Package product is valid and purchasable.
 
-### 2.8 Implemented Additive Portal/Schedule Model (DRAFT ADR-043)
+### 2.8 Implemented Additive Portal/Schedule Model (approved ADR-043)
 
 The current repository implements the compatibility model as follows:
 
@@ -434,7 +434,7 @@ The current repository implements the compatibility model as follows:
 
 The implementation preserves existing domain IDs and relationships, does not use
 names/domains/`device_group_id`/XML IDs as identity, and must not assume
-`bingo_sessions` is deleted or replaced. ADR-043 remains DRAFT and unapproved;
+`bingo_sessions` is deleted or replaced. ADR-043 is approved and implemented;
 the repository state does not claim production deployment.
 
 Only Portal Sessions satisfying
@@ -1054,7 +1054,7 @@ This persistence design deliberately does not decide:
 
 - Portal webhook/reconciliation persistence and protocols.
 - SSO persistence/protocol.
-- Production deployment or ratification of DRAFT ADR-043.
+- Production deployment of approved ADR-043.
 
 ADR-042 decides the automatic enable/suspend provisioning operations table
 (including permanent internal `site_ownership_id`,

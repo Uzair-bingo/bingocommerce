@@ -39,7 +39,8 @@ current model.
   Package-to-occurrence assignment, and the optional hall electronic-limit
   override. ADR-031's two baseline Session tables remain in place; Session
   schema v3 adds the Portal-template replica and three schedule-definition
-  tables without replacing them. ADR-043 remains DRAFT and unapproved. The
+  tables without replacing them. ADR-043 is approved and implemented;
+  production deployment is not claimed. The
   platform electronic maximum is a
   network option; the optional hall override is a site option;
   `bingocommerce-catalog` resolves the effective current value. Do not store
@@ -124,7 +125,7 @@ ADR-031's seven approved conceptual baseline tables are:
 Of that baseline, the current Catalog v5 and Session v3 schemas implement every
 listed table except `bingo_package_addons`; that table and
 `PackageAddonService` remain deferred. The current repository's Session schema
-v3 also contains these hall-local tables under DRAFT, unapproved ADR-043:
+v3 also contains these hall-local tables under approved ADR-043:
 
 - `$wpdb->prefix . 'bingo_portal_session_templates'`
 - `$wpdb->prefix . 'bingo_session_schedules'`
@@ -154,7 +155,7 @@ for statements issued while its transaction is open. No other feature may
 introduce direct mysqli without reviewed authority. Raw value interpolation into
 SQL remains prohibited everywhere.
 
-DRAFT ADR-043 introduces no transaction transport or advisory-lock transport;
+Approved ADR-043 introduces no transaction transport or advisory-lock transport;
 its schedule writes use ordinary prepared `$wpdb` statements. Do not remove or
 mischaracterize the separate, valid Portal synchronization or ADR-042
 provisioning locks.

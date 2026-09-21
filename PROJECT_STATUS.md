@@ -2298,6 +2298,13 @@
   `session-schedule-admin-increment-1.php` 371/371). ADR-043 remains DRAFT and
   unapproved; separate ratification remains; production deployment is not
   claimed.
+- **[2026-09-21] ADR-043 Revision 9 ratified and approved.** Documentation is
+  synchronized. Implementation commit: `262b250`. Latest focused evidence
+  remains **530/530** (`session-schedules-increment-1.php` 159/159 plus
+  `session-schedule-admin-increment-1.php` 371/371) and was not rerun during
+  this ratification pass. Production deployment is not claimed. The next
+  delivery phase is the Portal-side Enable/Disable Ecommerce control and
+  practical cross-repository ADR-042 provisioning workflow.
 - No Hall Staff Management work currently in progress.
 - Package Increment 1 and the legacy Session Increment 1 remain COMPLETE and
   are recorded under Done. No add-on or unrelated Catalog work is in progress.
@@ -2338,9 +2345,8 @@
    **491/491**). The Portal Enable/Disable Ecommerce button remains
    unimplemented.**
    **Production deployment is NOT claimed.** Commerce scheduling and occurrence
-   reconciliation exist in the current repository under DRAFT,
-   unapproved ADR-043. Portal webhooks and transitional local-writer policy
-   remain deferred.
+   reconciliation exist in the current repository under approved ADR-043.
+   Portal webhooks and transitional local-writer policy remain deferred.
 
 Everything below is tracked work that is NOT a blocker to that demo.
 
@@ -2350,8 +2356,10 @@ Everything below is tracked work that is NOT a blocker to that demo.
    are implemented and tested. The Portal Enable/Disable Ecommerce control and
    practical cross-repository end-to-end provisioning workflow remain
    incomplete. Portal webhooks and SSO remain later integration phases.
-   Commerce scheduling and occurrence reconciliation exist under DRAFT
-   ADR-043; separate ratification remains before any deployment claim.
+   Commerce scheduling and occurrence reconciliation exist under approved
+   ADR-043; production deployment is not claimed. The next delivery phase is
+   the Portal-side Enable/Disable Ecommerce control and practical
+   cross-repository ADR-042 provisioning workflow.
 2. The BR-066 storefront mechanism that enforces Bingo Play Product
    non-purchasability. Deferred by decision; requires a new reviewed entry
    before any implementer selects a mechanism.
@@ -2455,11 +2463,12 @@ Everything below is tracked work that is NOT a blocker to that demo.
   §"Catalog lock-order review" is accurate as written. ADR-033 locks
   `bingo_packages` then `bingo_play_products` ascending, and locks no component
   rows at all.
-- Latest verified results **[2026-09-19, DRAFT ADR-043 focused schedule/admin
+- Latest verified results **[2026-09-19, ADR-043 focused schedule/admin
   verification]**: `tests/session-schedules-increment-1.php` **159/159 PASS**
   and `tests/session-schedule-admin-increment-1.php` **371/371 PASS**, for
-  **530/530 passing assertions**. This verifies the current repository
-  implementation; it does not approve ADR-043 or claim production deployment.
+  **530/530 passing assertions**. This is existing evidence from 2026-09-19
+  and was not rerun during the 2026-09-21 ratification pass. ADR-043 is
+  approved and implemented; production deployment is not claimed.
 - Latest verified results **[2026-09-14, ADR-042 BingoCommerce machine
   provisioning path, after three source-review correction passes]**:
   `tests/portal-provisioning-endpoint.php` **50352/50352** and
@@ -2610,7 +2619,7 @@ Everything below is tracked work that is NOT a blocker to that demo.
   `bingo_portal_session_templates`, `bingo_session_schedules`,
   `bingo_session_schedule_dates`, `bingo_session_schedule_packages`); v2 added
   the Portal Session-template replica and v3 adds the non-destructive
-  Commerce-schedule definition and generated-occurrence fields under DRAFT
+  Commerce-schedule definition and generated-occurrence fields under approved
   ADR-043. This is repository state, not a production-deployment claim.
 - **Current Catalog/Session inventory:** **ten implemented tables** — four
   Catalog v5 tables and six Session v3 tables. ADR-031's conceptual

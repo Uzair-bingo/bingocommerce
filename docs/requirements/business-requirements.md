@@ -194,9 +194,9 @@ deferred.
   preserves `bingo_sessions` / `bingo_session_packages`, adds a separate Portal
   Session-template replica and Commerce-schedule definition tables, and links
   generated dated occurrences without destructively replacing legacy rows or
-  Package assignments. ADR-043 remains DRAFT and unapproved, and production
+  Package assignments. ADR-043 is approved and implemented; production
   deployment is not claimed. Sessions/occurrences do not contain the retired
-  session-wide capacity counter. (BR-073, ADR-035, DRAFT ADR-043)
+  session-wide capacity counter. (BR-073, ADR-035, approved ADR-043)
 - One Package may be assigned to multiple dated commerce occurrences. No one-
   Package-to-one-occurrence restriction is introduced. Existing Package/Session
   relationship work remains preserved where compatible. (BR-073, ADR-035)
@@ -307,7 +307,7 @@ deferred.
   cross-repository end-to-end workflow remain incomplete. Portal webhooks and
   SSO remain deferred. Commerce schedule persistence, recurrence,
   timezone/DST behavior and occurrence reconciliation exist in the current
-  repository under DRAFT, unapproved ADR-043; production deployment is not
+  repository under approved ADR-043; production deployment is not
   claimed.
 
 ## Sales Reporting
@@ -394,10 +394,7 @@ for the smaller real starting scale. (BR-014)
   control, practical cross-repository provisioning workflow, webhook
   signature/retry/order behavior, transitional synchronization conflict policy,
   and SSO protocol/account mapping.
-- Separate ratification and deployment decisions for DRAFT ADR-043. Its
-  non-destructive Session schedule/occurrence implementation exists in the
-  current repository; do not infer approval or production deployment from
-  that fact.
+- ADR-043 is approved and implemented; production deployment is not claimed.
 - Offline QR/Package usability **technical implementation** (local-server / cache /
   network architecture). The **business expectation** is locked by BR-060:
   previously synchronized QR/Package information should remain usable at the hall

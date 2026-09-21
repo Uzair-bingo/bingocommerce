@@ -37,8 +37,8 @@ implemented and tested.** The latter includes the REST endpoint, operations
 repository, orchestrator, platform plugin/filter and automatic site-creation
 path. The Portal Enable/Disable Ecommerce control and practical cross-repository
 end-to-end workflow remain incomplete. Commerce scheduling and occurrence
-reconciliation exist in the current repository under DRAFT,
-unapproved ADR-043. **Production deployment is NOT claimed.** Portal webhooks,
+reconciliation exist in the current repository under approved ADR-043.
+**Production deployment is NOT claimed.** Portal webhooks,
 SSO and transitional local-writer policy remain future work.
 
 All Portal identities below belong to the single authoritative Bingo Innovation
@@ -230,7 +230,7 @@ The approved authority split is not permission for destructive refactoring.
 The compatibility review produced the approved, non-destructive Phase 3C1 Game
 Type identity link and Phase 3C2 Session-template replica persistence. The
 current repository also implements the additive Commerce-schedule and dated-
-occurrence design under DRAFT, unapproved ADR-043. Existing dated Commerce
+occurrence design under approved ADR-043. Existing dated Commerce
 Sessions and `bingo_session_packages` relationships remain preserved. Any
 future refactor still requires a separate reviewed design that preserves
 historical identities and relationships and does not assume the existing
@@ -495,7 +495,7 @@ Implementation order is fixed by ADR-042 / BR-076:
    provisioning workflow — incomplete;
 6. SSO — later;
 7. Portal webhooks — later; Commerce scheduling and occurrence reconciliation
-   exist under DRAFT ADR-043.
+   exist under approved ADR-043.
 
 Webhooks and reconciliation are **not** prerequisites for automatic
 provisioning. Full pull and idempotent mapping remain the recovery baseline
@@ -509,7 +509,7 @@ remain undecided or deferred until their dedicated reviews:
 - webhook event types, signatures, ordering, retry, replay, and delivery logs;
 - any additional sync-state/cursor persistence and reconciliation state;
 - conflict policy for transitional local Game Type changes;
-- production ratification/deployment of DRAFT ADR-043;
+- production deployment of approved ADR-043;
 - SSO protocol/account/tenant mapping; and
 - monitoring, alerting, retention, and operational runbooks.
 
@@ -548,7 +548,7 @@ Network Super Admin retains emergency and oversight access. Ordinary Hall staff
 (such as Game Operators) receive no synchronization authority. Phase 3G itself
 did not implement webhooks, Commerce scheduling, local writer restrictions or
 reconciliation. Commerce scheduling and occurrence reconciliation now exist in
-the current repository under DRAFT ADR-043; Portal webhooks and transitional
+the current repository under approved ADR-043; Portal webhooks and transitional
 local-writer policy remain open.
 
 **Phase 3G Mechanics (ADR-041) — COMPLETE after source review, automated testing
@@ -598,7 +598,7 @@ untracked, and the Portal stores only its SHA-256 hash.
 
 Production deployment is NOT claimed: this was a local Portal test environment
 with no production Portal, hosting or customer data. Commerce scheduling now
-exists in the current repository under DRAFT ADR-043; Portal
+exists in the current repository under approved ADR-043; Portal
 webhooks do not exist. The plugin activation and web configuration are local
 test-environment state, not a deployment.
 
