@@ -4,7 +4,7 @@
  * CLI integration coverage for the read-only SetupReadiness evaluator.
  *
  * Run from the repository root:
- * php tests/setup-readiness.php
+ * BC_TEST_DB=bingocommerce_state_test_suites php tests/setup-readiness.php
  *
  * Non-destructive by construction:
  *
@@ -31,7 +31,36 @@ $_SERVER['REQUEST_URI']    = '/';
 $_SERVER['REQUEST_METHOD'] = 'GET';
 $_SERVER['REMOTE_ADDR']    = '127.0.0.1';
 
-require dirname( __DIR__ ) . '/wp-load.php';
+/*
+ * ADR-043 §16 amendment: routed through the shared fixture bootstrap.
+ *
+ * NOT because this suite creates sites — it creates none and writes nothing.
+ * Because of what it ASSERTS. SetupReadiness compares each hall's applied
+ * Sessions schema version against `Sessions\Migrations::DB_VERSION` and runs
+ * that migration's structural verifier, so the suite's whole premise is that
+ * the booted database is at the version the CODE declares. ADR-043 raises
+ * DB_VERSION to 3 while deliberately leaving the development installation at
+ * 2, which makes every hall there legitimately unready: the suite would report
+ * `sessions_schema_invalid` for sites 1-4 and 868-870 and fail, and the failure
+ * would be a true statement about a database the ADR requires to stay where it
+ * is, not a defect.
+ *
+ * The fixture is the only database where v3 is actually applied, so it is the
+ * only one against which this suite's assertions mean anything while the
+ * migration is in flight.
+ *
+ * tests/fixtures/wordpress-bootstrap.php is fail-closed: without `BC_TEST_DB`
+ * it stops with a guard message rather than reaching the development
+ * installation.
+ */
+/*
+ * WooCommerce is network-active on the development installation, so it has
+ * always been loaded here. The fixture loads it only on request, and this
+ * suite evaluates WooCommerce readiness, so it asks for it explicitly.
+ */
+putenv( 'BC_FIXTURE_NETWORK_ACTIVE=1' );
+putenv( 'BC_FIXTURE_WOOCOMMERCE=1' );
+require __DIR__ . '/fixtures/wordpress-bootstrap.php';
 require_once ABSPATH . 'wp-admin/includes/ms.php';
 
 if ( ! class_exists( '\BingoCommerce\PortalIntegration\SetupReadiness' ) ) {

@@ -31,13 +31,15 @@ Admin retains emergency and oversight access, and ordinary Hall staff receive
 no synchronization authority. Source review passed; after fixture isolation
 (`7f3e332`), the local harness reports **467 passing assertions**; the
 practical browser test PASSED against a local Portal test environment.
-**Commerce-state persistence, SetupReadiness (199/199), and Hall Commerce
-access enforcement are implemented foundations. ADR-042 / BR-076 decide
-automatic Commerce enable/suspend provisioning; that endpoint, operations
-table, Portal button, and automatic site creation are NOT implemented.**
-**Production deployment is NOT claimed. Scheduling and webhooks do not exist.**
-Local writer restrictions, reconciliation, and SSO remain future work and are
-unimplemented.
+**Commerce-state persistence, SetupReadiness (199/199), Hall Commerce access
+enforcement, and the BingoCommerce-side ADR-042 machine provisioning path are
+implemented and tested.** The latter includes the REST endpoint, operations
+repository, orchestrator, platform plugin/filter and automatic site-creation
+path. The Portal Enable/Disable Ecommerce control and practical cross-repository
+end-to-end workflow remain incomplete. Commerce scheduling and occurrence
+reconciliation exist in the current repository under DRAFT,
+unapproved ADR-043. **Production deployment is NOT claimed.** Portal webhooks,
+SSO and transitional local-writer policy remain future work.
 
 All Portal identities below belong to the single authoritative Bingo Innovation
 Portal environment:
@@ -62,7 +64,7 @@ Names are attributes and MUST NEVER be cross-system identities.
 | Pricing, inventory, and commerce configuration | BingoCommerce |
 | Commerce schedule and structured commerce time | BingoCommerce |
 | Dated commerce occurrences | BingoCommerce |
-| Package-to-occurrence availability and five-day eligibility | BingoCommerce |
+| Package-to-occurrence availability, thirty-day eligibility and current-definition membership | BingoCommerce |
 | Checkout, orders, and payments | BingoCommerce/WooCommerce |
 | Future entitlement, QR, and redemption commerce state | BingoCommerce |
 
@@ -80,10 +82,10 @@ Portal halls.id <-> WordPress Site ID
 Names and domains are editable routing/display attributes. They are not trusted
 integration identity. Phase 3B implements the one-to-one Portal Hall ID / Site
 ID persistence foundation through the network-wide
-`bingo_portal_hall_mappings` table and its mapping repository. Automatic
-enable/suspend provisioning that uses that mapping is decided by ADR-042 and
-is not yet implemented. Reconciliation/recovery beyond the mapping foundation
-remain deferred.
+`bingo_portal_hall_mappings` table and its mapping repository. ADR-042's
+BingoCommerce machine endpoint, orchestrator, operations persistence, platform
+filter and automatic site-creation path are implemented and tested. The Portal
+control and practical cross-repository workflow remain incomplete.
 
 ### Game Type
 
@@ -128,7 +130,8 @@ BingoCommerce commerce schedule
         v
 BingoCommerce dated commerce occurrence
         |
-        | Package availability, five-day sales eligibility,
+        | Package availability, thirty-day sales eligibility,
+        | current-definition membership,
         | purchase/order attribution, future entitlement state
         v
 Customer purchase references this exact occurrence
@@ -182,16 +185,27 @@ For a dated occurrence on date `D`, the current BingoCommerce storefront rule
 continues to apply:
 
 ```text
-D - 5 calendar days <= hall_local_today <= D
+D - 30 calendar days <= hall_local_today <= D
 AND Available for Sale = ON
+AND the generated occurrence belongs to the current committed definition
 ```
 
-The hall site's WordPress timezone supplies `hall_local_today`. Structured
-Commerce time is owned by BingoCommerce and may be entered manually by the Hall
-Manager in v1. It is not derived from display text. No business logic may parse
-a Session/template/occurrence name to infer time, sales boundaries, or
-redemption cutoffs. Database columns, UI controls, storage schema, and timezone
-implementation remain deferred to the Session compatibility/scheduling design.
+The schedule captures the Hall's named WordPress timezone at creation and keeps
+it immutable; that zone supplies `hall_local_today` for generated occurrences.
+Structured Commerce time is owned by BingoCommerce and may be entered manually
+by the Hall Manager in v1. It is not derived from display text. User-facing
+dates use `MM/DD/YYYY`; database, SQL, API and internal canonical dates may
+remain `YYYY-MM-DD`. No business logic may parse a
+Session/template/occurrence name to infer time, sales boundaries, or redemption
+cutoffs.
+
+BR-078 centralizes current committed-definition membership across guarded ON,
+purchase eligibility, Upcoming and administration. Removing a strictly future
+date is allowed while its occurrence is ON: membership immediately makes it
+ineligible and a successful definition edit turns it OFF. Re-adding a retained
+occurrence preserves identity and Package assignments but leaves it OFF until
+explicitly enabled. Existing withdrawal, sale-lock, archival and historical-
+retention rules remain unchanged; no automatic archival is introduced.
 
 ## 4. Existing BingoCommerce Compatibility Boundary
 
@@ -200,10 +214,10 @@ The approved authority split is not permission for destructive refactoring.
 - Packages are retained and remain BingoCommerce-authoritative.
 - Bingo Play Products are retained and remain BingoCommerce-authoritative.
 - The existing local Game Type domain is retained, with its Phase 3C1 Portal
-  identity link in place; synchronization remains a later phase.
-- The initial compatibility review produced Phase 3C2's separate Portal
-  Session-template replica table without replacing the existing dated Commerce
-  Session implementation.
+  identity link and Hall-scoped snapshot synchronization implemented.
+- The compatibility review produced Phase 3C2's separate Portal Session-
+  template replica and the additive Session schema v3 schedule/occurrence model
+  without replacing the existing dated Commerce Session implementation.
 - Existing Package-to-Session assignment work is preserved wherever it can map
   safely to Package-to-dated-occurrence availability.
 - One Package may be assigned to multiple dated commerce occurrences; no one-
@@ -213,11 +227,12 @@ The approved authority split is not permission for destructive refactoring.
 - Existing Catalog concurrency transports and lock-order decisions remain
   unchanged; this document authorizes no new database transport.
 
-The initial compatibility review produced the approved, non-destructive Phase
-3C1 Game Type identity link and Phase 3C2 Session-template replica persistence.
-Existing dated Commerce Sessions and `bingo_session_packages` relationships
-remain preserved. Any future commerce-schedule or dated-occurrence refactor
-still requires a separate reviewed compatibility design that preserves
+The compatibility review produced the approved, non-destructive Phase 3C1 Game
+Type identity link and Phase 3C2 Session-template replica persistence. The
+current repository also implements the additive Commerce-schedule and dated-
+occurrence design under DRAFT, unapproved ADR-043. Existing dated Commerce
+Sessions and `bingo_session_packages` relationships remain preserved. Any
+future refactor still requires a separate reviewed design that preserves
 historical identities and relationships and does not assume the existing
 Session table is deleted or replaced.
 
@@ -316,12 +331,12 @@ The public error vocabulary is limited to `invalid_portal_hall_id`,
 validator-generated structural path. Raw bodies, Portal names, credentials, and
 upstream responses never reach an error or a log.
 
-This contract authorizes validation only. Snapshot application/import and
-persistence remain Phase 3E or later; ADR-038 below freezes the specific v1
-Game Type absence rule without implementing it. Reconciliation, Hall mapping
-mutation, Commerce scheduling, webhooks, and SSO remain deferred. Automatic
-enable/suspend provisioning is decided later by ADR-042 / BR-076 and is not
-implemented by this validation contract.
+This Phase 3D2 contract authorized validation only. At that phase, snapshot
+application/import and persistence remained Phase 3E work; ADR-038 below froze
+the specific v1 Game Type absence rule without implementing it. Hall mapping
+mutation, Commerce scheduling, webhooks, SSO and automatic enable/suspend
+provisioning were outside this validation increment. Later sections record the
+subsequent implemented state.
 
 ### Pre-Phase 3E: snapshot completeness and Game Type absence
 
@@ -389,8 +404,8 @@ version only after complete verification; new sites receive final v5 directly.
 The name-validation amendment is implemented and tested; COMPLETE.
 Catalog v5 is implemented and tested; COMPLETE. Phase 3E, Portal importing, and
 imported-code allocation are implemented under ADR-040 and are exercised by
-`tests/portal-snapshot-application.php`; they remain pending final source review
-and the external Portal test-environment run.
+`tests/portal-snapshot-application.php`; source review and the local external-
+Portal test-environment run are complete as recorded below.
 
 ### Phase 3E Portal snapshot application
 
@@ -451,9 +466,10 @@ a `0600` file to a temporary runner outside the repository and never written to
 configuration, Git, logs, or output.
 
 Production deployment is NOT claimed — that run used a local Portal on
-`127.0.0.1` with no production Portal, hosting, or customer data. Phase 3G's
-manual Hall-scoped synchronization, local writer restrictions, webhooks, and
-reconciliation remain future work.
+`127.0.0.1` with no production Portal, hosting, or customer data. At Phase 3E's
+completion, Phase 3G manual Hall-scoped synchronization, local writer
+restrictions, webhooks and reconciliation were still future work; Phase 3G is
+now complete, while the current open items are stated below.
 
 Approved shape:
 
@@ -473,11 +489,13 @@ Implementation order is fixed by ADR-042 / BR-076:
 2. prove idempotent Hall, Game Type, and Session-template mapping / multi-Hall
    proof — complete;
 3. manual Hall-scoped synchronization — complete;
-4. automatic Commerce enable/suspend provisioning — current work (decided;
-   not implemented);
-5. practical local end-to-end provisioning test;
+4. BingoCommerce-side automatic Commerce enable/suspend provisioning —
+   implemented and tested;
+5. Portal Enable/Disable control and practical cross-repository end-to-end
+   provisioning workflow — incomplete;
 6. SSO — later;
-7. Portal webhooks, scheduling, and reconciliation — later, separately reviewed.
+7. Portal webhooks — later; Commerce scheduling and occurrence reconciliation
+   exist under DRAFT ADR-043.
 
 Webhooks and reconciliation are **not** prerequisites for automatic
 provisioning. Full pull and idempotent mapping remain the recovery baseline
@@ -491,14 +509,14 @@ remain undecided or deferred until their dedicated reviews:
 - webhook event types, signatures, ordering, retry, replay, and delivery logs;
 - any additional sync-state/cursor persistence and reconciliation state;
 - conflict policy for transitional local Game Type changes;
-- recurrence expansion horizon, regeneration, timezone, daylight-saving, and
-  boundary behavior;
+- production ratification/deployment of DRAFT ADR-043;
 - SSO protocol/account/tenant mapping; and
 - monitoring, alerting, retention, and operational runbooks.
 
 ADR-042 decides automatic enable/suspend machine authentication, REST path,
-operations table, empty-store MVP, suspend/re-enable, and plugin ownership;
-those features are not implemented yet.
+operations table, empty-store MVP, suspend/re-enable, and plugin ownership. The
+BingoCommerce-side implementation exists and is tested; the Portal control and
+practical cross-repository workflow remain incomplete.
 
 ### Phase 3F — Multi-Hall Tenant-Isolation Proof (Verification Summary)
 
@@ -527,8 +545,11 @@ hashes, and step-by-step evidence, see `PROJECT_STATUS.md`.
 **Phase 3G Business Scope:** Phase 3G provides manual, Hall-scoped
 synchronization: an authorized Hall Manager synchronizes their own Hall, while
 Network Super Admin retains emergency and oversight access. Ordinary Hall staff
-(such as Game Operators) receive no synchronization authority. Webhooks and
-scheduling remain deferred, as do local writer restrictions and reconciliation.
+(such as Game Operators) receive no synchronization authority. Phase 3G itself
+did not implement webhooks, Commerce scheduling, local writer restrictions or
+reconciliation. Commerce scheduling and occurrence reconciliation now exist in
+the current repository under DRAFT ADR-043; Portal webhooks and transitional
+local-writer policy remain open.
 
 **Phase 3G Mechanics (ADR-041) — COMPLETE after source review, automated testing
 and practical browser testing.** `PortalSyncAdmin` registers a
@@ -576,8 +597,9 @@ directly through the ADR-036 constant in `wp-config.php`, which is git-ignored a
 untracked, and the Portal stores only its SHA-256 hash.
 
 Production deployment is NOT claimed: this was a local Portal test environment
-with no production Portal, hosting or customer data. **Scheduling and webhooks do
-not exist.** The plugin activation and web configuration are local
+with no production Portal, hosting or customer data. Commerce scheduling now
+exists in the current repository under DRAFT ADR-043; Portal
+webhooks do not exist. The plugin activation and web configuration are local
 test-environment state, not a deployment.
 
 **Credential-test wording (current).** `wp-config.php` executes and evaluates its
@@ -599,17 +621,17 @@ Platform Admin / Network Super Admin do not initiate automatic Enable/Disable;
 they retain HallCommerceGate recovery access plus explicit legacy backfill and
 ownership-unproven orphan recovery only.
 
-**Implemented foundations (not automatic provisioning):** Commerce-state
-persistence (`HallCommerceState`), read-only `SetupReadiness`, and Hall
-Commerce access enforcement (`HallCommerceAccess` / `HallCommerceGate`) exist.
-Automatic provisioning, the provisioning-operations table (including
-fingerprint columns), the machine REST endpoint, the Portal Enable/Disable
-control, and automatic site creation do **not** exist yet.
+**Implemented BingoCommerce path:** Commerce-state persistence
+(`HallCommerceState`), read-only `SetupReadiness`, Hall Commerce access
+enforcement (`HallCommerceAccess` / `HallCommerceGate`), the provisioning-
+operations table, machine REST endpoint, orchestrator, platform plugin/filter
+and automatic site creation exist and are tested. The Portal Enable/Disable
+control and practical cross-repository workflow remain incomplete.
 
 **Plugin ownership and hook.** As in ADR-042:
 `bingocommerce-portal-integration` orchestrates;
 `bingocommerce-platform` creates/initializes via the decided filter
-`bingocommerce_platform_provision_hall_site` (not implemented);
+`bingocommerce_platform_provision_hall_site` (implemented);
 `bingocommerce-catalog` owns Catalog rules with no MVP starter copy;
 `bingocommerce-core` owns AuditLog/shared infrastructure only.
 

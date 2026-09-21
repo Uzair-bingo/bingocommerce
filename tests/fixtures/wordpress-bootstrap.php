@@ -1,18 +1,31 @@
 <?php
 
 /**
- * WordPress bootstrap for CLI harnesses: development installation by default,
- * isolated fixture on request.
+ * WordPress bootstrap for the CLI harnesses that must run against the isolated
+ * fixture. FAIL-CLOSED: it has no path to the development database.
  *
- * ADDITIVE, AND THE DEFAULT IS UNCHANGED. Without `BC_TEST_DB` this file does
- * exactly what the harnesses did before it existed — `require wp-load.php` — so
- * every previously recorded result is still reproducible the same way.
+ * WHY THERE IS NO FALLBACK. An earlier revision of this file fell back to
+ * `require wp-load.php` when `BC_TEST_DB` was absent, so that routing a harness
+ * through it was behaviour-preserving. That fallback is the exact mechanism by
+ * which a site-creating suite, run without the variable, applied Sessions v3
+ * structure to the persistent development installation: `bingocommerce-sessions`
+ * is network-active there, so every wp_insert_site() fires its
+ * `wp_initialize_site` handler and provisions the CURRENT schema into whichever
+ * database is booted. A default that is correct only when the operator
+ * remembers an environment variable is not a guard. This file now refuses to
+ * boot without one, and the refusal is unconditional.
  *
- * WITH `BC_TEST_DB` the harness boots the isolated fixture instead
- * (tests/fixtures/isolated-multisite.php), which is guarded by its own
- * allowlist and sentinel and never opens the development database. That is what
- * lets suites which create and destroy disposable Multisite SITES run without
- * creating a single site in the persistent development installation.
+ * Consequently only harnesses that MUST run against the fixture are routed
+ * here. Every other harness still requires `wp-load.php` directly and is
+ * unchanged; routing one of those through this file would have been a change
+ * with no reason behind it.
+ *
+ * The fixture itself (tests/fixtures/isolated-multisite.php) is guarded by its
+ * own allowlist, its own sentinel, and an explicit refusal of the development
+ * database name. It opens ONE connection to the development database, which
+ * issues `SHOW CREATE TABLE` and nothing else, to mirror table STRUCTURE into a
+ * newly created fixture; WordPress is never pointed at that connection and no
+ * statement on it writes.
  *
  * WHY THE PLUGINS ARE INITIALIZED EXPLICITLY HERE. The fixture network-activates
  * `bingocommerce-portal-integration` and, on request, WooCommerce; the other
@@ -34,10 +47,24 @@ if ( defined( 'BC_TEST_BOOTSTRAPPED' ) ) {
 }
 define( 'BC_TEST_BOOTSTRAPPED', true );
 
+/*
+ * THE FAIL-CLOSED GATE. Enforced before anything is loaded, so a harness that
+ * reaches this file without naming its database stops here rather than
+ * discovering the development installation underneath it.
+ *
+ * The name is only accepted, not trusted: tests/fixtures/isolated-multisite.php
+ * checks it against the fixture allowlist, refuses it if it equals the
+ * development database name from wp-config.php, and proves sentinel ownership
+ * before it issues a single write.
+ */
 if ( '' === (string) getenv( 'BC_TEST_DB' ) ) {
-	require dirname( __DIR__, 2 ) . '/wp-load.php';
-
-	return;
+	fwrite(
+		STDERR,
+		"FIXTURE GUARD: BC_TEST_DB is not set.\n"
+		. "This harness boots the isolated fixture and has no development-database fallback.\n"
+		. "Re-run it as: BC_TEST_DB=bingocommerce_state_test_suites php " . ( $_SERVER['argv'][0] ?? 'tests/<harness>.php' ) . "\n"
+	);
+	exit( 1 );
 }
 
 // Load the Portal Integration plugin the way production does, so its
@@ -83,6 +110,24 @@ if ( '' === (string) getenv( 'BC_FIXTURE_NETWORK_ACTIVE' ) ) {
 unset( $_SERVER['HTTP_HOST'] );
 
 require __DIR__ . '/isolated-multisite.php';
+
+/*
+ * PROOF, NOT TRUST. The fixture has already checked the allowlist, refused the
+ * development database by name and verified sentinel ownership. This asserts
+ * the OUTCOME of those checks — the database WordPress is actually bound to —
+ * so a future change that weakens one of them fails here instead of running.
+ *
+ * It covers every harness routed through this file, workers included, which is
+ * why it lives in the bootstrap rather than being repeated in each suite.
+ */
+if ( ! defined( 'DB_NAME' ) || ! in_array( DB_NAME, BC_FIXTURE_DB_ALLOWLIST, true ) ) {
+	fwrite(
+		STDERR,
+		'FIXTURE GUARD: WordPress is bound to ' . ( defined( 'DB_NAME' ) ? "'" . DB_NAME . "'" : 'an undetermined database' )
+		. ", which is not an isolated fixture database.\n"
+	);
+	exit( 1 );
+}
 
 require_once ABSPATH . 'wp-admin/includes/upgrade.php';
 require_once ABSPATH . 'wp-admin/includes/ms.php';
@@ -238,6 +283,85 @@ foreach ( [ BC_FIXTURE_HALL_A, BC_FIXTURE_HALL_B, 4 ] as $bc_fixture_hall ) {
 		if ( class_exists( '\WC_Install' ) && ! get_option( 'woocommerce_version' ) ) {
 			\WC_Install::install();
 		}
+
+		/*
+		 * THE HALL'S OWN PRODUCT-ATTRIBUTES LOOKUP TABLE.
+		 *
+		 * WC_Install::get_schema() takes this table's name from
+		 * DataRegenerator, and DataRegenerator is a DI-container SINGLETON that
+		 * freezes `$lookup_table_name` from `$wpdb->prefix` in its constructor.
+		 * On a real installation each hall's WooCommerce is installed in its own
+		 * web request, so the container is built with that hall's prefix and the
+		 * name is right. A CLI fixture installs three halls in ONE process: the
+		 * container is built once, while the main site is current, and every
+		 * later switch_to_blog() still emits the MAIN site's name — so all three
+		 * halls share `bc_wc_product_attributes_lookup` and none of them has its
+		 * own. tests/setup-readiness.php then reports `woocommerce_tables_missing`
+		 * for halls 2, 3 and 4, which is a fixture artefact and not a property of
+		 * the code under test.
+		 *
+		 * The remedy re-points WooCommerce's OWN schema string at the current
+		 * hall rather than restating it here, so the fixture cannot drift from
+		 * the definition WC_Install uses. dbDelta is idempotent and issues
+		 * nothing once the table matches.
+		 */
+		if ( function_exists( 'wc_get_container' )
+			&& class_exists( '\Automattic\WooCommerce\Internal\ProductAttributesLookup\DataRegenerator' ) ) {
+			$bc_fixture_regen  = wc_get_container()->get( \Automattic\WooCommerce\Internal\ProductAttributesLookup\DataRegenerator::class );
+			$bc_fixture_frozen = (string) $bc_fixture_regen->get_lookup_table_name();
+			$bc_fixture_wanted = $GLOBALS['wpdb']->prefix . 'wc_product_attributes_lookup';
+			$bc_fixture_sql    = (string) $bc_fixture_regen->get_table_creation_sql();
+
+			if ( '' !== $bc_fixture_frozen && $bc_fixture_frozen !== $bc_fixture_wanted ) {
+				$bc_fixture_sql = str_replace( $bc_fixture_frozen, $bc_fixture_wanted, $bc_fixture_sql );
+			}
+			dbDelta( $bc_fixture_sql );
+			unset( $bc_fixture_regen, $bc_fixture_frozen, $bc_fixture_wanted, $bc_fixture_sql );
+		}
+
+		/*
+		 * MATCH THE DEVELOPMENT INSTALLATION'S HPOS CONFIGURATION.
+		 *
+		 * Every development hall runs WooCommerce 11.0.1 with
+		 * `woocommerce_custom_orders_table_enabled = yes`. The fixture's
+		 * WC_Install run CREATES the HPOS tables — it records
+		 * `woocommerce_custom_orders_table_created = yes` — but leaves usage
+		 * switched off, because WooCommerce only turns it on by itself for a shop
+		 * it judges to be new. A suite that asserts on hall readiness would then
+		 * be reading a configuration no hall in this platform actually has.
+		 *
+		 * This sets a site OPTION to the value the development halls carry. It
+		 * does not stub, bypass or reimplement anything: the tables are
+		 * WooCommerce's, created by WooCommerce's own installer.
+		 */
+		if ( class_exists( '\WC_Install' ) && 'yes' === get_option( 'woocommerce_custom_orders_table_created' )
+			&& 'yes' !== get_option( 'woocommerce_custom_orders_table_enabled' ) ) {
+			update_option( 'woocommerce_custom_orders_table_enabled', 'yes' );
+		}
+
+		/*
+		 * Action Scheduler's own per-site tables.
+		 *
+		 * WC_Install::install() does not create them: on a real installation
+		 * Action Scheduler registers its schema on `init` and creates them the
+		 * first time it runs, which a CLI harness never reaches. Without them
+		 * every WC_Product->save() emits "table doesn't exist" errors from the
+		 * product-attribute lookup's scheduled callback, and the product write
+		 * that a Package fixture depends on fails — a fixture artefact, not a
+		 * defect in the code under test. The development installation has these
+		 * tables, so creating them here matches the shape the suites were
+		 * written against.
+		 *
+		 * Both schema classes are Action Scheduler's own, and register_tables()
+		 * is idempotent: it is a dbDelta wrapper that issues nothing once the
+		 * tables match.
+		 */
+		foreach ( [ '\ActionScheduler_StoreSchema', '\ActionScheduler_LoggerSchema' ] as $bc_fixture_as_schema ) {
+			if ( class_exists( $bc_fixture_as_schema ) ) {
+				( new $bc_fixture_as_schema() )->register_tables( true );
+			}
+		}
+		unset( $bc_fixture_as_schema );
 		if ( class_exists( '\BingoCommerce\Core\Roles' )
 			&& (int) get_option( \BingoCommerce\Core\Roles::SITE_VERSION_OPTION, 0 ) < \BingoCommerce\Core\Roles::SCHEMA_VERSION ) {
 			// add_cap() updates the stored role option but not the cached

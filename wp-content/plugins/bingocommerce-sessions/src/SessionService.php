@@ -33,17 +33,37 @@ final class SessionService {
 
 	private const STATUSES = [ self::STATUS_ACTIVE, self::STATUS_ARCHIVED ];
 
-	/** BR-051/BR-063: the sales window opens this many calendar days before the Session date. */
-	private const SALES_WINDOW_DAYS = 5;
+	/**
+	 * BR-051/BR-063: the sales window opens this many calendar days before the
+	 * Session date.
+	 *
+	 * THE ONE AUTHORITATIVE PLACE THIS NUMBER LIVES. `salesWindowStartDate()`
+	 * and `evaluate_available_today()` are its only two consumers, and every
+	 * other reader of the window — SessionEligibility's storefront predicate,
+	 * SessionAdmin's "On sale today" column, this Session type and every
+	 * schedule-generated one — goes through one of those two functions rather
+	 * than repeating the arithmetic. Changed from 5 to 30 calendar days; no
+	 * other call site duplicates this literal.
+	 */
+	private const SALES_WINDOW_DAYS = 30;
 
 	private const DISPLAY_NAME_MAX = 191;
 
-	private const COLUMNS = 'session_id, session_date, display_name, available_for_sale, status, created_at, updated_at, archived_at';
+	/*
+	 * ADR-043 §2.4 adds seven nullable columns. They are read here so the router
+	 * below can tell a schedule-owned occurrence from a legacy one, and so a
+	 * caller sees the same row shape for both. Purely additive: no existing key
+	 * changes name, type or meaning, and a legacy row simply carries NULL in all
+	 * seven.
+	 */
+	private const COLUMNS = 'session_id, session_date, display_name, available_for_sale, status, created_at, updated_at, archived_at, schedule_id, start_time_local, timezone_name, starts_at_utc, sale_locked_at, generation_completed_at, availability_operation_token';
 
 	/** @var callable */
 	private $audit_recorder;
 
 	private PackageGateway $packages;
+
+	private ?OccurrenceAvailability $availability = null;
 
 	public function __construct( ?callable $audit_recorder = null, ?PackageGateway $packages = null ) {
 		$this->audit_recorder = $audit_recorder ?? [ AuditLog::class, 'record' ];
@@ -119,6 +139,11 @@ final class SessionService {
 			return $before;
 		}
 
+		$owned = $this->refuse_if_schedule_owned( $before );
+		if ( is_wp_error( $owned ) ) {
+			return $owned;
+		}
+
 		$name = $this->canonical_display_name( $display_name );
 		if ( is_wp_error( $name ) ) {
 			return $name;
@@ -141,6 +166,11 @@ final class SessionService {
 		$before = $this->require_active_row( $session_id );
 		if ( is_wp_error( $before ) ) {
 			return $before;
+		}
+
+		$owned = $this->refuse_if_schedule_owned( $before );
+		if ( is_wp_error( $owned ) ) {
+			return $owned;
 		}
 
 		$date = $this->canonical_date( $session_date );
@@ -167,8 +197,50 @@ final class SessionService {
 			return $before;
 		}
 
+		if ( $available && null !== $before['schedule_id'] ) {
+			$membership = SessionEligibility::belongs_to_current_definition( $session_id );
+			if ( is_wp_error( $membership ) ) {
+				return $membership;
+			}
+			if ( ! $membership ) {
+				return $this->error( 'outside_current_definition', 'This Session date is no longer in the commerce schedule.' );
+			}
+		}
+
 		if ( $available === (bool) $before['available_for_sale'] ) {
 			return new SessionResult( 'session_availability_unchanged', $before );
+		}
+
+		/*
+		 * ADR-043 §6. A SCHEDULE-OWNED occurrence goes through the guarded
+		 * transition: ON proves schedule status, the exact active definition
+		 * token, template commerce-eligibility and completed generation IN the
+		 * statement that flips the switch, claims ownership with its own
+		 * operation token, and re-proves Package assignability afterwards; OFF
+		 * clears any unsettled token. A LEGACY row (`schedule_id IS NULL`) takes
+		 * the v2 writer below, unchanged, and never acquires a lock or a token.
+		 */
+		if ( null !== $before['schedule_id'] ) {
+			$availability = $this->availability();
+
+			$result = $available
+				? $availability->turn_on( $session_id, $before, $context )
+				: $availability->turn_off( $session_id, $before, $context );
+
+			if ( is_wp_error( $result ) ) {
+				return $result;
+			}
+
+			// The audit event is the same action a legacy change emits, because
+			// what happened is the same business fact.
+			return $this->record_audit(
+				$result,
+				'sessions.session.availability_changed',
+				$context,
+				$before,
+				$result->session,
+				$session_id
+			);
 		}
 
 		return $this->apply_field_change(
@@ -179,6 +251,15 @@ final class SessionService {
 			'sessions.session.availability_changed',
 			$context
 		);
+	}
+
+	/** Lazily constructed so a legacy-only request never builds it. */
+	private function availability(): OccurrenceAvailability {
+		if ( null === $this->availability ) {
+			$this->availability = new OccurrenceAvailability( $this->packages );
+		}
+
+		return $this->availability;
 	}
 
 	/**
@@ -205,6 +286,15 @@ final class SessionService {
 		$before = $this->require_active_row( $session_id );
 		if ( is_wp_error( $before ) ) {
 			return $before;
+		}
+
+		$owned = $this->refuse_if_schedule_owned( $before );
+		if ( is_wp_error( $owned ) ) {
+			// ADR-043 §9: refused before ANY validation runs, so a generated
+			// occurrence's available_for_sale can NEVER be changed through this
+			// method — setAvailableForSale() is the only Manager availability
+			// writer for a schedule-owned row (§6).
+			return $owned;
 		}
 
 		// ALL validation before ANY write.
@@ -319,6 +409,11 @@ final class SessionService {
 			return $session;
 		}
 
+		$complete = $this->refuse_if_generation_incomplete( $session );
+		if ( is_wp_error( $complete ) ) {
+			return $complete;
+		}
+
 		if ( $package_id < 1 ) {
 			return $this->error( 'invalid_package_id', 'The Bingo Package ID is invalid.' );
 		}
@@ -403,6 +498,11 @@ final class SessionService {
 			return $session;
 		}
 
+		$complete = $this->refuse_if_generation_incomplete( $session );
+		if ( is_wp_error( $complete ) ) {
+			return $complete;
+		}
+
 		if ( $package_id < 1 ) {
 			return $this->error( 'invalid_package_id', 'The Bingo Package ID is invalid.' );
 		}
@@ -462,8 +562,28 @@ final class SessionService {
 		return $this->read_by_id( $session_id );
 	}
 
-	/** @return array<int,array<string,mixed>>|\WP_Error */
-	public function listForAdministration( string $status = 'all', int $page = 1, int $per_page = 50 ) {
+	/** BR-051/BR-063-adjacent, but not the eligibility predicate itself: which rows a LIST reads, not whether one is sellable. */
+	public const ADMIN_STATUS_UPCOMING = 'upcoming';
+
+	/**
+	 * @param string $status One of self::STATUSES ('active'/'archived'), 'all'
+	 *                       for both — every one of these is UNFILTERED by
+	 *                       date, so historical and archived Sessions remain
+	 *                       fully reachable there — or self::ADMIN_STATUS_UPCOMING,
+	 *                       which additionally excludes any session_date before
+	 *                       hall-local today, at this query, so a Session that
+	 *                       has already happened never occupies a page of
+	 *                       "what's coming up".
+	 * @param int    $limit  Row count actually fetched, when it differs from
+	 *                       $per_page. $per_page ALONE still decides the offset
+	 *                       (which page this is), so a caller can ask for one
+	 *                       extra "peek" row past its real page size — to decide
+	 *                       whether a Next page exists — without that peek also
+	 *                       shifting where the NEXT page starts. 0 means "same as
+	 *                       $per_page", the original one-value behaviour.
+	 * @return array<int,array<string,mixed>>|\WP_Error
+	 */
+	public function listForAdministration( string $status = 'all', int $page = 1, int $per_page = 50, int $limit = 0 ) {
 		$context = $this->authorize();
 		if ( is_wp_error( $context ) ) {
 			return $context;
@@ -474,13 +594,37 @@ final class SessionService {
 		$page     = max( 1, $page );
 		$per_page = max( 1, min( 200, $per_page ) );
 		$offset   = ( $page - 1 ) * $per_page;
+		$limit    = $limit > 0 ? min( 200, $limit ) : $per_page;
 
-		if ( in_array( $status, self::STATUSES, true ) ) {
+		/*
+		 * Nearest-first: the soonest session_date sorts first, so an
+		 * administrative list reads as "what's coming up", not "what was
+		 * added most recently". session_id is only the ascending tie-breaker
+		 * for two rows sharing a date.
+		 */
+		if ( self::ADMIN_STATUS_UPCOMING === $status ) {
+			// Filtered at THIS read, not by evaluate_available_today() or any
+			// other availability predicate: a past-dated Session is excluded
+			// from the default list purely as a presentation choice, and
+			// remains exactly as sellable or unsellable as it always was
+			// under 'all'/'active'/'archived', which never apply this filter.
+			$membership = SessionEligibility::current_definition_sql( 's' );
 			$rows = $wpdb->get_results(
 				$wpdb->prepare(
-					'SELECT ' . self::COLUMNS . " FROM {$table} WHERE status = %s ORDER BY session_date DESC, session_id DESC LIMIT %d OFFSET %d",
+					'SELECT ' . self::COLUMNS . " FROM {$table} s WHERE status = %s AND session_date >= %s AND {$membership} ORDER BY session_date ASC, session_id ASC LIMIT %d OFFSET %d",
+					self::STATUS_ACTIVE,
+					self::hall_local_today(),
+					$limit,
+					$offset
+				),
+				ARRAY_A
+			);
+		} elseif ( in_array( $status, self::STATUSES, true ) ) {
+			$rows = $wpdb->get_results(
+				$wpdb->prepare(
+					'SELECT ' . self::COLUMNS . " FROM {$table} WHERE status = %s ORDER BY session_date ASC, session_id ASC LIMIT %d OFFSET %d",
 					$status,
-					$per_page,
+					$limit,
 					$offset
 				),
 				ARRAY_A
@@ -488,8 +632,8 @@ final class SessionService {
 		} else {
 			$rows = $wpdb->get_results(
 				$wpdb->prepare(
-					'SELECT ' . self::COLUMNS . " FROM {$table} ORDER BY session_date DESC, session_id DESC LIMIT %d OFFSET %d",
-					$per_page,
+					'SELECT ' . self::COLUMNS . " FROM {$table} ORDER BY session_date ASC, session_id ASC LIMIT %d OFFSET %d",
+					$limit,
 					$offset
 				),
 				ARRAY_A
@@ -561,7 +705,7 @@ final class SessionService {
 	 *
 	 *     status = active
 	 *     AND available_for_sale = ON
-	 *     AND D - 5 <= hall_local_today <= D
+	 *     AND D - 30 <= hall_local_today <= D
 	 *
 	 * `hall_local_today` uses the HALL SITE's configured WordPress timezone via
 	 * wp_timezone(), never the server timezone. No time is parsed from
@@ -806,6 +950,19 @@ final class SessionService {
 			return $before;
 		}
 
+		/*
+		 * ADR-043 §9: unconditional, even for what would otherwise be a verified
+		 * no-op. A generated occurrence's lifecycle belongs to reconciliation, so
+		 * archive()/restore() are refused BEFORE the no-op check below — a
+		 * schedule-owned row already in the target state is refused exactly like
+		 * one that is not, because neither may be reached through this writer at
+		 * all.
+		 */
+		$owned = $this->refuse_if_schedule_owned( $before );
+		if ( is_wp_error( $owned ) ) {
+			return $owned;
+		}
+
 		if ( $target === $before['status'] ) {
 			// Verified no-op. No mutation, and therefore no audit event.
 			return new SessionResult( $noop_status, $before );
@@ -930,12 +1087,44 @@ final class SessionService {
 	 */
 	private function audit_payload( array $row ): array {
 		// NOTE: no session_id key. See record_audit().
-		return [
+		$payload = [
 			'session_date'       => (string) ( $row['session_date'] ?? '' ),
 			'display_name'       => (string) ( $row['display_name'] ?? '' ),
 			'available_for_sale' => (bool) ( $row['available_for_sale'] ?? false ),
 			'status'             => (string) ( $row['status'] ?? '' ),
 		];
+
+		/*
+		 * ADR-043 §2.4 fields are added ONLY for a schedule-owned occurrence.
+		 *
+		 * §9 requires legacy rows to keep their observable behaviour exactly,
+		 * including the same audit events. Appending seven always-NULL keys to
+		 * every legacy payload would change the stored audit record for rows this
+		 * ADR does not otherwise touch, so the extra fields appear exactly where
+		 * they carry meaning.
+		 *
+		 * Each key was checked against AuditLog's SENSITIVE_KEY_TOKENS and
+		 * SENSITIVE_KEY_NAMES: `schedule_id`, `start_time_local`, `timezone_name`,
+		 * `starts_at_utc`, `sale_locked_at` and `generation_completed_at` all
+		 * pass. `session_id` is absent here and everywhere, because AuditLog
+		 * compacts keys to alphanumerics and REJECTS `sessionid`
+		 * (`…/AuditLog.php:83`).
+		 *
+		 * `availability_operation_token` is deliberately NOT audited: it is
+		 * in-flight ownership bookkeeping that is cleared on settlement, not a
+		 * business fact about the occurrence, and a token captured in an audit row
+		 * would outlive the transition it names.
+		 */
+		if ( null !== ( $row['schedule_id'] ?? null ) ) {
+			$payload['schedule_id']             = (int) $row['schedule_id'];
+			$payload['start_time_local']        = $row['start_time_local'] ?? null;
+			$payload['timezone_name']           = $row['timezone_name'] ?? null;
+			$payload['starts_at_utc']           = $row['starts_at_utc'] ?? null;
+			$payload['sale_locked_at']          = $row['sale_locked_at'] ?? null;
+			$payload['generation_completed_at'] = $row['generation_completed_at'] ?? null;
+		}
+
+		return $payload;
 	}
 
 	/**
@@ -1080,7 +1269,50 @@ final class SessionService {
 		$row['display_name']       = (string) $row['display_name'];
 		$row['available_for_sale'] = (bool) (int) $row['available_for_sale'];
 
+		// ADR-043 §2.4. NULL is preserved as NULL rather than cast to 0 or '':
+		// `schedule_id` NULL is what makes a row legacy, and
+		// `generation_completed_at` NULL is what makes an occurrence unsellable,
+		// so neither may be flattened into a falsy scalar that reads the same as
+		// a real value.
+		$row['schedule_id']                  = null === ( $row['schedule_id'] ?? null ) ? null : (int) $row['schedule_id'];
+		$row['start_time_local']             = null === ( $row['start_time_local'] ?? null ) ? null : (string) $row['start_time_local'];
+		$row['timezone_name']                = null === ( $row['timezone_name'] ?? null ) ? null : (string) $row['timezone_name'];
+		$row['starts_at_utc']                = null === ( $row['starts_at_utc'] ?? null ) ? null : (string) $row['starts_at_utc'];
+		$row['sale_locked_at']               = null === ( $row['sale_locked_at'] ?? null ) ? null : (string) $row['sale_locked_at'];
+		$row['generation_completed_at']      = null === ( $row['generation_completed_at'] ?? null ) ? null : (string) $row['generation_completed_at'];
+		$row['availability_operation_token'] = null === ( $row['availability_operation_token'] ?? null ) ? null : (string) $row['availability_operation_token'];
+
+		// Derived, so no screen has to infer ownership from a nullable integer.
+		$row['is_schedule_owned'] = null !== $row['schedule_id'];
+
 		return $row;
+	}
+
+	/**
+	 * Which calendar date counts as "today" for ONE row (ADR-043 §5.3).
+	 *
+	 * A GENERATED occurrence is evaluated in the zone stored on the row, so a
+	 * later change to the hall's WordPress timezone setting cannot move,
+	 * reinterpret or re-window an occurrence that already exists. A LEGACY row
+	 * keeps `wp_timezone()`, byte-for-byte the v2 behaviour.
+	 *
+	 * Returns '' when a generated row's zone cannot be evaluated, which
+	 * `evaluate_available_today()` treats as not-today — fail-closed, and without
+	 * substituting a plausible-looking date.
+	 *
+	 * @param array<string,mixed> $row
+	 */
+	private static function local_today_for_row( array $row ): string {
+		if ( null === ( $row['schedule_id'] ?? null ) ) {
+			return self::hall_local_today();
+		}
+
+		$zone = (string) ( $row['timezone_name'] ?? '' );
+		if ( '' === $zone ) {
+			return '';
+		}
+
+		return (string) ( ScheduleTimezone::local_today( $zone ) ?? '' );
 	}
 
 	/**
@@ -1118,9 +1350,77 @@ final class SessionService {
 
 		$row['assignments']              = $assignments;
 		$row['assigned_package_ids']     = array_map( static fn( array $a ): int => $a['package_id'], $assignments );
-		$row['available_for_sale_today'] = self::evaluate_available_today( $row, self::hall_local_today() );
+		$row['belongs_to_current_definition'] = null === $row['schedule_id']
+			|| true === SessionEligibility::belongs_to_current_definition( (int) $row['session_id'] );
+		// §5.3: per-row zone selection. evaluate_available_today() itself is
+		// unchanged — only the argument it receives is chosen per row.
+		$row['available_for_sale_today'] = $row['belongs_to_current_definition']
+			&& self::evaluate_available_today( $row, self::local_today_for_row( $row ) );
 
 		return $row;
+	}
+
+	/**
+	 * ADR-043 §9. A generated occurrence's name, date, time and lifecycle belong
+	 * to reconciliation, never to a direct Manager writer.
+	 *
+	 * Called AFTER authorize() and AFTER the authoritative row read, and BEFORE
+	 * any request-specific validation, so refusal is unconditional: it applies
+	 * even when the caller's inputs would otherwise be a no-op (§9's table lists
+	 * archive()/restore() as unconditionally refused, not "refused unless
+	 * already in that state"). Nothing is written and no audit event fires,
+	 * because every caller returns this WP_Error immediately, before reaching
+	 * any `$wpdb->query()` or `record_audit()` call.
+	 *
+	 * `available_for_sale` is deliberately NOT exempted here even though
+	 * `updateDetails()` also carries it: refusing the whole method is what
+	 * satisfies "updateDetails() must never change available_for_sale on a
+	 * generated occurrence" without a second, narrower guard that could drift
+	 * out of step with this one.
+	 *
+	 * @param array<string,mixed> $row
+	 * @return true|\WP_Error
+	 */
+	private function refuse_if_schedule_owned( array $row ) {
+		if ( null !== ( $row['schedule_id'] ?? null ) ) {
+			return $this->error(
+				'schedule_owned_occurrence',
+				'This Session was generated by a commerce schedule. Its name, date, time and lifecycle are managed through the schedule, not edited directly.'
+			);
+		}
+
+		return true;
+	}
+
+	/**
+	 * ADR-043 §9. A generated occurrence's Bingo Packages may be changed by a
+	 * Manager only once `generation_completed_at IS NOT NULL` — while generation
+	 * is incomplete, `OccurrenceGenerationWriter` (§7.10) is the only writer, and
+	 * it is internal, not a Manager action. The two paths are disjoint by this
+	 * guard: a Manager can never observe or create the interleaving that would
+	 * let a hand edit race the writer that is still building the row.
+	 *
+	 * A LEGACY row (`schedule_id IS NULL`) always passes: `generation_completed_at`
+	 * is NULL for every legacy row and this check applies only when a schedule
+	 * owns the occurrence, preserving v2 Package behaviour byte-for-byte.
+	 *
+	 * Reuses the exact `occurrence_generation_incomplete` code
+	 * `OccurrenceAvailability::classify_on_failure()` already reports for test
+	 * 36's condition (`generation_completed_at IS NULL` blocks ON) — one error
+	 * code for one underlying state, not two names for the same fact.
+	 *
+	 * @param array<string,mixed> $row
+	 * @return true|\WP_Error
+	 */
+	private function refuse_if_generation_incomplete( array $row ) {
+		if ( null !== ( $row['schedule_id'] ?? null ) && null === ( $row['generation_completed_at'] ?? null ) ) {
+			return $this->error(
+				'occurrence_generation_incomplete',
+				'This occurrence is still being generated and its Bingo Packages cannot be changed yet.'
+			);
+		}
+
+		return true;
 	}
 
 	private function error( string $code, string $message ): \WP_Error {

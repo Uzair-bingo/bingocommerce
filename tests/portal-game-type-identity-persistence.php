@@ -17,7 +17,32 @@ $_SERVER['REQUEST_URI']    = '/';
 $_SERVER['REQUEST_METHOD'] = 'GET';
 $_SERVER['REMOTE_ADDR']    = '127.0.0.1';
 
-require dirname( __DIR__ ) . '/wp-load.php';
+/*
+ * ADR-043 §16 amendment: routed through the shared fixture bootstrap.
+ *
+ * This suite creates disposable Multisite SITES. `bingocommerce-sessions` is
+ * network-active, so every wp_insert_site() fires its `wp_initialize_site`
+ * handler and applies the CURRENT Sessions schema — from v3, three new tables
+ * and seven new `bingo_sessions` columns — to whichever database is booted.
+ * Against the development installation that would write v3 structure into the
+ * development database, which ADR-043's rollout forbids outside a deliberate,
+ * verified migration.
+ *
+ * tests/fixtures/wordpress-bootstrap.php is fail-closed: it has no
+ * development-database fallback, so this harness cannot be run against the
+ * development installation by forgetting an environment variable. Without
+ * `BC_TEST_DB` it stops with a guard message; with it, it boots the
+ * allowlisted, sentinel-owned fixture.
+ */
+/*
+ * WooCommerce is network-active on the development installation, so it has
+ * always been loaded here. The fixture loads it only on request, and this
+ * suite uses WooCommerce product classes, so it asks for it explicitly.
+ */
+putenv( 'BC_FIXTURE_NETWORK_ACTIVE=1' );
+putenv( 'BC_FIXTURE_WOOCOMMERCE=1' );
+
+require __DIR__ . '/fixtures/wordpress-bootstrap.php';
 require_once ABSPATH . 'wp-admin/includes/ms.php';
 
 if ( ! class_exists( '\BingoCommerce\Catalog\GameTypeService' ) ) {
@@ -507,7 +532,7 @@ final class PortalGameTypeIdentityPersistenceTest {
 	 * @return array<int,string>
 	 */
 	private function disposable_table_suffixes(): array {
-		return array_merge( $this->domain_table_suffixes(), [ 'bingo_portal_session_templates' ] );
+		return array_merge( $this->domain_table_suffixes(), [ 'bingo_portal_session_templates', 'bingo_session_schedules', 'bingo_session_schedule_dates', 'bingo_session_schedule_packages' ] );
 	}
 
 	/** @return array<int,string> */
@@ -567,7 +592,7 @@ final class PortalGameTypeIdentityPersistenceTest {
 			$tables  = array_map( static fn( string $suffix ): string => $prefix . $suffix, $this->disposable_table_suffixes() );
 
 			wp_delete_site( $site_id );
-			$allowed = '/^' . preg_quote( $wpdb->base_prefix, '/' ) . $site_id . '_bingo_(game_types|play_products|packages|package_components|package_addons|sessions|session_packages|portal_session_templates)$/';
+			$allowed = '/^' . preg_quote( $wpdb->base_prefix, '/' ) . $site_id . '_bingo_(game_types|play_products|packages|package_components|package_addons|sessions|session_packages|portal_session_templates|session_schedules|session_schedule_dates|session_schedule_packages)$/';
 			foreach ( $tables as $table ) {
 				if ( 1 === preg_match( $allowed, $table ) ) {
 					$wpdb->query( "DROP TABLE IF EXISTS `{$table}`" );

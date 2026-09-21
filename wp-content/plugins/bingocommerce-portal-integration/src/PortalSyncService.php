@@ -265,7 +265,7 @@ final class PortalSyncService {
 		int $network_id,
 		int $main_site_id
 	) {
-		$schema = $this->assert_domain_schemas();
+		$schema = $this->assert_snapshot_schemas();
 		if ( $schema instanceof \WP_Error ) {
 			return $schema;
 		}
@@ -383,7 +383,7 @@ final class PortalSyncService {
 		switch_to_blog( $blog_id );
 
 		try {
-			$schema = $this->assert_domain_schemas();
+			$schema = $this->assert_snapshot_schemas();
 			if ( $schema instanceof \WP_Error ) {
 				return $schema;
 			}
@@ -539,23 +539,90 @@ final class PortalSyncService {
 	}
 
 	/**
-	 * Both replica schemas must be ready for THIS hall before anything is fetched.
+	 * Structural readiness of EXACTLY what a snapshot touches (ADR-043 §11.3).
 	 *
-	 * Fail-closed: an unavailable schema is never treated as "this hall has no
-	 * Game Types", which under ADR-038 would be the difference between a rejected
-	 * sync and a silent integrity decision.
+	 * WHY THIS IS NOT A VERSION COMPARISON ANY MORE.
+	 *
+	 * The previous gate asked `Catalog\Migrations::is_current()` and
+	 * `Sessions\Migrations::is_current()`, which compare a whole PLUGIN's
+	 * recorded schema version against the version its code declares. That reads
+	 * as caution and is actually the opposite: it couples Portal synchronization
+	 * to every future migration in either plugin, whether or not synchronization
+	 * touches what changed.
+	 *
+	 * ADR-043 makes that concrete. It raises `Sessions\Migrations::DB_VERSION`
+	 * to 3 for three new schedule tables and seven new `bingo_sessions` columns —
+	 * and a snapshot touches NONE of them. Under the old gate, the moment that
+	 * constant changed, every hall still recorded at version 2 would have been
+	 * refused synchronization until it migrated, for a schema change with no
+	 * bearing on the data being synchronized. Halls would have stopped receiving
+	 * Portal updates because of a table they do not use.
+	 *
+	 * So the question asked here is the one that actually matters: is the
+	 * structure this transport WRITES INTO intact? Three things, and nothing
+	 * else:
+	 *
+	 *  1. the Game Type replica — `…/PortalSnapshotTransactionTransport.php:406`,
+	 *     `:591-594`, `:623-624`;
+	 *  2. the Portal Session-template replica — `:675-750`;
+	 *  3. sync-state storage, which is the per-site option
+	 *     `bc_portal_snapshot_sync_state` (`…/PortalSyncState.php:31`) and not a
+	 *     custom table. It needs no check here: the transport already asserts the
+	 *     options table exists and is InnoDB through `REQUIRED_INNODB_TABLES`
+	 *     (`…:101-107`).
+	 *
+	 * STILL FAIL-CLOSED, and in the same direction as before. Damaged required
+	 * replica structure refuses the sync; an unavailable schema is never read as
+	 * "this hall has no Game Types", which under ADR-038 is the difference
+	 * between a rejected sync and a silent integrity decision. What changed is
+	 * the SCOPE of the question, not its strictness — damage to the v3 schedule
+	 * structures is now correctly out of scope, and damage to a replica is still
+	 * fatal.
+	 *
+	 * STRUCTURE ONLY — THE STORAGE ENGINE IS DELIBERATELY NOT CHECKED HERE.
+	 * `PortalSnapshotTransactionTransport` already asserts InnoDB for both
+	 * replicas through `REQUIRED_INNODB_TABLES` (`…:101-107`), and it does so
+	 * AFTER the fetch and immediately before `BEGIN`, reporting its own
+	 * `portal_sync_storage_engine_unsupported`. Checking the engine here as well
+	 * would move that decision ahead of the fetch and replace a specific error
+	 * code with a vaguer one, changing behaviour this ADR does not set out to
+	 * change. §11.3's own table says the same thing about sync-state storage:
+	 * "the transport already asserts" it. So the structure-only verifiers are
+	 * used, and the engine stays with its owner.
+	 *
+	 * READ-ONLY. Both verifiers issue `SHOW TABLES`, `SHOW FULL COLUMNS`,
+	 * `SHOW INDEX`, a collation comparison and one indexed `COUNT(*)`. Neither
+	 * runs `dbDelta()`, creates or alters a table, or advances a version marker:
+	 * this is a read path, and a read path that repaired schema as a side effect
+	 * would migrate a hall nobody asked to migrate. A test asserts this by
+	 * intercepting every statement the path emits.
+	 *
+	 * Precedent: `SetupReadiness::check_domain_schema()`
+	 * (`…/SetupReadiness.php:725-740`) already works this way — structure first,
+	 * version marker second.
 	 *
 	 * @return true|\WP_Error
 	 */
-	private function assert_domain_schemas() {
+	public function assert_snapshot_schemas() {
 		if ( ! class_exists( '\BingoCommerce\Catalog\Migrations' ) || ! class_exists( '\BingoCommerce\Sessions\Migrations' ) ) {
 			return self::error( 'portal_sync_domain_unavailable', 'The Catalog and Session plugins are required for Portal synchronization.' );
 		}
-		if ( ! \BingoCommerce\Catalog\Migrations::is_current() ) {
-			return self::error( 'portal_sync_schema_unavailable', 'The Catalog schema is not ready for this hall.' );
+
+		/*
+		 * The Game Type replica. verify_game_types_schema() also proves the
+		 * obsolete `name_unique` index is gone and that every stored
+		 * `local_name_key` matches its row identity — both properties the
+		 * transport's conflict handling depends on, so neither is dropped merely
+		 * because this gate got narrower.
+		 */
+		$game_types = \BingoCommerce\Catalog\Migrations::verify_game_types_structure_for_sync();
+		if ( is_wp_error( $game_types ) ) {
+			return self::error( 'portal_sync_schema_unavailable', 'The Game Type replica structure is not ready for this hall.' );
 		}
-		if ( ! \BingoCommerce\Sessions\Migrations::is_current() ) {
-			return self::error( 'portal_sync_schema_unavailable', 'The Session replica schema is not ready for this hall.' );
+
+		$templates = \BingoCommerce\Sessions\Migrations::verify_portal_session_templates_structure();
+		if ( is_wp_error( $templates ) ) {
+			return self::error( 'portal_sync_schema_unavailable', 'The Portal Session Template replica structure is not ready for this hall.' );
 		}
 
 		return true;

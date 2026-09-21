@@ -25,8 +25,28 @@
  *  - every bc_audit_log delete is blog_id-scoped;
  *  - persistent-hall Session/assignment baselines are preserved, not emptied.
  *
+ * ISOLATED DATABASE ONLY (ADR-043 §16 amendment).
+ *
+ * This suite APPLIES Sessions migrations to the halls it names — including, from
+ * Sessions v3, three new tables and seven new `bingo_sessions` columns — and it
+ * performs structural DDL on a disposable hall. It therefore must never boot the
+ * development installation: ensure_persistent_schema() alone would write v3
+ * structure into halls 2, 3 and 4.
+ *
+ * It boots tests/fixtures/wordpress-bootstrap.php with BC_TEST_DB instead. That
+ * fixture is allowlisted, sentinel-owned, and refuses the development database
+ * by name, so isolation is enforced by the fixture rather than by this file's
+ * good intentions. The guard below fails closed BEFORE the bootstrap so the
+ * refusal is legible rather than arriving as a fixture abort.
+ *
+ * The fixture supplies the same four-hall shape this suite was written against —
+ * halls 2, 3 and 4 initialized, WooCommerce-installed and role-provisioned, with
+ * disposable halls starting at blog 5 — so SUNRISE/TAMPA/ORLANDO below name
+ * fixture halls of the same shape, not development halls. No production class is
+ * copied or replaced: the real plugin code under wp-content/plugins is what runs.
+ *
  * Run from the repository root:
- * php tests/session-increment-1.php
+ * BC_TEST_DB=bingocommerce_state_test_suites php tests/session-increment-1.php
  */
 
 if ( 'cli' !== PHP_SAPI ) {
@@ -34,13 +54,47 @@ if ( 'cli' !== PHP_SAPI ) {
 	exit( 1 );
 }
 
-$_SERVER['HTTP_HOST']      = 'bingocommerce.test';
+/*
+ * Fail closed BEFORE WordPress boots.
+ *
+ * `bingocommerce_state_test_scratch` is excluded deliberately: the ownership
+ * CONTROLS in tests/hall-commerce-state.php require that name to be ABSENT when
+ * they run, so no other suite may leave a database there.
+ */
+$bc_target = (string) getenv( 'BC_TEST_DB' );
+if ( '' === $bc_target ) {
+	fwrite( STDERR, "BC_TEST_DB is not set. This suite applies Sessions migrations and performs\n" );
+	fwrite( STDERR, "structural DDL, so it must never run against the development database.\n" );
+	fwrite( STDERR, "Name the isolated database explicitly:\n" );
+	fwrite( STDERR, "  BC_TEST_DB=bingocommerce_state_test_suites php tests/session-increment-1.php\n" );
+	exit( 1 );
+}
+if ( ! in_array( $bc_target, [ 'bingocommerce_state_test', 'bingocommerce_state_test_suites', 'bingocommerce_state_recon' ], true ) ) {
+	fwrite( STDERR, "BC_TEST_DB='{$bc_target}' is not an isolated fixture database for this suite.\n" );
+	exit( 1 );
+}
+unset( $bc_target );
+
 $_SERVER['REQUEST_URI']    = '/';
 $_SERVER['REQUEST_METHOD'] = 'GET';
+$_SERVER['REMOTE_ADDR']    = '127.0.0.1';
 
-require dirname( __DIR__ ) . '/wp-load.php';
+putenv( 'BC_FIXTURE_NETWORK_ACTIVE=1' );
+putenv( 'BC_FIXTURE_WOOCOMMERCE=1' );
+
+require __DIR__ . '/fixtures/wordpress-bootstrap.php';
 require_once ABSPATH . 'wp-admin/includes/ms.php';
 require_once ABSPATH . 'wp-admin/includes/screen.php';
+
+/*
+ * Last-resort proof, after the bootstrap, that the fixture really selected an
+ * isolated database. The fixture already refuses the development name; this
+ * asserts the outcome rather than trusting it.
+ */
+if ( ! defined( 'DB_NAME' ) || ! in_array( DB_NAME, [ 'bingocommerce_state_test', 'bingocommerce_state_test_suites', 'bingocommerce_state_recon' ], true ) ) {
+	fwrite( STDERR, "Refusing to run: the active database is not an isolated fixture.\n" );
+	exit( 1 );
+}
 if ( ! class_exists( '\BingoCommerce\Catalog\PackageService' ) ) {
 	require dirname( __DIR__ ) . '/wp-content/plugins/bingocommerce-catalog/bingocommerce-catalog.php';
 }
@@ -119,6 +173,7 @@ final class SessionIncrementOneTest {
 		wp_set_current_user( $this->super_admin_id );
 
 		$this->ensure_persistent_schema();
+		$this->ensure_role_fixtures();
 		$this->record_baseline_sessions();
 		$roles_before = $this->role_snapshot();
 
@@ -166,7 +221,7 @@ final class SessionIncrementOneTest {
 		global $wpdb;
 		$this->group( 'A. Migration' );
 
-		$this->same( 2, Migrations::DB_VERSION, 'Session DB_VERSION is 2' );
+		$this->same( 3, Migrations::DB_VERSION, 'Session DB_VERSION is 3' );
 		$this->same( 'bc_sessions_db_version', Migrations::VERSION_OPTION, 'the per-site version option is bc_sessions_db_version' );
 
 		// Sessions must NOT live in the Catalog migration.
@@ -178,7 +233,7 @@ final class SessionIncrementOneTest {
 		foreach ( [ self::SUNRISE, self::TAMPA, self::ORLANDO ] as $site_id ) {
 			switch_to_blog( $site_id );
 			$this->ok( true === Migrations::migrate_current_site(), "persistent hall {$site_id} migrates" );
-			$this->same( 2, (int) get_option( Migrations::VERSION_OPTION ), "hall {$site_id} records version 2" );
+			$this->same( 3, (int) get_option( Migrations::VERSION_OPTION ), "hall {$site_id} records version 3" );
 			$this->ok( true === Migrations::verify_current_site_schema(), "hall {$site_id} schema verifies" );
 			$this->ok( true === Migrations::migrate_current_site(), "hall {$site_id} rerun is idempotent" );
 			restore_current_blog();
@@ -187,7 +242,7 @@ final class SessionIncrementOneTest {
 		// New-hall provisioning happened automatically when the disposable hall
 		// was created through wp_insert_site().
 		switch_to_blog( $hall );
-		$this->same( 2, (int) get_option( Migrations::VERSION_OPTION, 0 ), 'a newly created hall provisions to version 2 automatically' );
+		$this->same( 3, (int) get_option( Migrations::VERSION_OPTION, 0 ), 'a newly created hall provisions to version 3 automatically' );
 		$this->ok( true === Migrations::verify_current_site_schema(), '  and its schema verifies' );
 
 		$sessions  = Migrations::sessions_table();
@@ -198,7 +253,13 @@ final class SessionIncrementOneTest {
 		$this->ok( false !== stripos( $create, 'ENGINE=InnoDB' ), 'bingo_sessions is InnoDB' );
 		$this->ok( false === stripos( $create, 'FOREIGN KEY' ), 'bingo_sessions has no physical foreign key' );
 		$this->ok( false === stripos( $create, 'blog_id' ), 'bingo_sessions has no blog_id column' );
-		$this->ok( false === stripos( $create, 'start_time' ), 'bingo_sessions has NO start_time column (BR-050/BR-063)' );
+		// ADR-043 amendment. BR-073 SUPERSEDES BR-050 for STRUCTURED COMMERCE TIME
+		// only: a generated occurrence now stores start_time_local, timezone_name
+		// and starts_at_utc. BR-050's prohibition on PARSING time out of a display
+		// name is untouched and is asserted separately.
+		$this->ok( false !== stripos( $create, 'start_time_local' ), 'bingo_sessions carries structured start_time_local (ADR-043 §2.4)' );
+		$this->ok( false !== stripos( $create, 'starts_at_utc' ), '  and the stable starts_at_utc instant' );
+		$this->ok( false !== stripos( $create, 'timezone_name' ), '  and the zone that produced it' );
 		$create_r = (string) ( $wpdb->get_row( "SHOW CREATE TABLE `{$relations}`", ARRAY_N )[1] ?? '' );
 		$this->ok( false !== stripos( $create_r, 'ENGINE=InnoDB' ), 'bingo_session_packages is InnoDB' );
 		$this->ok( false === stripos( $create_r, 'FOREIGN KEY' ), 'bingo_session_packages has no physical foreign key' );
@@ -233,12 +294,12 @@ final class SessionIncrementOneTest {
 		$this->disposable_ddl( $hall, "DROP TABLE IF EXISTS `{$relations}`" );
 		$this->disposable_ddl( $hall, "DROP TABLE IF EXISTS `{$sessions}`" );
 		$this->ok( true === Migrations::migrate_current_site(), 'migrate recreates the dated Session tables and verifies all three Session tables' );
-		$this->same( 2, (int) get_option( Migrations::VERSION_OPTION ), 'version persisted only after every schema verified' );
+		$this->same( 3, (int) get_option( Migrations::VERSION_OPTION ), 'version persisted only after every schema verified' );
 
 		// Existing-hall self-heal through the registered admin_init path.
 		update_option( Migrations::VERSION_OPTION, 0, false );
 		$this->ok( true === Migrations::maybe_migrate_current_site(), 'a stale hall self-heals' );
-		$this->same( 2, (int) get_option( Migrations::VERSION_OPTION ), '  and reaches version 2' );
+		$this->same( 3, (int) get_option( Migrations::VERSION_OPTION ), '  and reaches version 3' );
 		restore_current_blog();
 
 		$this->ok( false !== has_action( 'admin_init', [ Migrations::class, 'maybe_migrate_current_site' ] ), 'admin_init self-heal is registered' );
@@ -601,15 +662,18 @@ final class SessionIncrementOneTest {
 		$this->ok( 1 === preg_match( '/^\d{4}-\d{2}-\d{2}$/', $today ), 'hall_local_today is a calendar date' );
 
 		// The window is expressed around the SESSION DATE D:
-		//     D - 5 <= hall_local_today <= D
-		// so a Session dated N days from today is on sale when 0 <= N <= 5.
+		//     D - 30 <= hall_local_today <= D
+		// so a Session dated N days from today is on sale when 0 <= N <= 30.
+		// 30, not 5: the window widened from 5 to 30 calendar days, and every
+		// numeric case below is the corrected boundary, not the old one.
 		$cases = [
 			-1 => [ false, 'dated YESTERDAY: hall_local_today is D+1, past the inclusive end' ],
 			0  => [ true,  'dated TODAY: hall_local_today is exactly D' ],
 			1  => [ true,  'dated tomorrow: inside the window' ],
-			5  => [ true,  'dated D where today is exactly D-5: the inclusive opening boundary' ],
-			6  => [ false, 'dated 6 days out: today is D-6, one day before the window opens' ],
-			30 => [ false, 'dated far in the future: outside the window' ],
+			29 => [ true,  'dated D where today is D-29: inside the window' ],
+			30 => [ true,  'dated D where today is exactly D-30: the inclusive opening boundary' ],
+			31 => [ false, 'dated D where today is D-31: one day before the window opens' ],
+			60 => [ false, 'dated far in the future: outside the window' ],
 		];
 		foreach ( $cases as $offset => [ $expected, $description ] ) {
 			$date = ( new DateTimeImmutable( $today, new DateTimeZone( 'UTC' ) ) )->modify( sprintf( '%+d days', $offset ) )->format( 'Y-m-d' );
@@ -625,9 +689,11 @@ final class SessionIncrementOneTest {
 		$this->is_status( 'session_availability_changed', $service->setAvailableForSale( $off, true ), 'turning it ON' );
 		$this->same( true, $service->isAvailableForSaleToday( $off ), '  makes it on sale' );
 
-		// ON does not bypass the window.
-		$far = $this->make_session( $hall, ( new DateTimeImmutable( $today, new DateTimeZone( 'UTC' ) ) )->modify( '+30 days' )->format( 'Y-m-d' ), 'Window Far', true );
-		$this->same( false, $service->isAvailableForSaleToday( $far ), 'Available for Sale ON does NOT bypass the 5-day window' );
+		// ON does not bypass the window. +60 days is unambiguously outside a
+		// 30-day window, unlike the old test's +30 — which used to be well
+		// past a 5-day window but would now be the boundary itself.
+		$far = $this->make_session( $hall, ( new DateTimeImmutable( $today, new DateTimeZone( 'UTC' ) ) )->modify( '+60 days' )->format( 'Y-m-d' ), 'Window Far', true );
+		$this->same( false, $service->isAvailableForSaleToday( $far ), 'Available for Sale ON does NOT bypass the 30-day window' );
 
 		// Archived is never on sale.
 		$this->is_status( 'session_archived', $service->archive( $off ), 'the in-window Session is archived' );
@@ -658,7 +724,7 @@ final class SessionIncrementOneTest {
 		switch_to_blog( $hall );
 
 		// The supported sales-window helper, used by presentation.
-		$this->same( '2030-09-05', SessionService::salesWindowStartDate( '2030-09-10' ), 'salesWindowStartDate returns D-5 for a valid date' );
+		$this->same( '2030-08-11', SessionService::salesWindowStartDate( '2030-09-10' ), 'salesWindowStartDate returns D-30 for a valid date' );
 		foreach ( [ '2030-02-30', '0000-00-00', '0000-01-01', '2030-13-01', 'tomorrow', '' ] as $bad ) {
 			$this->same( null, SessionService::salesWindowStartDate( $bad ), "salesWindowStartDate returns null for corrupt '{$bad}'" );
 		}
@@ -685,14 +751,25 @@ final class SessionIncrementOneTest {
 
 		$archived_explained = (string) $explain->invoke( null, [ 'status' => 'archived', 'available_for_sale' => true, 'session_date' => '2030-09-10' ] );
 		$this->ok( false !== strpos( $archived_explained, 'Archived Sessions are never on sale' ), 'an archived Session explains itself as archived' );
+		$window_explained = (string) $explain->invoke( null, [ 'status' => 'active', 'available_for_sale' => true, 'session_date' => '2030-09-10' ] );
+		$this->ok( false !== strpos( $window_explained, 'Sales window 08/11/2030 to 09/10/2030' ), 'sales-window start and Session date render as MM/DD/YYYY' );
+		$this->ok( 1 === preg_match( '/hall-local today is [0-9]{2}\/[0-9]{2}\/[0-9]{4}\./', $window_explained ), 'sales-window hall-local today renders as MM/DD/YYYY' );
 
 		$admin_source = (string) file_get_contents( dirname( __DIR__ ) . '/wp-content/plugins/bingocommerce-sessions/src/SessionAdmin.php' );
 		$this->ok( false === strpos( $admin_source, 'DateTimeImmutable' ), 'SessionAdmin never constructs a date from an authoritative stored value' );
+		$this->ok( false === strpos( $admin_source, 'strtotime(' ), 'SessionAdmin never uses strtotime() for date input or display' );
 
-		// The pure evaluator is timezone-driven, not server-driven.
+		/*
+		 * The pure evaluator is timezone-driven, not server-driven. Every date
+		 * below is fixed and computed by hand (2030-09-10 minus 29/30/31
+		 * days), so this proves the exact 30-day boundary without depending on
+		 * wall-clock "today" at all — the required-boundary assertion the
+		 * sales-window change is verified against.
+		 */
 		$row = [ 'status' => 'active', 'available_for_sale' => true, 'session_date' => '2030-09-10' ];
-		$this->same( true, SessionService::evaluate_available_today( $row, '2030-09-05' ), 'boundary D-5 is inclusive' );
-		$this->same( false, SessionService::evaluate_available_today( $row, '2030-09-04' ), 'D-6 is outside' );
+		$this->same( true, SessionService::evaluate_available_today( $row, '2030-08-12' ), '29 days before D: inside the window' );
+		$this->same( true, SessionService::evaluate_available_today( $row, '2030-08-11' ), 'boundary D-30 is inclusive: the window opens' );
+		$this->same( false, SessionService::evaluate_available_today( $row, '2030-08-10' ), 'D-31 is outside: one day before the window opens' );
 		$this->same( true, SessionService::evaluate_available_today( $row, '2030-09-10' ), 'boundary D is inclusive' );
 		$this->same( false, SessionService::evaluate_available_today( $row, '2030-09-11' ), 'D+1 is outside' );
 
@@ -1116,6 +1193,105 @@ final class SessionIncrementOneTest {
 		}
 	}
 
+	/**
+	 * Hall role users, recreated inside the isolated fixture.
+	 *
+	 * The development installation this suite was written against has long had a
+	 * Hall Manager and a Game Operator on every hall. A fresh fixture database has
+	 * none, so the authorization group would measure a missing fixture rather than
+	 * the capability model under test.
+	 *
+	 * The capability row is planted DIRECTLY, exactly as
+	 * tests/hall-staff-create-invite.php's plant_caps()/plant_raw() helpers do,
+	 * because that is the only way to seed one: ADR-025's HallStaffWriterGuard
+	 * deliberately refuses add_user_to_blog() and every other unsupported writer
+	 * channel for a hall role, and refusing them is the behaviour under test
+	 * elsewhere. Nothing is copied or replaced — the role slugs and the capability
+	 * model come from the real Roles class, and every authorization assertion
+	 * still runs against it.
+	 *
+	 * Fixture INFRASTRUCTURE: deterministic logins, created only when absent,
+	 * never granted Super Admin, left in place like the bootstrap's
+	 * `fixture_admin`.
+	 */
+	private function ensure_role_fixtures(): void {
+		global $wpdb;
+
+		foreach ( [ self::SUNRISE, self::TAMPA, self::ORLANDO ] as $site_id ) {
+			switch_to_blog( $site_id );
+			Roles::sync_current_site();
+			restore_current_blog();
+
+			foreach ( [ Roles::HALL_MANAGER => 'manager', Roles::GAME_OPERATOR => 'operator' ] as $role => $slug ) {
+				/*
+				 * Self-healing, and deliberately NOT a get_users( role ) probe.
+				 *
+				 * get_users() matches the serialized usermeta row, so a user whose
+				 * capability row is present but SHADOWED by an earlier empty one still
+				 * matches while holding no capability at all. The question worth asking
+				 * is the one the suite asks: does some user on this hall actually hold
+				 * the capability the role grants?
+				 */
+				$capability = Roles::HALL_MANAGER === $role ? 'bc_manage_sessions' : 'bc_view_sessions';
+				$holder     = 0;
+				foreach ( get_users( [ 'blog_id' => $site_id, 'role' => $role, 'number' => 5, 'fields' => 'ID' ] ) as $candidate ) {
+					if ( user_can( (int) $candidate, $capability ) ) {
+						$holder = (int) $candidate;
+						break;
+					}
+				}
+				if ( $holder > 0 ) {
+					continue;
+				}
+
+				$login = sprintf( 'bc_fixture_%s_%d', $slug, $site_id );
+				$user  = get_user_by( 'login', $login );
+				$id    = $user instanceof WP_User ? (int) $user->ID : 0;
+				if ( $id < 1 ) {
+					$created = wp_insert_user(
+						[
+							'user_login' => $login,
+							'user_email' => $login . '@fixture.bingocommerce.test',
+							'user_pass'  => wp_generate_password( 24, true, true ),
+							'role'       => '',
+						]
+					);
+					$id = is_wp_error( $created ) ? 0 : (int) $created;
+				}
+				if ( $id < 1 ) {
+					continue;
+				}
+
+				// Exactly ONE capability row per key. wp_insert_user() and any earlier
+				// attempt can leave an empty `a:0:{}` row behind, and get_metadata()
+				// returns the FIRST match — so a stale empty row would shadow this one
+				// and the user would silently hold no role at all.
+				$caps_key = $wpdb->get_blog_prefix( $site_id ) . 'capabilities';
+				$wpdb->delete( $wpdb->usermeta, [ 'user_id' => $id, 'meta_key' => $caps_key ], [ '%d', '%s' ] );
+				$wpdb->query(
+					$wpdb->prepare(
+						"INSERT INTO {$wpdb->usermeta} (user_id, meta_key, meta_value) VALUES (%d, %s, %s)",
+						$id,
+						$caps_key,
+						serialize( [ $role => true ] )
+					)
+				);
+				clean_user_cache( $id );
+			}
+		}
+
+		if ( ! get_user_by( 'login', 'bc_fixture_ordinary' ) instanceof WP_User ) {
+			wp_insert_user(
+				[
+					'user_login' => 'bc_fixture_ordinary',
+					'user_email' => 'bc_fixture_ordinary@fixture.bingocommerce.test',
+					'user_pass'  => wp_generate_password( 24, true, true ),
+					'role'       => '',
+				]
+			);
+		}
+	}
+
 	private function make_session( int $site_id, string $date, string $name, bool $available = false ): int {
 		$switched = get_current_blog_id() !== $site_id;
 		if ( $switched ) {
@@ -1404,6 +1580,10 @@ final class SessionIncrementOneTest {
 
 		switch_to_blog( $site_id );
 		$tables = [
+			// ADR-043 Sessions v3.
+			Migrations::schedule_packages_table(),
+			Migrations::schedule_dates_table(),
+			Migrations::schedules_table(),
 			Migrations::portal_session_templates_table(),
 			Migrations::session_packages_table(),
 			Migrations::sessions_table(),
@@ -1418,7 +1598,7 @@ final class SessionIncrementOneTest {
 		wp_delete_site( $site_id );
 
 		foreach ( $tables as $table ) {
-			if ( 1 === preg_match( '/^bc_' . $site_id . '_bingo_(portal_session_templates|session_packages|sessions|package_components|packages|play_products|game_types)$/', $table ) ) {
+			if ( 1 === preg_match( '/^bc_' . $site_id . '_bingo_(portal_session_templates|session_packages|sessions|session_schedules|session_schedule_dates|session_schedule_packages|package_components|packages|play_products|game_types)$/', $table ) ) {
 				$wpdb->query( "DROP TABLE IF EXISTS `{$table}`" );
 			}
 		}
@@ -1550,7 +1730,7 @@ final class SessionIncrementOneTest {
 		// PRESERVATION, not emptiness.
 		foreach ( [ self::SUNRISE, self::TAMPA, self::ORLANDO ] as $site_id ) {
 			switch_to_blog( $site_id );
-			$this->same( 2, (int) get_option( Migrations::VERSION_OPTION, 0 ), "hall {$site_id} remains at Session v2" );
+			$this->same( 3, (int) get_option( Migrations::VERSION_OPTION, 0 ), "hall {$site_id} remains at Session v3" );
 			$this->ok( true === Migrations::verify_current_site_schema(), "hall {$site_id} Session schema verifies after cleanup" );
 			$snapshot = $this->session_snapshot( $site_id );
 			$this->same( $this->baseline_sessions[ $site_id ]['sessions'], $snapshot['sessions'], "hall {$site_id}: the bingo_sessions baseline is unchanged" );

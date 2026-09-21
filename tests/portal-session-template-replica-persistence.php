@@ -3,8 +3,26 @@
 /**
  * CLI integration coverage for Phase 3C2 Portal Session Template persistence.
  *
+ * ISOLATED DATABASE ONLY (ADR-043 §16 amendment).
+ *
+ * This suite APPLIES Sessions migrations — including, from Sessions v3, three
+ * new tables and seven new `bingo_sessions` columns. It therefore must never
+ * boot the development installation: doing so would write v3 structure into the
+ * persistent halls the ADR requires to stay at the version they are on.
+ *
+ * It boots tests/fixtures/wordpress-bootstrap.php with BC_TEST_DB instead. That
+ * fixture is allowlisted, sentinel-owned, and refuses the development database
+ * by name, so the isolation is enforced by the fixture rather than by this
+ * file's good intentions. The guard below fails closed BEFORE the bootstrap so
+ * the refusal is legible rather than arriving as a fixture abort.
+ *
+ * The fixture supplies the same four-hall shape this suite was written against:
+ * halls 2, 3 and 4 initialized and role-provisioned, with disposable halls
+ * starting at blog 5. No production class is copied or replaced — the real
+ * plugin code under wp-content/plugins is what runs.
+ *
  * Run from the repository root:
- * php tests/portal-session-template-replica-persistence.php
+ * BC_TEST_DB=bingocommerce_state_test_suites php tests/portal-session-template-replica-persistence.php
  */
 
 if ( 'cli' !== PHP_SAPI ) {
@@ -12,13 +30,45 @@ if ( 'cli' !== PHP_SAPI ) {
 	exit( 1 );
 }
 
-$_SERVER['HTTP_HOST']      = 'bingocommerce.test';
+/*
+ * Fail closed BEFORE WordPress boots.
+ *
+ * `bingocommerce_state_test_scratch` is excluded deliberately: the ownership
+ * CONTROLS in tests/hall-commerce-state.php require that name to be ABSENT when
+ * they run, so no other suite may leave a database there.
+ */
+$bc_target = (string) getenv( 'BC_TEST_DB' );
+if ( '' === $bc_target ) {
+	fwrite( STDERR, "BC_TEST_DB is not set. This suite applies Sessions migrations and must never\n" );
+	fwrite( STDERR, "run against the development database. Name the isolated database explicitly:\n" );
+	fwrite( STDERR, "  BC_TEST_DB=bingocommerce_state_test_suites php tests/portal-session-template-replica-persistence.php\n" );
+	exit( 1 );
+}
+if ( ! in_array( $bc_target, [ 'bingocommerce_state_test', 'bingocommerce_state_test_suites' ], true ) ) {
+	fwrite( STDERR, "BC_TEST_DB='{$bc_target}' is not an isolated fixture database for this suite.\n" );
+	exit( 1 );
+}
+unset( $bc_target );
+
 $_SERVER['REQUEST_URI']    = '/';
 $_SERVER['REQUEST_METHOD'] = 'GET';
 $_SERVER['REMOTE_ADDR']    = '127.0.0.1';
 
-require dirname( __DIR__ ) . '/wp-load.php';
+putenv( 'BC_FIXTURE_NETWORK_ACTIVE=1' );
+putenv( 'BC_FIXTURE_WOOCOMMERCE=1' );
+
+require __DIR__ . '/fixtures/wordpress-bootstrap.php';
 require_once ABSPATH . 'wp-admin/includes/ms.php';
+
+/*
+ * Last-resort proof, after the bootstrap, that the fixture really selected an
+ * isolated database. The fixture already refuses the development name; this
+ * asserts the outcome rather than trusting it.
+ */
+if ( ! defined( 'DB_NAME' ) || ! in_array( DB_NAME, [ 'bingocommerce_state_test', 'bingocommerce_state_test_suites' ], true ) ) {
+	fwrite( STDERR, "Refusing to run: the active database is not an isolated fixture.\n" );
+	exit( 1 );
+}
 
 if ( ! class_exists( '\BingoCommerce\Sessions\Migrations' ) ) {
 	require dirname( __DIR__ ) . '/wp-content/plugins/bingocommerce-sessions/bingocommerce-sessions.php';
@@ -56,7 +106,7 @@ final class PortalSessionTemplateReplicaPersistenceTest {
 
 	public function run(): void {
 		$this->assert_true( is_multisite(), 'WordPress Multisite is enabled' );
-		$this->assert_same( 2, Migrations::DB_VERSION, 'Sessions schema advances exactly one version from v1 to v2' );
+		$this->assert_same( 3, Migrations::DB_VERSION, 'Sessions schema is at v3 (ADR-043)' );
 		$this->super_admin_id = $this->find_super_admin_id();
 		$this->assert_true( $this->super_admin_id > 0, 'native Super Admin fixture exists' );
 
@@ -148,9 +198,9 @@ final class PortalSessionTemplateReplicaPersistenceTest {
 			$catalog_schema_before = $this->snapshot_schema( [ $site_id ], $this->catalog_table_suffixes() );
 			$woo_before = $this->snapshot_rows( [ $site_id ], $this->woo_table_suffixes() );
 
-			$this->assert_true( true === Migrations::migrate_current_site(), 'existing disposable hall upgrades from Sessions v1 to v2' );
-			$this->assert_same( 2, (int) get_option( Migrations::VERSION_OPTION, 0 ), 'v2 is recorded only after all three Session tables verify' );
-			$this->assert_true( true === Migrations::verify_current_site_schema(), 'complete Sessions v2 schema verifies' );
+			$this->assert_true( true === Migrations::migrate_current_site(), 'existing disposable hall upgrades from Sessions v1 to v3' );
+			$this->assert_same( 3, (int) get_option( Migrations::VERSION_OPTION, 0 ), 'v3 is recorded only after all six Session structures and both integrity probes verify' );
+			$this->assert_true( true === Migrations::verify_current_site_schema(), 'complete Sessions v3 schema verifies' );
 			$this->assert_same( $wpdb->prefix . 'bingo_portal_session_templates', $templates, 'replica table uses the active Hall site prefix' );
 			$this->assert_false( str_contains( substr( $templates, strlen( $wpdb->prefix ) ), 'blog_id' ), 'replica table name does not encode a blog_id column' );
 			$this->assert_exact_schema( $templates, 'upgraded hall' );
@@ -159,15 +209,15 @@ final class PortalSessionTemplateReplicaPersistenceTest {
 			$relation_after = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM `{$relations}` WHERE session_package_id = %d", $relation_id ), ARRAY_A );
 			$this->assert_same( $session_before, $session_after, 'every existing dated Commerce Session field survives byte-identically' );
 			$this->assert_same( $relation_before, $relation_after, 'existing Session/Package assignment survives byte-identically' );
-			$this->assert_same( $catalog_rows_before, $this->snapshot_rows( [ $site_id ], $this->catalog_table_suffixes() ), 'Catalog rows are unchanged by Sessions v2 migration' );
-			$this->assert_same( $catalog_schema_before, $this->snapshot_schema( [ $site_id ], $this->catalog_table_suffixes() ), 'Catalog schemas are unchanged by Sessions v2 migration' );
-			$this->assert_same( $woo_before, $this->snapshot_rows( [ $site_id ], $this->woo_table_suffixes() ), 'WooCommerce product/order rows are unchanged by Sessions v2 migration' );
+			$this->assert_same( $catalog_rows_before, $this->snapshot_rows( [ $site_id ], $this->catalog_table_suffixes() ), 'Catalog rows are unchanged by the Sessions migration' );
+			$this->assert_same( $catalog_schema_before, $this->snapshot_schema( [ $site_id ], $this->catalog_table_suffixes() ), 'Catalog schemas are unchanged by the Sessions migration' );
+			$this->assert_same( $woo_before, $this->snapshot_rows( [ $site_id ], $this->woo_table_suffixes() ), 'WooCommerce product/order rows are unchanged by the Sessions migration' );
 
 			$this->exercise_replica_capabilities( $templates, $now );
 
 			$rows_before_rerun = $this->table_rows( $templates, 'session_template_id' );
 			$ddl_before_rerun  = $this->table_ddl( $templates );
-			$this->assert_true( true === Migrations::migrate_current_site(), 'Sessions v2 migration rerun is idempotent' );
+			$this->assert_true( true === Migrations::migrate_current_site(), 'Sessions v3 migration rerun is idempotent' );
 			$this->assert_true( true === Migrations::verify_current_site_schema(), 'complete schema still verifies after migration rerun' );
 			$this->assert_same( $rows_before_rerun, $this->table_rows( $templates, 'session_template_id' ), 'replica rows are byte-identical after migration rerun' );
 			$this->assert_same( $ddl_before_rerun, $this->table_ddl( $templates ), 'replica table schema is byte-identical after migration rerun' );
@@ -288,7 +338,7 @@ final class PortalSessionTemplateReplicaPersistenceTest {
 
 		switch_to_blog( $site_id );
 		try {
-			$this->assert_same( 2, (int) get_option( Migrations::VERSION_OPTION, 0 ), 'normal new-site provisioning records Sessions v2' );
+			$this->assert_same( 3, (int) get_option( Migrations::VERSION_OPTION, 0 ), 'normal new-site provisioning records Sessions v3' );
 			$this->assert_true( true === Migrations::verify_current_site_schema(), 'normal new-site provisioning creates all three Session tables' );
 			$this->assert_same( $wpdb->get_blog_prefix( $site_id ) . 'bingo_portal_session_templates', Migrations::portal_session_templates_table(), 'new Hall replica table uses only its per-site prefix' );
 			$this->assert_exact_schema( Migrations::portal_session_templates_table(), 'newly provisioned hall' );
@@ -470,7 +520,18 @@ final class PortalSessionTemplateReplicaPersistenceTest {
 
 	/** @return array<int,string> */
 	private function domain_table_suffixes(): array {
-		return array_merge( $this->catalog_table_suffixes(), [ 'bingo_sessions', 'bingo_session_packages', 'bingo_portal_session_templates' ] );
+		return array_merge(
+			$this->catalog_table_suffixes(),
+			[
+				'bingo_sessions',
+				'bingo_session_packages',
+				'bingo_portal_session_templates',
+				// ADR-043 Sessions v3.
+				'bingo_session_schedules',
+				'bingo_session_schedule_dates',
+				'bingo_session_schedule_packages',
+			]
+		);
 	}
 
 	/** @return array<int,string> */
@@ -525,7 +586,7 @@ final class PortalSessionTemplateReplicaPersistenceTest {
 			$tables  = array_map( static fn( string $suffix ): string => $prefix . $suffix, $this->domain_table_suffixes() );
 
 			wp_delete_site( $site_id );
-			$allowed = '/^' . preg_quote( $wpdb->base_prefix, '/' ) . $site_id . '_bingo_(game_types|play_products|packages|package_components|package_addons|sessions|session_packages|portal_session_templates)$/';
+			$allowed = '/^' . preg_quote( $wpdb->base_prefix, '/' ) . $site_id . '_bingo_(game_types|play_products|packages|package_components|package_addons|sessions|session_packages|portal_session_templates|session_schedules|session_schedule_dates|session_schedule_packages)$/';
 			foreach ( $tables as $table ) {
 				if ( 1 === preg_match( $allowed, $table ) ) {
 					$wpdb->query( "DROP TABLE IF EXISTS `{$table}`" );

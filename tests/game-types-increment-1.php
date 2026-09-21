@@ -17,7 +17,24 @@ $_SERVER['REQUEST_URI']    = '/';
 $_SERVER['REQUEST_METHOD'] = 'GET';
 $_SERVER['REMOTE_ADDR']    = '127.0.0.1';
 
-require dirname( __DIR__ ) . '/wp-load.php';
+/*
+ * ADR-043 §16 amendment: routed through the shared fixture bootstrap.
+ *
+ * This suite creates disposable Multisite SITES. `bingocommerce-sessions` is
+ * network-active, so every wp_insert_site() fires its `wp_initialize_site`
+ * handler and applies the CURRENT Sessions schema — from v3, three new tables
+ * and seven new `bingo_sessions` columns — to whichever database is booted.
+ * Against the development installation that would write v3 structure into the
+ * development database, which ADR-043's rollout forbids outside a deliberate,
+ * verified migration.
+ *
+ * tests/fixtures/wordpress-bootstrap.php is fail-closed: it has no
+ * development-database fallback, so this harness cannot be run against the
+ * development installation by forgetting an environment variable. Without
+ * `BC_TEST_DB` it stops with a guard message; with it, it boots the
+ * allowlisted, sentinel-owned fixture.
+ */
+require __DIR__ . '/fixtures/wordpress-bootstrap.php';
 require_once ABSPATH . 'wp-admin/includes/ms.php';
 require_once ABSPATH . 'wp-admin/includes/screen.php';
 if ( ! class_exists( '\BingoCommerce\Catalog\GameTypeService' ) ) {
@@ -673,6 +690,9 @@ final class GameTypeIncrementOneTest {
 			$wpdb->prefix . 'bingo_sessions',
 			$wpdb->prefix . 'bingo_session_packages',
 			$wpdb->prefix . 'bingo_portal_session_templates',
+			$wpdb->prefix . 'bingo_session_schedules',
+			$wpdb->prefix . 'bingo_session_schedule_dates',
+			$wpdb->prefix . 'bingo_session_schedule_packages',
 		];
 		$wpdb->query( $wpdb->prepare( 'DELETE FROM ' . CoreMigrations::audit_log_table() . ' WHERE blog_id = %d', $site_id ) );
 		restore_current_blog();
@@ -681,7 +701,7 @@ final class GameTypeIncrementOneTest {
 
 		foreach ( $catalog_tables as $table ) {
 			// Exact, site-scoped identifier. Anything else is refused.
-			if ( 1 === preg_match( '/^bc_' . $site_id . '_bingo_(package_components|packages|play_products|game_types|sessions|session_packages|portal_session_templates)$/', $table ) ) {
+			if ( 1 === preg_match( '/^bc_' . $site_id . '_bingo_(package_components|packages|play_products|game_types|sessions|session_packages|portal_session_templates|session_schedules|session_schedule_dates|session_schedule_packages)$/', $table ) ) {
 				$wpdb->query( "DROP TABLE IF EXISTS `{$table}`" );
 			}
 		}

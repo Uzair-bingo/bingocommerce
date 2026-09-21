@@ -314,6 +314,34 @@ final class Migrations {
 
 	/** Verify replacement structure before touching data or the old index. @return true|\WP_Error */
 	private static function verify_game_types_structure() {
+		$structure = self::verify_game_types_structure_only();
+		if ( is_wp_error( $structure ) ) {
+			return $structure;
+		}
+
+		return self::assert_engine_and_charset( self::game_types_table(), 'Game Type' );
+	}
+
+	/**
+	 * Columns, indexes and name-collation behaviour ONLY — no storage-engine or
+	 * charset assertion.
+	 *
+	 * Split out for ADR-043 §11.3's Portal-sync readiness gate, which runs BEFORE
+	 * the snapshot fetch. `PortalSnapshotTransactionTransport` already asserts
+	 * InnoDB for this exact table through `REQUIRED_INNODB_TABLES`
+	 * (`…:101-107`), after the fetch and before `BEGIN`, reporting
+	 * `portal_sync_storage_engine_unsupported`. The readiness gate must not
+	 * pre-empt that: doing so would move the engine check ahead of the fetch and
+	 * replace a specific error code with a vaguer one.
+	 *
+	 * Everything that makes the replica STRUCTURALLY usable is still proved here,
+	 * including the case- and accent-insensitive name collation the transport's
+	 * conflict handling depends on. The full verifier still asserts the engine,
+	 * because migration does need to prove it.
+	 *
+	 * @return true|\WP_Error
+	 */
+	private static function verify_game_types_structure_only() {
 		global $wpdb;
 		$table = self::game_types_table();
 
@@ -384,7 +412,34 @@ final class Migrations {
 			return self::verification_error( 'The Game Type name collation is not case- and accent-insensitive.' );
 		}
 
-		return self::assert_engine_and_charset( $table, 'Game Type' );
+		return true;
+	}
+
+	/**
+	 * The Game Type replica's STRUCTURAL readiness, for ADR-043 §11.3.
+	 *
+	 * Everything `verify_game_types_schema()` proves except the storage engine:
+	 * structure, the obsolete `name_unique` index being gone, and every stored
+	 * `local_name_key` matching its row identity — all three are properties the
+	 * snapshot transport's conflict handling relies on.
+	 *
+	 * @return true|\WP_Error
+	 */
+	public static function verify_game_types_structure_for_sync() {
+		$structure = self::verify_game_types_structure_only();
+		if ( is_wp_error( $structure ) ) {
+			return $structure;
+		}
+
+		$legacy_index = self::legacy_game_type_name_index();
+		if ( is_wp_error( $legacy_index ) ) {
+			return $legacy_index;
+		}
+		if ( [] !== $legacy_index ) {
+			return self::verification_error( 'The obsolete Game Type name_unique index remains.' );
+		}
+
+		return self::verify_local_name_keys();
 	}
 
 	/** ADR-039's sole allowlisted structural exception. @return true|\WP_Error */

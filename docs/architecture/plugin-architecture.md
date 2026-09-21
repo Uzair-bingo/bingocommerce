@@ -6,8 +6,8 @@ independently activatable and testable.
 | Plugin | Responsibility | Depends on |
 |---|---|---|
 | `bingocommerce-core` | Roles & capabilities, tenant context helpers, audit log service, migration framework | WooCommerce (network) |
-| `bingocommerce-catalog` | Hall-scoped Game Type replica/domain behavior, Bingo Play Product domain metadata/mapping, Bingo Package definitions/components/add-on eligibility, BR-032/BR-065 metadata projections, hall electronic-limit override/current-value resolver, starter-product domain logic when that deferred copy exists (ADR-026/ADR-031/ADR-035; ADR-042 MVP runs no starter copy) | core |
-| `bingocommerce-sessions` | Current calendar-dated Session/occurrence behavior, inclusive hall-local 5-day sales window, Available for Sale, Package assignment, and customer occurrence-before-Package selection; portal-integrated schedule/occurrence refactor pending compatibility review (BR-050–BR-052/BR-063/BR-073) | core, catalog |
+| `bingocommerce-catalog` | Hall-scoped Game Type replica/domain behavior, Bingo Play Product domain metadata/mapping, Bingo Package definitions/components, deferred add-on eligibility, BR-032/BR-065 metadata projections, hall electronic-limit override/current-value resolver, starter-product domain logic when that deferred copy exists (ADR-026/ADR-031/ADR-035; ADR-042 MVP runs no starter copy) | core |
+| `bingocommerce-sessions` | Portal Session-template replica; Commerce schedules with immutable named timezone and structured time; dated occurrence generation/reconciliation; inclusive hall-local 30-day window; centralized current-definition membership; Available for Sale; Package assignment; and customer occurrence-before-Package selection (BR-050–BR-052/BR-063/BR-073/BR-077/BR-078; DRAFT ADR-043) | core, catalog |
 | `bingocommerce-digital-tickets` | Purchase-time entitlement snapshot (activated on successful online payment confirmation — BR-053), QR issue/redeem, device binding, staff reactivation, Android REST API, redemption accumulation | core, catalog, sessions |
 | `bingocommerce-portal-integration` | Portal-facing machine endpoint; request authentication/validation; provisioning-operation persistence/sequencing; Portal Hall mapping coordination; HallCommerceState/managed-marker coordination; Portal snapshot synchronization; safe API responses and integration audit attribution (ADR-035–ADR-042) | core |
 | `bingocommerce-platform` | Actual WordPress Multisite site creation; WooCommerce/site initialization; triggering existing per-site BingoCommerce migrations and role provisioning; returning a structured setup result to the integration orchestrator; billing lifecycle (BR-016); retention/deletion (BR-017); network reporting. Does not own Catalog domain rules. ADR-042 MVP does not trigger starter Product/Play Product copy | core |
@@ -25,22 +25,26 @@ returns a structured setup result to `bingocommerce-portal-integration`. The
 ADR-042 MVP does not run starter-product copy; that Catalog-owned mechanism
 remains separately deferred. Portal Game Type identity/configuration is
 external authority; the Catalog plugin retains the hall-scoped local replica
-and its commerce relationships. Webhook/reconciliation orchestration remains
-deferred and must not be inferred here.
+and its commerce relationships. Portal webhook delivery/reconciliation remains
+deferred and must not be confused with the implemented occurrence reconciler.
 
-ADR-031 assigns the five per-site Catalog tables and their migrations to
-`bingocommerce-catalog`, and the two per-site Session tables and their
-migrations to `bingocommerce-sessions`. `bingocommerce-platform` owns Platform
+ADR-031 conceptually assigns five per-site Catalog tables to
+`bingocommerce-catalog`, but Catalog schema v5 currently implements four;
+`bingo_package_addons` and `PackageAddonService` remain deferred. Its two
+baseline Session tables belong to `bingocommerce-sessions`. Session schema v3
+adds the Portal-template replica and three schedule-definition tables in the
+same plugin without replacing those baseline tables. `bingocommerce-platform` owns Platform
 Admin mutation/initialization of the network electronic-maximum option;
 `bingocommerce-catalog` owns the optional hall site option and resolves the
 effective current value.
 
-ADR-035 does not authorize a migration. The implemented Game Type and Session
-schemas remain in place until a schema-specific compatibility/refactoring review
-defines Portal-ID linkage and the Portal-template / commerce-schedule / dated-
-occurrence model. Existing Package and Play Product ownership is unchanged.
+The compatibility review produced the additive Portal-template / Commerce-
+schedule / dated-occurrence implementation in the current repository. It
+preserves the implemented Game Type and Session schemas and existing Package and
+Play Product ownership. ADR-043 remains DRAFT and unapproved; production
+deployment is not claimed.
 
-## 1a. Portal Integration Boundary (approved; automatic provisioning not implemented)
+## 1a. Portal Integration Boundary (approved increments implemented; not deployed)
 
 - Portal authority: Hall identity, Game Type identity/configuration,
   operational Session-template identity, operational Session `days`, and
@@ -63,19 +67,32 @@ occurrence model. Existing Package and Play Product ownership is unchanged.
   validate Commerce scheduling in v1; later advisory validation requires a
   separately approved requirement.
 - Structured Commerce time is BingoCommerce-owned and may be entered manually
-  by a Hall Manager in v1; it is never parsed from display names. One Package
-  may be assigned to multiple dated commerce occurrences.
+  by a Hall Manager in v1; it is never parsed from display names. A schedule
+  captures the Hall's named WordPress timezone at creation and keeps it
+  immutable. User-facing dates use `MM/DD/YYYY`; canonical internal dates may
+  remain `YYYY-MM-DD`. One Package may be assigned to multiple dated commerce
+  occurrences.
+- Generated occurrence availability requires the inclusive thirty-day window,
+  Available for Sale ON and current committed-definition membership. Removing a
+  strictly future date is allowed while ON; membership immediately fails
+  closed and a successful edit turns it OFF. Re-adding a retained occurrence
+  preserves identity and Packages and leaves sales OFF until explicitly enabled.
+  Existing reconciliation/history rules are unchanged (BR-077, BR-078).
 - Approved delivery order (ADR-042): authenticated snapshot read and full-pull
   synchronization (complete); idempotent Hall/Game Type/Session mapping and
   multi-Hall proof (complete); manual Hall-scoped synchronization (complete);
-  automatic Commerce enable/suspend provisioning (current work; not
-  implemented); practical local end-to-end provisioning test; SSO later;
-  webhooks, scheduling, and reconciliation later.
+  BingoCommerce-side automatic Commerce enable/suspend provisioning
+  (implemented and tested); Portal Enable/Disable control plus practical
+  cross-repository end-to-end provisioning workflow (incomplete); SSO later;
+  Portal webhooks later. Commerce scheduling and occurrence reconciliation
+  exist under DRAFT ADR-043.
 - `Enable BingoCommerce` / Disable Ecommerce is a Portal Global Admin-only
   platform capability (BR-075, BR-076), separate from normal Hall Settings
   authorization. ADR-042 decides the machine REST contract, operations table,
-  empty-store MVP, suspend/re-enable rules, and plugin split above; those
-  features are not yet implemented.
+  empty-store MVP, suspend/re-enable rules, and plugin split above. The
+  BingoCommerce endpoint, orchestrator, operations persistence, platform filter
+  and automatic site-creation path are implemented and tested; the Portal
+  control and cross-repository workflow remain incomplete.
 
 See `docs/architecture/portal-integration-architecture.md`. Cross-plugin
 communication for operational create/init/resume uses the synchronous filter
@@ -86,7 +103,7 @@ partial create before `address_occupied`; malformed internal command →
 `internal_error`; not invoked on ordinary suspend, pre-bind cancellation, or
 marker-matched partial-site suspend — including when that suspend path returns
 `mapping_invalid`). Business logic MUST NOT be duplicated between plugins. The
-hook is decided and not yet implemented.
+hook is implemented by `bingocommerce-platform`.
 
 ## 2. Internal Structure (every plugin)
 
@@ -170,13 +187,17 @@ A feature that works on existing halls but fails on a newly created hall is inco
 
 For ADR-031 artifacts:
 
-- `bingocommerce-catalog` owns one per-site Catalog schema version (proposed
-  `bc_catalog_db_version`) for `bingo_game_types`, `bingo_play_products`,
-  `bingo_packages`, `bingo_package_components`, and `bingo_package_addons`.
-- `bingocommerce-sessions` owns one per-site Session schema version (proposed
-  `bc_sessions_db_version`) for `bingo_sessions` and
-  `bingo_session_packages`.
-- The seven tables use `$wpdb->prefix` and contain no redundant `blog_id`.
+- `bingocommerce-catalog` owns per-site `bc_catalog_db_version = 5` for the four
+  implemented tables: `bingo_game_types`, `bingo_play_products`,
+  `bingo_packages`, and `bingo_package_components`. ADR-031's conceptual
+  `bingo_package_addons` table remains deferred.
+- `bingocommerce-sessions` owns one per-site Session schema version
+  (`bc_sessions_db_version = 3`) for `bingo_sessions`, `bingo_session_packages`,
+  `bingo_portal_session_templates`, `bingo_session_schedules`,
+  `bingo_session_schedule_dates`, and `bingo_session_schedule_packages`.
+- All ten implemented Catalog/Session tables use `$wpdb->prefix` and contain no
+  redundant `blog_id`. The same tenant rule applies to the deferred conceptual
+  add-on table if it is implemented later.
 - Initial relationships are indexed logical relationships with restrictive
   service-level validation; do not assume physical foreign keys or cascades.
 
@@ -206,16 +227,17 @@ For ADR-031 artifacts:
 
 ### Catalog Services and WooCommerce Projections
 
-ADR-031 and BR-065 define these supported writers in
-`bingocommerce-catalog`:
+ADR-031 and BR-065 define these implemented and approved-deferred writer
+boundaries in `bingocommerce-catalog`:
 
 - `PackageService` owns authoritative Package mutations, linked WooCommerce
   Package coordination/native base price, concurrency-safe linked-product
   exclusivity enforcement,
   and deterministic `bc_product_kind` projection maintenance.
-- `PackageAddonService` owns authoritative Package/add-on relationship
-  mutations, enabled-relationship recount, and deterministic
-  `bc_package_relation` projection maintenance.
+- The deferred `PackageAddonService` will own authoritative Package/add-on
+  relationship mutations, enabled-relationship recount, and deterministic
+  `bc_package_relation` projection maintenance when that approved slice is
+  implemented.
 - `BingoPlayProductService` owns authoritative Bingo Play Product membership,
   concurrency-safe linked-product exclusivity enforcement, and the v1 non-
   independently-purchasable boundary.

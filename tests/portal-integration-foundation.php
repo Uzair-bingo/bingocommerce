@@ -4,7 +4,17 @@
  * CLI integration coverage for the Phase 3B Portal integration foundation.
  *
  * Run from the repository root:
- * php tests/portal-integration-foundation.php
+ * BC_TEST_DB=bingocommerce_state_test_suites php tests/portal-integration-foundation.php
+ *
+ * THE DATABASE NAME IS NOW REQUIRED (ADR-043 §16 amendment). This suite creates
+ * disposable Multisite SITES, and `bingocommerce-sessions` is network-active, so
+ * every wp_insert_site() fires its `wp_initialize_site` handler and provisions
+ * the CURRENT Sessions schema into whichever database is booted. Once ADR-043
+ * raised that schema to v3, the previous invocation — plain
+ * `php tests/portal-integration-foundation.php`, which fell through the shared bootstrap to
+ * wp-load.php — would have written v3 structure into the development
+ * installation. tests/fixtures/wordpress-bootstrap.php no longer has that
+ * fallback and refuses to boot without `BC_TEST_DB`.
  */
 
 if ( 'cli' !== PHP_SAPI ) {

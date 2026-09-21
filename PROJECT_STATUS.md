@@ -2281,10 +2281,26 @@
     persistence or any billing resolver; and starter Product / Play Product
     copy. The manual cross-repository Portal end-to-end test has **not** been
     performed. **Production deployment is NOT claimed.**
+- **[2026-09-19] DRAFT ADR-043 Revision 9 — implemented; documentation
+  synchronized.** The additive Session schema v3,
+  Portal-template/Commerce-schedule/dated-occurrence separation, explicit and
+  weekly generation/reconciliation, named immutable schedule timezone,
+  BR-077's inclusive
+  `D - 30 calendar days <= hall_local_today <= D` window, user-facing
+  `MM/DD/YYYY` boundaries, and BR-078 centralized committed-definition membership
+  exist in the current repository implementation. Removing a strictly future
+  date is allowed while ON: membership immediately makes it ineligible and a
+  successful edit turns it OFF; re-adding a retained occurrence preserves its
+  identity and Package assignments and leaves it OFF. Existing withdrawal,
+  sale-lock, archival and historical-retention rules are unchanged. The focused
+  schedule/admin verification most recently reports **530/530 passing
+  assertions** (`session-schedules-increment-1.php` 159/159 plus
+  `session-schedule-admin-increment-1.php` 371/371). ADR-043 remains DRAFT and
+  unapproved; separate ratification remains; production deployment is not
+  claimed.
 - No Hall Staff Management work currently in progress.
-- No other Catalog or Session implementation work is in progress. Package
-  Increment 1 and Session Increment 1 remain COMPLETE and are recorded under
-  Done.
+- Package Increment 1 and the legacy Session Increment 1 remain COMPLETE and
+  are recorded under Done. No add-on or unrelated Catalog work is in progress.
 
 ---
 
@@ -2321,23 +2337,21 @@
    is implemented and measured (endpoint **50352/50352**, platform
    **491/491**). The Portal Enable/Disable Ecommerce button remains
    unimplemented.**
-   **Production deployment is NOT claimed. Scheduling and webhooks do not
-   exist.** Local writer restrictions and reconciliation remain deferred.
-   Commerce selection remains separate and is not implemented.
+   **Production deployment is NOT claimed.** Commerce scheduling and occurrence
+   reconciliation exist in the current repository under DRAFT,
+   unapproved ADR-043. Portal webhooks and transitional local-writer policy
+   remain deferred.
 
 Everything below is tracked work that is NOT a blocker to that demo.
 
 ## Before Customer-Facing Digital Launch
 1. Complete the remaining Portal integration delivery increments. Phase 3B
-   through Phase 3G are complete as recorded above. **Current next
-   implementation work is automatic Commerce enable/suspend provisioning under
-   ADR-042 / BR-076** (decision complete; not implemented), followed by a
-   practical local end-to-end provisioning test. Webhooks, scheduling, and
-   reconciliation remain later, separately reviewed work — they are **not**
-   prerequisites for automatic provisioning. SSO remains a later integration
-   phase and is not a customer-launch prerequisite. Any further Game
-   Type/Session schema or writer change requires its own reviewed
-   compatibility/application design.
+   through Phase 3G and the BingoCommerce-side ADR-042 machine provisioning path
+   are implemented and tested. The Portal Enable/Disable Ecommerce control and
+   practical cross-repository end-to-end provisioning workflow remain
+   incomplete. Portal webhooks and SSO remain later integration phases.
+   Commerce scheduling and occurrence reconciliation exist under DRAFT
+   ADR-043; separate ratification remains before any deployment claim.
 2. The BR-066 storefront mechanism that enforces Bingo Play Product
    non-purchasability. Deferred by decision; requires a new reviewed entry
    before any implementer selects a mechanism.
@@ -2441,6 +2455,11 @@ Everything below is tracked work that is NOT a blocker to that demo.
   §"Catalog lock-order review" is accurate as written. ADR-033 locks
   `bingo_packages` then `bingo_play_products` ascending, and locks no component
   rows at all.
+- Latest verified results **[2026-09-19, DRAFT ADR-043 focused schedule/admin
+  verification]**: `tests/session-schedules-increment-1.php` **159/159 PASS**
+  and `tests/session-schedule-admin-increment-1.php` **371/371 PASS**, for
+  **530/530 passing assertions**. This verifies the current repository
+  implementation; it does not approve ADR-043 or claim production deployment.
 - Latest verified results **[2026-09-14, ADR-042 BingoCommerce machine
   provisioning path, after three source-review correction passes]**:
   `tests/portal-provisioning-endpoint.php` **50352/50352** and
@@ -2586,8 +2605,15 @@ Everything below is tracked work that is NOT a blocker to that demo.
   `bingo_package_components`); v4 added nullable, unique
   `bingo_game_types.portal_game_type_id`, and v5 is implemented and tested as
   the Portal-compatible Game Type name/index and imported-code design
-- **Session schema:** per-site `bc_sessions_db_version` = 2
+- **Session schema:** current repository `bc_sessions_db_version` = **3**
   (`bingo_sessions`, `bingo_session_packages`,
-  `bingo_portal_session_templates`); v2 adds the Portal Session-template replica
-  table
+  `bingo_portal_session_templates`, `bingo_session_schedules`,
+  `bingo_session_schedule_dates`, `bingo_session_schedule_packages`); v2 added
+  the Portal Session-template replica and v3 adds the non-destructive
+  Commerce-schedule definition and generated-occurrence fields under DRAFT
+  ADR-043. This is repository state, not a production-deployment claim.
+- **Current Catalog/Session inventory:** **ten implemented tables** — four
+  Catalog v5 tables and six Session v3 tables. ADR-031's conceptual
+  `bingo_package_addons` table and `PackageAddonService` remain approved but
+  deferred and are absent from the current implementation.
 - **Rule for AI agents:** Read `AGENTS.md`, `docs/architecture/plugin-architecture.md`, and this file before coding. Do not re-scaffold Multisite, WooCommerce, or core bootstrap.

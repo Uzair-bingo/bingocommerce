@@ -36,6 +36,16 @@ final class Plugin {
 
 		SessionAdmin::register();
 
+		/*
+		 * The two ADR-043 schedule screens attach as submenus of the Bingo
+		 * Sessions page SessionAdmin registers, so they are registered here,
+		 * behind the same dependency gate: a hall missing Core or Catalog gets
+		 * no schedule surface either, rather than a screen whose every action
+		 * would fail.
+		 */
+		SessionScheduleAdmin::register();
+		SessionTemplateAdmin::register();
+
 		add_action( 'network_admin_menu', [ Migrations::class, 'maybe_migrate_network' ], 6 );
 		add_action( 'admin_init', [ Migrations::class, 'maybe_migrate_current_site' ], 8 );
 		add_action( 'wp_initialize_site', [ Migrations::class, 'provision_new_site' ], 40 );

@@ -21,11 +21,30 @@ if ( ! defined( 'ABSPATH' ) ) {
  */
 final class SessionAdmin {
 
-	private const PAGE_SLUG = 'bingocommerce-sessions';
+	/** Public because the two schedule screens attach as submenus of this page. */
+	public const PAGE_SLUG = 'bingocommerce-sessions';
+
 	private const NONCE_ACTION = 'bingocommerce_session_mutation';
+
+	/** Rows per administrative page. One unbounded table does not scale past a few schedules. */
+	private const PER_PAGE = 20;
 
 	public static function register(): void {
 		add_action( 'admin_menu', [ self::class, 'add_menu' ] );
+		add_action( 'admin_enqueue_scripts', [ self::class, 'enqueue_date_picker' ], 20 );
+	}
+
+	/** Use WordPress's bundled calendar picker only on the Bingo Sessions page. */
+	public static function enqueue_date_picker(): void {
+		$page = isset( $_GET['page'] ) ? sanitize_key( wp_unslash( $_GET['page'] ) ) : '';
+		if ( self::PAGE_SLUG !== $page || ! HallContext::is_hall() || ! current_user_can( 'bc_manage_sessions' ) ) {
+			return;
+		}
+
+		wp_enqueue_script( 'jquery-ui-datepicker' );
+		if ( function_exists( 'WC' ) ) {
+			wp_enqueue_style( 'jquery-ui-style', WC()->plugin_url() . '/assets/css/jquery-ui/jquery-ui.min.css', [], WC_VERSION );
+		}
 	}
 
 	public static function add_menu(): void {
@@ -57,15 +76,28 @@ final class SessionAdmin {
 			$result = self::handle_request( wp_unslash( $_POST ), $service );
 		}
 
-		$status = sanitize_key( wp_unslash( $_GET['status'] ?? 'all' ) );
-		if ( ! in_array( $status, [ 'all', 'active', 'archived' ], true ) ) {
-			$status = 'all';
+		// 'upcoming' — active AND not before hall-local today — is the
+		// DEFAULT landing view. 'all', 'active' and 'archived' are unchanged
+		// and remain how a Manager reaches historical or archived Sessions.
+		$status = sanitize_key( wp_unslash( $_GET['status'] ?? SessionService::ADMIN_STATUS_UPCOMING ) );
+		if ( ! in_array( $status, [ SessionService::ADMIN_STATUS_UPCOMING, 'all', 'active', 'archived' ], true ) ) {
+			$status = SessionService::ADMIN_STATUS_UPCOMING;
 		}
+		$page = isset( $_GET['paged'] ) ? self::request_int( wp_unslash( $_GET['paged'] ) ) : 1;
+		$page = max( 1, $page );
 
-		// A failed read is NOT an empty hall.
-		$sessions       = $service->listForAdministration( $status );
+		/*
+		 * One extra row is the "is there a next page" peek: reading PER_PAGE
+		 * rows' worth of OFFSET but one extra row of LIMIT avoids a separate
+		 * COUNT query while still deciding whether Next appears. $per_page
+		 * (PER_PAGE) alone decides the offset; $limit is the one thing that
+		 * differs from it.
+		 */
+		$sessions       = $service->listForAdministration( $status, $page, self::PER_PAGE, self::PER_PAGE + 1 );
 		$sessions_error = is_wp_error( $sessions ) ? $sessions : null;
 		$sessions       = is_wp_error( $sessions ) ? [] : $sessions;
+		$has_next_page  = count( $sessions ) > self::PER_PAGE;
+		$sessions       = array_slice( $sessions, 0, self::PER_PAGE );
 
 		$packages       = self::package_map( $sessions );
 		$packages_error = is_wp_error( $packages ) ? $packages : null;
@@ -100,7 +132,15 @@ final class SessionAdmin {
 
 			<h2><?php echo esc_html__( 'Sessions in this hall', 'bingocommerce-sessions' ); ?></h2>
 			<ul class="subsubsub">
-				<?php foreach ( [ 'all' => __( 'All', 'bingocommerce-sessions' ), 'active' => __( 'Active', 'bingocommerce-sessions' ), 'archived' => __( 'Archived', 'bingocommerce-sessions' ) ] as $key => $label ) : ?>
+				<?php
+				$status_tabs = [
+					SessionService::ADMIN_STATUS_UPCOMING => __( 'Upcoming', 'bingocommerce-sessions' ),
+					'all'                                 => __( 'All', 'bingocommerce-sessions' ),
+					'active'                               => __( 'Active', 'bingocommerce-sessions' ),
+					'archived'                             => __( 'Archived', 'bingocommerce-sessions' ),
+				];
+				?>
+				<?php foreach ( $status_tabs as $key => $label ) : ?>
 					<li>
 						<a href="<?php echo esc_url( add_query_arg( [ 'page' => self::PAGE_SLUG, 'status' => $key ], admin_url( 'admin.php' ) ) ); ?>"
 							<?php echo $status === $key ? 'class="current"' : ''; ?>><?php echo esc_html( $label ); ?></a>
@@ -112,8 +152,8 @@ final class SessionAdmin {
 					<tr>
 						<th><?php echo esc_html__( 'Session', 'bingocommerce-sessions' ); ?></th>
 						<th><?php echo esc_html__( 'Date', 'bingocommerce-sessions' ); ?></th>
-						<th><?php echo esc_html__( 'Available for Sale', 'bingocommerce-sessions' ); ?></th>
-						<th><?php echo esc_html__( 'On sale today', 'bingocommerce-sessions' ); ?></th>
+						<th><?php echo esc_html__( 'Enabled by manager', 'bingocommerce-sessions' ); ?></th>
+						<th><?php echo esc_html__( 'Available to customers today', 'bingocommerce-sessions' ); ?></th>
 						<th><?php echo esc_html__( 'Status', 'bingocommerce-sessions' ); ?></th>
 						<th><?php echo esc_html__( 'Bingo Packages', 'bingocommerce-sessions' ); ?></th>
 						<th><?php echo esc_html__( 'Actions', 'bingocommerce-sessions' ); ?></th>
@@ -131,9 +171,10 @@ final class SessionAdmin {
 						$is_active   = SessionService::STATUS_ACTIVE === $session['status'];
 						$is_archived = SessionService::STATUS_ARCHIVED === $session['status'];
 						?>
+						<?php $generated = ! empty( $session['is_schedule_owned'] ); ?>
 						<tr>
-							<td>#<?php echo esc_html( (string) $session['session_id'] ); ?> — <?php echo esc_html( (string) $session['display_name'] ); ?></td>
-							<td><?php echo esc_html( (string) $session['session_date'] ); ?></td>
+							<td>#<?php echo esc_html( (string) $session['session_id'] ); ?> — <?php echo esc_html( (string) $session['display_name'] ); ?><?php if ( $generated ) : ?> <span class="description">(<?php echo esc_html__( 'schedule-managed', 'bingocommerce-sessions' ); ?>)</span><?php endif; ?></td>
+							<td><?php echo esc_html( self::display_date( (string) $session['session_date'] ) ); ?></td>
 							<td><?php echo $session['available_for_sale'] ? esc_html__( 'ON', 'bingocommerce-sessions' ) : esc_html__( 'OFF', 'bingocommerce-sessions' ); ?></td>
 							<td>
 								<strong><?php echo $session['available_for_sale_today'] ? esc_html__( 'Yes', 'bingocommerce-sessions' ) : esc_html__( 'No', 'bingocommerce-sessions' ); ?></strong>
@@ -147,29 +188,83 @@ final class SessionAdmin {
 							</td>
 							<td><?php echo esc_html( self::assignment_summary( $session, $packages, null !== $packages_error ) ); ?></td>
 							<td>
-								<?php if ( $is_active ) : ?>
-									<a href="<?php echo esc_url( add_query_arg( [ 'page' => self::PAGE_SLUG, 'status' => $status, 'edit' => (int) $session['session_id'] ], admin_url( 'admin.php' ) ) ); ?>"><?php echo esc_html__( 'Edit', 'bingocommerce-sessions' ); ?></a>
-									&nbsp;
-								<?php endif; ?>
-								<?php if ( $is_active || $is_archived ) : ?>
-									<form method="post" style="display:inline">
-										<?php wp_nonce_field( self::NONCE_ACTION ); ?>
-										<input type="hidden" name="session_id" value="<?php echo esc_attr( (string) $session['session_id'] ); ?>">
-										<?php if ( $is_active ) : ?>
-											<input type="hidden" name="bc_session_action" value="archive">
-											<button type="submit" class="button button-small"><?php echo esc_html__( 'Archive', 'bingocommerce-sessions' ); ?></button>
-										<?php else : ?>
-											<input type="hidden" name="bc_session_action" value="restore">
-											<button type="submit" class="button button-small"><?php echo esc_html__( 'Restore', 'bingocommerce-sessions' ); ?></button>
-										<?php endif; ?>
-									</form>
+								<?php if ( $generated ) : ?>
+									<?php
+									/*
+									 * ADR-043 §9: rename(), reschedule(), updateDetails(),
+									 * archive() and restore() are ALL refused for a
+									 * schedule-owned row with schedule_owned_occurrence, so
+									 * Edit/Archive/Restore are never offered for one. This is
+									 * presentation only — the service refusal above is the
+									 * enforcement, and both are tested. Enable/Disable Sales
+									 * is the one action a generated row DOES offer, and it
+									 * goes through the SAME setAvailableForSale() guarded
+									 * path — turn_on()/turn_off() — that proves ownership,
+									 * template eligibility, completion and Package
+									 * assignability, and it does not bypass the sales window.
+									 * "Schedule-managed" is stated once per row, in the Session
+									 * column next to the name — not repeated here too.
+									 */
+									?>
+									<?php if ( $is_active ) : ?>
+										<form method="post" style="display:inline">
+											<?php wp_nonce_field( self::NONCE_ACTION ); ?>
+											<input type="hidden" name="session_id" value="<?php echo esc_attr( (string) $session['session_id'] ); ?>">
+											<?php if ( $session['available_for_sale'] ) : ?>
+												<input type="hidden" name="bc_session_action" value="disable_sales">
+												<button type="submit" class="button button-small"><?php echo esc_html__( 'Disable Sales', 'bingocommerce-sessions' ); ?></button>
+											<?php elseif ( ! empty( $session['belongs_to_current_definition'] ) ) : ?>
+												<input type="hidden" name="bc_session_action" value="enable_sales">
+												<button type="submit" class="button button-small"><?php echo esc_html__( 'Enable Sales', 'bingocommerce-sessions' ); ?></button>
+											<?php endif; ?>
+										</form>
+									<?php endif; ?>
+								<?php else : ?>
+									<?php if ( $is_active ) : ?>
+										<a href="<?php echo esc_url( add_query_arg( [ 'page' => self::PAGE_SLUG, 'status' => $status, 'edit' => (int) $session['session_id'] ], admin_url( 'admin.php' ) ) ); ?>"><?php echo esc_html__( 'Edit', 'bingocommerce-sessions' ); ?></a>
+										&nbsp;
+									<?php endif; ?>
+									<?php if ( $is_active || $is_archived ) : ?>
+										<form method="post" style="display:inline">
+											<?php wp_nonce_field( self::NONCE_ACTION ); ?>
+											<input type="hidden" name="session_id" value="<?php echo esc_attr( (string) $session['session_id'] ); ?>">
+											<?php if ( $is_active ) : ?>
+												<input type="hidden" name="bc_session_action" value="archive">
+												<button type="submit" class="button button-small"><?php echo esc_html__( 'Archive', 'bingocommerce-sessions' ); ?></button>
+											<?php else : ?>
+												<input type="hidden" name="bc_session_action" value="restore">
+												<button type="submit" class="button button-small"><?php echo esc_html__( 'Restore', 'bingocommerce-sessions' ); ?></button>
+											<?php endif; ?>
+										</form>
+									<?php endif; ?>
 								<?php endif; ?>
 							</td>
 						</tr>
 					<?php endforeach; ?>
 				</tbody>
 			</table>
+			<?php if ( $page > 1 || $has_next_page ) : ?>
+				<p class="tablenav-pages">
+					<?php if ( $page > 1 ) : ?>
+						<a class="button" href="<?php echo esc_url( add_query_arg( [ 'page' => self::PAGE_SLUG, 'status' => $status, 'paged' => $page - 1 ], admin_url( 'admin.php' ) ) ); ?>">&laquo; <?php echo esc_html__( 'Previous', 'bingocommerce-sessions' ); ?></a>
+					<?php endif; ?>
+					<?php printf( esc_html__( 'Page %d', 'bingocommerce-sessions' ), (int) $page ); ?>
+					<?php if ( $has_next_page ) : ?>
+						<a class="button" href="<?php echo esc_url( add_query_arg( [ 'page' => self::PAGE_SLUG, 'status' => $status, 'paged' => $page + 1 ], admin_url( 'admin.php' ) ) ); ?>"><?php echo esc_html__( 'Next', 'bingocommerce-sessions' ); ?> &raquo;</a>
+					<?php endif; ?>
+				</p>
+			<?php endif; ?>
 		</div>
+		<script>
+		jQuery( function ( $ ) {
+			if ( ! $.fn.datepicker ) { return; }
+			$( '.bc-session-date' ).datepicker( {
+				dateFormat: 'mm/dd/yy',
+				showOn: 'both',
+				buttonText: <?php echo wp_json_encode( __( 'Choose date', 'bingocommerce-sessions' ) ); ?>
+			} );
+		} );
+		</script>
 		<?php
 	}
 
@@ -187,8 +282,8 @@ final class SessionAdmin {
 				<tr>
 					<th scope="row"><label for="bc-session-date"><?php echo esc_html__( 'Session date', 'bingocommerce-sessions' ); ?></label></th>
 					<td>
-						<input id="bc-session-date" type="date" name="session_date" required>
-						<p class="description"><?php echo esc_html__( 'The calendar date is the only scheduled value. Sales open 5 calendar days before it, in this hall\'s timezone.', 'bingocommerce-sessions' ); ?></p>
+						<input id="bc-session-date" type="text" class="regular-text bc-session-date" name="session_date" placeholder="MM/DD/YYYY" maxlength="10" required>
+						<p class="description"><?php echo esc_html__( 'Enter the date as MM/DD/YYYY. The calendar date is the only scheduled value. Sales open 30 calendar days before it, in this hall\'s timezone.', 'bingocommerce-sessions' ); ?></p>
 					</td>
 				</tr>
 				<tr>
@@ -202,7 +297,7 @@ final class SessionAdmin {
 					<th scope="row"><?php echo esc_html__( 'Available for Sale', 'bingocommerce-sessions' ); ?></th>
 					<td>
 						<label><input type="checkbox" name="available_for_sale" value="1"> <?php echo esc_html__( 'On', 'bingocommerce-sessions' ); ?></label>
-						<p class="description"><?php echo esc_html__( 'Turning this on does not bypass the 5-day window.', 'bingocommerce-sessions' ); ?></p>
+						<p class="description"><?php echo esc_html__( 'Turning this on does not bypass the 30-day window.', 'bingocommerce-sessions' ); ?></p>
 					</td>
 				</tr>
 			</table>
@@ -235,6 +330,86 @@ final class SessionAdmin {
 			return;
 		}
 
+		$generated = ! empty( $session['is_schedule_owned'] );
+		$complete  = null !== ( $session['generation_completed_at'] ?? null );
+
+		?>
+		<h2><?php printf( esc_html__( 'Edit Session #%d', 'bingocommerce-sessions' ), (int) $session_id ); ?></h2>
+
+		<?php if ( $generated ) : ?>
+			<?php
+			/*
+			 * ADR-043 §9: reached ONLY by direct navigation to ?edit=<id> for a
+			 * schedule-owned row, since the list table above no longer links to
+			 * it. rename(), reschedule(), updateDetails(), archive() and
+			 * restore() are ALL refused with schedule_owned_occurrence, so no
+			 * form that would submit any of them is offered — a read-only
+			 * summary is shown instead. This is presentation only: the service
+			 * refusal is what actually enforces it, and both are tested.
+			 */
+			?>
+			<div class="notice notice-info">
+				<p><?php echo esc_html__( 'This Session was generated by a commerce schedule. Its name, date, time and lifecycle are managed through the schedule, not edited directly.', 'bingocommerce-sessions' ); ?></p>
+			</div>
+			<table class="form-table" role="presentation">
+				<tr>
+					<th scope="row"><?php echo esc_html__( 'Session date', 'bingocommerce-sessions' ); ?></th>
+					<td><?php echo esc_html( self::display_date( (string) $session['session_date'] ) ); ?></td>
+				</tr>
+				<tr>
+					<th scope="row"><?php echo esc_html__( 'Display name', 'bingocommerce-sessions' ); ?></th>
+					<td><?php echo esc_html( (string) $session['display_name'] ); ?></td>
+				</tr>
+				<tr>
+					<th scope="row"><?php echo esc_html__( 'Generation', 'bingocommerce-sessions' ); ?></th>
+					<td><?php echo $complete ? esc_html__( 'Complete', 'bingocommerce-sessions' ) : esc_html__( 'Still being generated', 'bingocommerce-sessions' ); ?></td>
+				</tr>
+				<tr>
+					<th scope="row"><?php echo esc_html__( 'Available for Sale', 'bingocommerce-sessions' ); ?></th>
+					<td>
+						<?php echo $session['available_for_sale'] ? esc_html__( 'On', 'bingocommerce-sessions' ) : esc_html__( 'Off', 'bingocommerce-sessions' ); ?>
+						<p class="description"><?php echo esc_html( self::window_explanation( $session ) ); ?></p>
+					</td>
+				</tr>
+			</table>
+			<a class="button" href="<?php echo esc_url( add_query_arg( [ 'page' => self::PAGE_SLUG ], admin_url( 'admin.php' ) ) ); ?>"><?php echo esc_html__( 'Back to Sessions', 'bingocommerce-sessions' ); ?></a>
+		<?php else : ?>
+			<form method="post">
+				<?php wp_nonce_field( self::NONCE_ACTION ); ?>
+				<input type="hidden" name="bc_session_action" value="update">
+				<input type="hidden" name="session_id" value="<?php echo esc_attr( (string) $session_id ); ?>">
+				<table class="form-table" role="presentation">
+					<tr>
+						<th scope="row"><label for="bc-edit-date"><?php echo esc_html__( 'Session date', 'bingocommerce-sessions' ); ?></label></th>
+						<td>
+							<input id="bc-edit-date" type="text" class="regular-text bc-session-date" name="session_date" value="<?php echo esc_attr( self::display_date( (string) $session['session_date'] ) ); ?>" placeholder="MM/DD/YYYY" maxlength="10" required>
+							<p class="description"><?php echo esc_html__( 'Enter the date as MM/DD/YYYY.', 'bingocommerce-sessions' ); ?></p>
+						</td>
+					</tr>
+					<tr>
+						<th scope="row"><label for="bc-edit-name"><?php echo esc_html__( 'Display name', 'bingocommerce-sessions' ); ?></label></th>
+						<td><input id="bc-edit-name" type="text" class="regular-text" name="display_name" maxlength="191" value="<?php echo esc_attr( (string) $session['display_name'] ); ?>" required></td>
+					</tr>
+					<tr>
+						<th scope="row"><?php echo esc_html__( 'Available for Sale', 'bingocommerce-sessions' ); ?></th>
+						<td>
+							<label><input type="checkbox" name="available_for_sale" value="1" <?php checked( (bool) $session['available_for_sale'] ); ?>> <?php echo esc_html__( 'On', 'bingocommerce-sessions' ); ?></label>
+							<p class="description"><?php echo esc_html( self::window_explanation( $session ) ); ?></p>
+						</td>
+					</tr>
+				</table>
+				<?php submit_button( __( 'Save Session', 'bingocommerce-sessions' ) ); ?>
+				<a class="button" href="<?php echo esc_url( add_query_arg( [ 'page' => self::PAGE_SLUG ], admin_url( 'admin.php' ) ) ); ?>"><?php echo esc_html__( 'Back to Sessions', 'bingocommerce-sessions' ); ?></a>
+			</form>
+		<?php endif; ?>
+
+		<?php if ( $generated && ! $complete ) : ?>
+			<h3><?php echo esc_html__( 'Assigned Bingo Packages', 'bingocommerce-sessions' ); ?></h3>
+			<p><?php echo esc_html__( 'This occurrence is still being generated. Its Bingo Packages cannot be changed until generation completes.', 'bingocommerce-sessions' ); ?></p>
+			<?php
+			return;
+		endif;
+
 		// A failed read is NOT "no Packages available". Keep the error and
 		// withhold the selector entirely rather than inviting a choice from a
 		// list that could not be built.
@@ -242,32 +417,6 @@ final class SessionAdmin {
 		$assignable_error = is_wp_error( $assignable ) ? $assignable : null;
 		$assignable       = is_wp_error( $assignable ) ? [] : $assignable;
 		?>
-		<h2><?php printf( esc_html__( 'Edit Session #%d', 'bingocommerce-sessions' ), (int) $session_id ); ?></h2>
-
-		<form method="post">
-			<?php wp_nonce_field( self::NONCE_ACTION ); ?>
-			<input type="hidden" name="bc_session_action" value="update">
-			<input type="hidden" name="session_id" value="<?php echo esc_attr( (string) $session_id ); ?>">
-			<table class="form-table" role="presentation">
-				<tr>
-					<th scope="row"><label for="bc-edit-date"><?php echo esc_html__( 'Session date', 'bingocommerce-sessions' ); ?></label></th>
-					<td><input id="bc-edit-date" type="date" name="session_date" value="<?php echo esc_attr( (string) $session['session_date'] ); ?>" required></td>
-				</tr>
-				<tr>
-					<th scope="row"><label for="bc-edit-name"><?php echo esc_html__( 'Display name', 'bingocommerce-sessions' ); ?></label></th>
-					<td><input id="bc-edit-name" type="text" class="regular-text" name="display_name" maxlength="191" value="<?php echo esc_attr( (string) $session['display_name'] ); ?>" required></td>
-				</tr>
-				<tr>
-					<th scope="row"><?php echo esc_html__( 'Available for Sale', 'bingocommerce-sessions' ); ?></th>
-					<td>
-						<label><input type="checkbox" name="available_for_sale" value="1" <?php checked( (bool) $session['available_for_sale'] ); ?>> <?php echo esc_html__( 'On', 'bingocommerce-sessions' ); ?></label>
-						<p class="description"><?php echo esc_html( self::window_explanation( $session ) ); ?></p>
-					</td>
-				</tr>
-			</table>
-			<?php submit_button( __( 'Save Session', 'bingocommerce-sessions' ) ); ?>
-			<a class="button" href="<?php echo esc_url( add_query_arg( [ 'page' => self::PAGE_SLUG ], admin_url( 'admin.php' ) ) ); ?>"><?php echo esc_html__( 'Back to Sessions', 'bingocommerce-sessions' ); ?></a>
-		</form>
 
 		<h3><?php echo esc_html__( 'Assigned Bingo Packages', 'bingocommerce-sessions' ); ?></h3>
 		<?php if ( $packages_unavailable ) : ?>
@@ -334,19 +483,29 @@ final class SessionAdmin {
 
 		switch ( $action ) {
 			case 'create':
+				$session_date = self::input_date( (string) ( $post['session_date'] ?? '' ) );
+				if ( is_wp_error( $session_date ) ) {
+					return $session_date;
+				}
+
 				return $service->create(
-					(string) ( $post['session_date'] ?? '' ),
+					$session_date,
 					(string) ( $post['display_name'] ?? '' ),
 					! empty( $post['available_for_sale'] )
 				);
 
 			case 'update':
+				$session_date = self::input_date( (string) ( $post['session_date'] ?? '' ) );
+				if ( is_wp_error( $session_date ) ) {
+					return $session_date;
+				}
+
 				// ONE atomic domain mutation. Chaining three writers here could
 				// commit an earlier field and then fail, leaving the screen
 				// reporting a Save that partly happened.
 				return $service->updateDetails(
 					$session_id,
-					(string) ( $post['session_date'] ?? '' ),
+					$session_date,
 					(string) ( $post['display_name'] ?? '' ),
 					! empty( $post['available_for_sale'] )
 				);
@@ -356,6 +515,12 @@ final class SessionAdmin {
 
 			case 'restore':
 				return $service->restore( $session_id );
+
+			case 'enable_sales':
+				return $service->setAvailableForSale( $session_id, true );
+
+			case 'disable_sales':
+				return $service->setAvailableForSale( $session_id, false );
 
 			case 'assign_package':
 				return $service->assignPackage( $session_id, self::request_int( $post['package_id'] ?? null ) );
@@ -374,7 +539,18 @@ final class SessionAdmin {
 	 * input into a different, valid-looking identity. Anything that is not a
 	 * plain optionally-signed integer becomes 0, which the domain rejects.
 	 */
-	private static function request_int( $value ): int {
+	/**
+	 * Request integers, per §13.1 — deliberately NOT `absint()`.
+	 *
+	 * `absint( '-5' )` is 5, which silently turns a malformed or hostile id into
+	 * a DIFFERENT, valid-looking one. This returns -5, which no lookup matches.
+	 * Public because §13.1 names it as the ONE helper every Sessions admin
+	 * surface uses, so the schedule and template screens cannot drift onto a
+	 * laxer rule.
+	 *
+	 * @param mixed $value
+	 */
+	public static function request_int( $value ): int {
 		if ( is_int( $value ) ) {
 			return $value;
 		}
@@ -388,6 +564,35 @@ final class SessionAdmin {
 	/* ------------------------------------------------------------------ *
 	 * Presentation helpers
 	 * ------------------------------------------------------------------ */
+
+	/** Valid stored Y-m-d values are shown as MM/DD/YYYY; invalid values stay visible. */
+	private static function display_date( string $date ): string {
+		if ( 1 !== preg_match( '/^([0-9]{4})-([0-9]{2})-([0-9]{2})$/D', $date, $parts ) ) {
+			return $date;
+		}
+
+		$year  = (int) $parts[1];
+		$month = (int) $parts[2];
+		$day   = (int) $parts[3];
+
+		return checkdate( $month, $day, $year ) ? sprintf( '%02d/%02d/%04d', $month, $day, $year ) : $date;
+	}
+
+	/** @return string|\WP_Error Canonical Y-m-d or a strict input refusal. */
+	private static function input_date( string $date ) {
+		if ( 1 !== preg_match( '/^([0-9]{2})\/([0-9]{2})\/([0-9]{4})$/D', $date, $parts ) ) {
+			return new \WP_Error( 'invalid_session_date', __( 'Enter a real calendar date in MM/DD/YYYY form.', 'bingocommerce-sessions' ) );
+		}
+
+		$month = (int) $parts[1];
+		$day   = (int) $parts[2];
+		$year  = (int) $parts[3];
+		if ( ! checkdate( $month, $day, $year ) ) {
+			return new \WP_Error( 'invalid_session_date', __( 'Enter a real calendar date in MM/DD/YYYY form.', 'bingocommerce-sessions' ) );
+		}
+
+		return sprintf( '%04d-%02d-%02d', $year, $month, $day );
+	}
 
 	/**
 	 * ONE supported Package administration read, mapped by package_id, plus a
@@ -535,9 +740,9 @@ final class SessionAdmin {
 		return sprintf(
 			/* translators: 1: window open date, 2: session date, 3: hall-local today */
 			__( 'Sales window %1$s to %2$s; hall-local today is %3$s.', 'bingocommerce-sessions' ),
-			$opens,
-			(string) $session['session_date'],
-			SessionService::hall_local_today()
+			self::display_date( $opens ),
+			self::display_date( (string) $session['session_date'] ),
+			self::display_date( SessionService::hall_local_today() )
 		);
 	}
 
@@ -615,7 +820,7 @@ final class SessionAdmin {
 			'session_state_changed'        => __( 'The Session changed while you were editing it. Reload and try again.', 'bingocommerce-sessions' ),
 			'session_state_inconsistent'   => __( 'This Session holds an unrecognised lifecycle value. Contact Platform Admin.', 'bingocommerce-sessions' ),
 			'duplicate_session'            => __( 'A Session with that date and display name already exists in this hall.', 'bingocommerce-sessions' ),
-			'invalid_session_date'         => __( 'Enter a real calendar date in YYYY-MM-DD form.', 'bingocommerce-sessions' ),
+			'invalid_session_date'         => __( 'Enter a real calendar date in MM/DD/YYYY form.', 'bingocommerce-sessions' ),
 			'invalid_display_name'         => __( 'Enter a display name of up to 191 characters.', 'bingocommerce-sessions' ),
 			'invalid_package_id'           => __( 'Choose a Bingo Package.', 'bingocommerce-sessions' ),
 			'package_not_found'            => __( 'That Bingo Package was not found in this hall.', 'bingocommerce-sessions' ),
@@ -625,6 +830,13 @@ final class SessionAdmin {
 			'package_woo_product_unusable' => __( 'That Bingo Package\'s linked WooCommerce product is missing, trashed, or unsupported.', 'bingocommerce-sessions' ),
 			'catalog_unavailable'          => __( 'The BingoCommerce Catalog plugin is unavailable, so Bingo Packages cannot be read.', 'bingocommerce-sessions' ),
 			'persistence_failed'           => __( 'The Bingo Session change could not be saved.', 'bingocommerce-sessions' ),
+			// Enable/Disable Sales on a schedule-generated Session, from the
+			// §6.1/§6.2 guarded ON/OFF path (OccurrenceAvailability).
+			'occurrence_not_schedule_owned'    => __( 'That Session is not owned by a commerce schedule.', 'bingocommerce-sessions' ),
+			'occurrence_generation_incomplete' => __( 'This Session is still being generated and cannot be made available for sale yet.', 'bingocommerce-sessions' ),
+			'template_not_commerce_eligible'   => __( 'The Portal session for this Session is no longer active and current, so it cannot be sold.', 'bingocommerce-sessions' ),
+			'schedule_state_changed'           => __( 'The commerce schedule for this Session changed. Reload and try again.', 'bingocommerce-sessions' ),
+			'package_became_unassignable'      => __( 'A Bingo Package for this Session stopped being assignable, so it was not made available for sale.', 'bingocommerce-sessions' ),
 		];
 
 		return $messages[ $error->get_error_code() ] ?? __( 'The Bingo Session change could not be completed.', 'bingocommerce-sessions' );

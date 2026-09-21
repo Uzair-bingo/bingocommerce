@@ -57,14 +57,20 @@ final class GameTypeAdmin {
 
 			<?php self::render_notice( $result ); ?>
 
-			<h2><?php echo esc_html__( 'Create Game Type', 'bingocommerce-catalog' ); ?></h2>
-			<form method="post">
-				<?php wp_nonce_field( self::NONCE_ACTION ); ?>
-				<input type="hidden" name="bc_game_type_action" value="create">
-				<label for="bc-game-type-name" class="screen-reader-text"><?php echo esc_html__( 'Game Type name', 'bingocommerce-catalog' ); ?></label>
-				<input id="bc-game-type-name" class="regular-text" type="text" name="name" maxlength="160" required>
-				<?php submit_button( __( 'Create Game Type', 'bingocommerce-catalog' ), 'primary', 'submit', false ); ?>
-			</form>
+			<?php if ( GameTypeService::is_hall_portal_connected() ) : ?>
+				<div class="notice notice-info">
+					<p><?php echo esc_html__( 'Game Types are managed in Bingo Portal and updated through Portal Sync.', 'bingocommerce-catalog' ); ?></p>
+				</div>
+			<?php else : ?>
+				<h2><?php echo esc_html__( 'Create Game Type', 'bingocommerce-catalog' ); ?></h2>
+				<form method="post">
+					<?php wp_nonce_field( self::NONCE_ACTION ); ?>
+					<input type="hidden" name="bc_game_type_action" value="create">
+					<label for="bc-game-type-name" class="screen-reader-text"><?php echo esc_html__( 'Game Type name', 'bingocommerce-catalog' ); ?></label>
+					<input id="bc-game-type-name" class="regular-text" type="text" name="name" maxlength="160" required>
+					<?php submit_button( __( 'Create Game Type', 'bingocommerce-catalog' ), 'primary', 'submit', false ); ?>
+				</form>
+			<?php endif; ?>
 
 			<h2 class="screen-reader-text"><?php echo esc_html__( 'Filter Game Types', 'bingocommerce-catalog' ); ?></h2>
 			<ul class="subsubsub">

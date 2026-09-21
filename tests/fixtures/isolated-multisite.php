@@ -54,7 +54,7 @@ unset( $bc_fixture_sapi_allowed );
 /**
  * Databases this fixture may create, own, write and drop tables in.
  *
- * Three names, with different jobs, so no suite has to run before or after
+ * Four names, with different jobs, so no suite has to run before or after
  * another:
  *
  *   - `bingocommerce_state_test` — the general fixture.
@@ -68,11 +68,24 @@ unset( $bc_fixture_sapi_allowed );
  *     the development installation they were written against), which would
  *     otherwise collide with the bare seeded halls the other harnesses create
  *     and drop themselves.
+ *   - `bingocommerce_state_recon` — the same SHAPE as `_suites`, for the
+ *     ADR-043 reconciliation harness. It exists because `_suites` accumulated
+ *     damage from an interrupted destructive run (a persistent hall lost its
+ *     `options` and `usermeta` tables), and repairing a shared fixture by
+ *     guesswork is worse than building the harness a database of its own: this
+ *     one is created empty by `ensure_database_exists()`, stamped with the
+ *     sentinel, and carries nothing another suite depends on.
+ *
+ * ADDING A NAME HERE DOES NOT WEAKEN THE GUARD. The allowlist is one of three
+ * independent checks: the development database is refused BY NAME regardless of
+ * this list, and an existing database must still prove sentinel ownership
+ * before a single write reaches it.
  */
 const BC_FIXTURE_DB_ALLOWLIST = [
 	'bingocommerce_state_test',
 	'bingocommerce_state_test_scratch',
 	'bingocommerce_state_test_suites',
+	'bingocommerce_state_recon',
 ];
 
 /** Sentinel table and the exact identity this fixture claims. */
@@ -101,7 +114,13 @@ final class BC_Fixture {
 		// to it from `wp_initialize_site` on EVERY site creation
 		// (wpmu_log_new_registrations), so a fixture that exercises provisioning
 		// needs it to exist rather than to log a database error per site.
-		'site', 'sitemeta', 'blogs', 'blogmeta', 'users', 'usermeta', 'registration_log',
+		// `signups` is included for the same reason as `registration_log`:
+		// WordPress touches it from core hooks a harness reaches without asking.
+		// wpmu_delete_user() fires `deleted_user`, whose core listener
+		// wp_delete_signup_on_user_delete() queries it, so a fixture without the
+		// table logs a database error for every disposable user a suite removes —
+		// noise that reads like a defect in the code under test.
+		'site', 'sitemeta', 'blogs', 'blogmeta', 'users', 'usermeta', 'registration_log', 'signups',
 		// Per-blog set for the fixture's main site. is_blog_installed() verifies
 		// the full set exists, so a partial copy makes WordPress refuse to boot.
 		'options', 'posts', 'postmeta', 'comments', 'commentmeta',

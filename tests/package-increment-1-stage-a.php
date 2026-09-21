@@ -32,7 +32,32 @@ $_SERVER['REQUEST_URI']    = '/';
 $_SERVER['REQUEST_METHOD'] = 'GET';
 $_SERVER['REMOTE_ADDR']    = '127.0.0.1';
 
-require dirname( __DIR__ ) . '/wp-load.php';
+/*
+ * ADR-043 §16 amendment: routed through the shared fixture bootstrap.
+ *
+ * This suite creates disposable Multisite SITES. `bingocommerce-sessions` is
+ * network-active, so every wp_insert_site() fires its `wp_initialize_site`
+ * handler and applies the CURRENT Sessions schema — from v3, three new tables
+ * and seven new `bingo_sessions` columns — to whichever database is booted.
+ * Against the development installation that would write v3 structure into the
+ * development database, which ADR-043's rollout forbids outside a deliberate,
+ * verified migration.
+ *
+ * tests/fixtures/wordpress-bootstrap.php is fail-closed: it has no
+ * development-database fallback, so this harness cannot be run against the
+ * development installation by forgetting an environment variable. Without
+ * `BC_TEST_DB` it stops with a guard message; with it, it boots the
+ * allowlisted, sentinel-owned fixture.
+ */
+/*
+ * WooCommerce is network-active on the development installation, so it has
+ * always been loaded here. The fixture loads it only on request, and this
+ * suite uses WooCommerce product classes, so it asks for it explicitly.
+ */
+putenv( 'BC_FIXTURE_NETWORK_ACTIVE=1' );
+putenv( 'BC_FIXTURE_WOOCOMMERCE=1' );
+
+require __DIR__ . '/fixtures/wordpress-bootstrap.php';
 require_once ABSPATH . 'wp-admin/includes/ms.php';
 require_once ABSPATH . 'wp-admin/includes/screen.php';
 if ( ! class_exists( '\BingoCommerce\Catalog\BingoPlayProductService' ) ) {
@@ -1460,7 +1485,7 @@ final class PackageStageATest {
 			$wpdb->query( "DROP TRIGGER IF EXISTS {$trigger}" );
 		}
 		// Include every Catalog/Session table provisioned for this run's own hall.
-		$tables = [ Migrations::package_components_table(), Migrations::packages_table(), Migrations::play_products_table(), Migrations::game_types_table(), $wpdb->prefix . 'bingo_sessions', $wpdb->prefix . 'bingo_session_packages', $wpdb->prefix . 'bingo_portal_session_templates' ];
+		$tables = [ Migrations::package_components_table(), Migrations::packages_table(), Migrations::play_products_table(), Migrations::game_types_table(), $wpdb->prefix . 'bingo_sessions', $wpdb->prefix . 'bingo_session_packages', $wpdb->prefix . 'bingo_portal_session_templates', $wpdb->prefix . 'bingo_session_schedules', $wpdb->prefix . 'bingo_session_schedule_dates', $wpdb->prefix . 'bingo_session_schedule_packages' ];
 		$this->disposable_tables[ $site_id ] = $tables;
 		$wpdb->query( $wpdb->prepare( 'DELETE FROM ' . CoreMigrations::audit_log_table() . ' WHERE blog_id = %d', $site_id ) );
 		restore_current_blog();

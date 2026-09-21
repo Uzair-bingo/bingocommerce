@@ -35,11 +35,12 @@ current model.
   products are commerce shells; their IDs are unique mappings, not domain IDs.
 - Portal owns operational Session-template identity. BingoCommerce owns the
   separate commerce schedule, structured commerce time, dated occurrences,
-  5-day sales-window / Available for Sale state, Package-to-occurrence
-  assignment, and the optional hall electronic-limit override. ADR-031's two
-  approved per-site Session tables remain the implemented compatibility
-  baseline until ADR-035's schema-specific review; do not add mapping/schedule
-  columns or replace tables by inference. The platform electronic maximum is a
+  30-day sales window, current-definition membership, Available for Sale state,
+  Package-to-occurrence assignment, and the optional hall electronic-limit
+  override. ADR-031's two baseline Session tables remain in place; Session
+  schema v3 adds the Portal-template replica and three schedule-definition
+  tables without replacing them. ADR-043 remains DRAFT and unapproved. The
+  platform electronic maximum is a
   network option; the optional hall override is a site option;
   `bingocommerce-catalog` resolves the effective current value. Do not store
   these in unindexed postmeta.
@@ -54,8 +55,11 @@ current model.
 - Bingo operational data already governed by existing ADRs (digital
   tickets/entitlement snapshots, redemption events, hall billing status,
   audit log per ADR-023, reporting facts) must not be dumped into unindexed
-  postmeta merely for convenience. ADR-031 Catalog/Session persistence follows
-  the approved seven-table plus network-option/site-option design above.
+  postmeta merely for convenience. ADR-031 defines a seven-table conceptual
+  baseline. The current repository implements six of those baseline tables
+  plus the additive Portal-template and three Commerce-schedule tables: ten
+  tables total. The conceptual `bingo_package_addons` table and
+  `PackageAddonService` remain deferred.
   Operational domains still explicitly deferred — including final entitlement,
   redemption accumulation, device, and offline persistence — MUST NOT have
   storage invented ahead of their dedicated designs. Where an existing ADR
@@ -105,9 +109,9 @@ current model.
 - Table names must be distinctive — never reuse WP core or WooCommerce table
   names (ADR-018).
 
-## Approved Catalog and Session Tables (ADR-031)
+## Catalog and Session Tables
 
-The seven hall-local tables are:
+ADR-031's seven approved conceptual baseline tables are:
 
 - `$wpdb->prefix . 'bingo_game_types'`
 - `$wpdb->prefix . 'bingo_play_products'`
@@ -117,11 +121,21 @@ The seven hall-local tables are:
 - `$wpdb->prefix . 'bingo_sessions'`
 - `$wpdb->prefix . 'bingo_session_packages'`
 
+Of that baseline, the current Catalog v5 and Session v3 schemas implement every
+listed table except `bingo_package_addons`; that table and
+`PackageAddonService` remain deferred. The current repository's Session schema
+v3 also contains these hall-local tables under DRAFT, unapproved ADR-043:
+
+- `$wpdb->prefix . 'bingo_portal_session_templates'`
+- `$wpdb->prefix . 'bingo_session_schedules'`
+- `$wpdb->prefix . 'bingo_session_schedule_dates'`
+- `$wpdb->prefix . 'bingo_session_schedule_packages'`
+
 Do not add another `bc_` sub-prefix or a redundant `blog_id`. The per-site
 table prefix is the tenant boundary. Game Type, Bingo Play Product, Package,
 and Session use local surrogate domain IDs. Portal `game_types.id` is the
 trusted cross-system Game Type identity, and Portal `bingo_sessions.id` is the
-external operational template identity; exact mapping persistence is deferred. A linked
+external operational template identity represented by the hall-local replica. A linked
 WooCommerce product ID must be unique within its mapping and must not be
 registered simultaneously as both a Package and Bingo Play Product.
 Enforcement MUST be concurrency-safe; a
@@ -133,11 +147,17 @@ inside an approved captured-`$wpdb->dbh` transport, and every such transport
 binds values through native mysqli prepared statements. The approved transports
 are ADR-025 (Hall Staff mandatory audit), ADR-032 (Catalog critical
 serialization, including ADR-034's approved third use for Play Product
-medium-change integrity against Package-component references), and ADR-033
-(Package composition atomicity). ADR-033 additionally PROHIBITS `$wpdb->query()`
+medium-change integrity against Package-component references), ADR-033
+(Package composition atomicity), and ADR-040 (Portal snapshot application).
+ADR-033 additionally PROHIBITS `$wpdb->query()`
 for statements issued while its transaction is open. No other feature may
 introduce direct mysqli without reviewed authority. Raw value interpolation into
 SQL remains prohibited everywhere.
+
+DRAFT ADR-043 introduces no transaction transport or advisory-lock transport;
+its schedule writes use ordinary prepared `$wpdb` statements. Do not remove or
+mischaracterize the separate, valid Portal synchronization or ADR-042
+provisioning locks.
 
 These transports do NOT share one contract. Each boundary has its own permitted
 statement set, lock order, commit semantics, and retry behaviour, and they
@@ -167,12 +187,13 @@ in `docs/architecture/catalog-session-persistence-design.md`.
 
 Under BR-065, BR-032's `bc_product_kind` and `bc_package_relation` are required
 derived WooCommerce compatibility/cart-enforcement projections. Catalog tables
-are authoritative, and `bingo_package_addons` alone determines exact Package/
-add-on eligibility.
+are authoritative. Under the approved conceptual design, the deferred
+`bingo_package_addons` table alone will determine exact Package/add-on
+eligibility once that slice is implemented.
 Projection writes through WooCommerce CRUD are deterministic, idempotent,
 verifiable, and reconcilable. Do not create a direct-SQL transaction spanning
 Catalog rows and WooCommerce metadata or assume ADR-025 applies.
-  
+
 ## Digital Ticket Table (conceptual data requirements — exact final schema is
 a later technical-design decision per ADR-029/ADR-030)
 

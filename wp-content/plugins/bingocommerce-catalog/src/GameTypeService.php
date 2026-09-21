@@ -30,6 +30,27 @@ final class GameTypeService {
 			return $context;
 		}
 
+		/*
+		 * A PORTAL-CONNECTED HALL CANNOT CREATE A HALL-LOCAL GAME TYPE.
+		 *
+		 * This is the ONE choke point a forged POST cannot go around: every
+		 * caller — GameTypeAdmin's form today, anything else tomorrow — reaches
+		 * this exact line before a row is written. Hiding the create form in
+		 * GameTypeAdmin is a courtesy; this is the enforcement.
+		 *
+		 * Portal Sync's OWN Game Type writer does not call create() — it inserts
+		 * directly through PortalSnapshotTransactionTransport
+		 * (`insert_game_type()`), a different, approved transport — so this gate
+		 * cannot block synchronization from ever populating a connected hall's
+		 * Game Types.
+		 */
+		if ( self::is_hall_portal_connected() ) {
+			return $this->error(
+				'game_type_portal_managed',
+				'Game Types are managed in Bingo Portal and updated through Portal Sync. This hall cannot create one locally.'
+			);
+		}
+
 		$canonical_name = $this->canonicalize_name( $name );
 		if ( is_wp_error( $canonical_name ) ) {
 			return $canonical_name;
@@ -301,6 +322,53 @@ final class GameTypeService {
 
 		$result = new GameTypeResult( $result_status, $after );
 		return $this->record_audit( $result, $action, $context, $before, $after );
+	}
+
+	/**
+	 * Whether THIS hall is authoritatively connected to Portal.
+	 *
+	 * USES THE EXISTING MAPPING AUTHORITY, NOTHING NEW. There is no
+	 * "portal managed" option, column or flag anywhere in this codebase, and
+	 * this method does not add one — it asks the one place that already knows:
+	 * `HallMappingRepository::findActiveByBlogId()` in the Portal Integration
+	 * plugin, over the real `bingo_hall_mappings` table. A non-null row means
+	 * an ACTIVE mapping exists for this site; that is what "Portal-connected"
+	 * means everywhere else in this codebase (see
+	 * `PortalSyncAdmin::mapping_state()`, which reads the same call the same
+	 * way for its own "linked" display state).
+	 *
+	 * FAIL-CLOSED ON AN INDETERMINATE READ, FAIL-OPEN ON A STRUCTURALLY ABSENT
+	 * PLUGIN. These are different facts and get different defaults:
+	 *
+	 *   - the Portal Integration plugin not being installed on this network is
+	 *     a property of the WHOLE DEPLOYMENT, decided once at setup, not a
+	 *     per-request condition — every hall in such a deployment is legacy by
+	 *     definition, so this returns false;
+	 *   - a `\WP_Error` from the repository is a TRANSIENT, per-request
+	 *     uncertainty about ONE specific hall. The risk this gate exists to
+	 *     prevent — a hall-local Game Type created in a hall Portal already
+	 *     owns Game Types for — is a lasting data-integrity problem, not a
+	 *     recoverable availability one, so an indeterminate read is treated AS
+	 *     IF the hall were connected, and Game Type creation is refused rather
+	 *     than guessed at.
+	 *
+	 * Public because GameTypeAdmin calls this SAME method to decide whether to
+	 * render the create form — the UI-hiding decision and the enforcement
+	 * below read one implementation, so they cannot diverge.
+	 */
+	public static function is_hall_portal_connected(): bool {
+		if ( ! class_exists( '\BingoCommerce\PortalIntegration\HallMappingRepository' ) ) {
+			return false;
+		}
+
+		$repository = new \BingoCommerce\PortalIntegration\HallMappingRepository();
+		$mapping    = $repository->findActiveByBlogId( get_current_blog_id() );
+
+		if ( is_wp_error( $mapping ) ) {
+			return true;
+		}
+
+		return is_array( $mapping );
 	}
 
 	/** @return array<string,int|bool>|\WP_Error */

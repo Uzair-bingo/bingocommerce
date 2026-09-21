@@ -4285,24 +4285,85 @@ delete_users.
   exclusions are unchanged. Implementation is authorized by ADR-042 and is
   not claimed complete by this rule alone.
 
+- **BR-077 — [2026-09-18] — Thirty-Day Session Sales Window:**
+
+  For Session calendar date `D`, storefront date eligibility is inclusive:
+
+  ```
+  D - 30 calendar days <= hall_local_today <= D
+  ```
+
+  `Available for Sale = ON` is still required. `hall_local_today` remains
+  calculated using the hall site's configured WordPress timezone, and every
+  other Session-eligibility rule remains unchanged.
+
+  Relationship to prior rules: supersedes **only** the numeric five-day window
+  in BR-051 and BR-063. References to a five-day sales window in ADR-035,
+  BR-071 and BR-073 are superseded by this rule. Their historical entries are
+  preserved and are not rewritten.
+
+- **BR-078 — [2026-09-18] — Removed Schedule Date Safety and Retention:**
+
+  This rule applies to **strictly-future generated occurrences**. Past-
+  occurrence immutability remains unchanged.
+
+  A generated occurrence may be turned Available for Sale ON only while its
+  date belongs to its schedule's **current committed definition**. Explicit
+  membership uses the active-token date rows; weekly membership uses the
+  committed inclusive bounds and weekday mask.
+
+  Removing a date is allowed even while its occurrence is ON. Membership
+  immediately makes that occurrence unavailable to purchase. A successful
+  definition edit also turns excluded strictly-future occurrences OFF, so
+  re-adding a date does not automatically resume sales.
+
+  An occurrence whose date has been removed from the current committed
+  definition MUST NOT appear under Upcoming, MUST NOT offer Enable Sales, and
+  MUST reject forced ON requests. Purchase eligibility independently fails
+  closed, including when a stored availability flag is still ON. Retained
+  records remain reachable through All, or Archived when already archived.
+
+  Existing reconciliation and history rules remain in force: future OFF
+  unlocked occurrences may be withdrawn; sale-locked occurrences are never
+  hard-deleted and retain their ID, Package assignments, `sale_locked_at`, and
+  history. No new automatic archival path is required. Re-adding a retained
+  date preserves its identity and Packages; existing archived restoration
+  remains OFF, and generation never turns sales ON.
+
+  One centralized membership rule is shared by services, SQL guards and UI.
+  No advisory lock, readiness probe, connection-affinity requirement, new
+  infrastructure or schema is required. Definition removal is not serialized
+  with ON, and the former disable-first/two-commit-order contract is withdrawn.
+
+  Relationship to prior rules: additive to BR-073's schedule and exact-dated-
+  occurrence authority; adds membership to availability and presentation while
+  preserving existing withdrawal rules. BR-056 late-redemption behavior, order history, Package
+  assignment history, and all past-occurrence immutability rules remain
+  unchanged.
+
 
 ---
 
 ## Still Open / TBD Items (Unresolved)
 
 - Portal integration details still open after ADR-036 through ADR-042: webhook
-  signing, retry, replay and ordering; reconciliation and transitional conflict
-  policy; commerce-schedule recurrence horizon, timezone/DST and regeneration
-  rules; and SSO protocol/account/tenant mapping. ADR-036 fixed the Hall
+  signing, retry, replay and ordering; transitional synchronization conflict
+  policy; and SSO protocol/account/tenant mapping. Commerce-schedule recurrence,
+  timezone/DST, regeneration and occurrence reconciliation are specified by
+  DRAFT ADR-043 and implemented in the current repository; they
+  are not deployed. ADR-036 fixed the Hall
   snapshot transport URL. ADR-037 froze the Hall snapshot v1 validation
   contract. ADR-038 freezes completeness and zero-write rejection of missing
   linked Game Types. ADR-039’s Catalog v5 name/index, imported-code design,
   name-validation amendment, and allowlisted index-removal exception are
   implemented and tested. ADR-040’s Phase 3E snapshot application is COMPLETE.
   ADR-041’s Phase 3G manual Hall-scoped synchronization is COMPLETE. ADR-042 /
-  BR-076 decide automatic Commerce enable/suspend provisioning; the PHP
-  endpoint, operations table, Portal button, and automatic site creation are
-  NOT implemented.
+  BR-076 decide automatic Commerce enable/suspend provisioning. The
+  BingoCommerce machine endpoint, operations table, orchestrator,
+  `bingocommerce-platform` provisioning filter and automatic site-creation path
+  are implemented and tested in the repository; the Portal Enable/Disable
+  Ecommerce control and practical cross-repository end-to-end workflow remain
+  incomplete. Production deployment is not claimed.
 - ADR-040 resolves the former pre-Phase 3E design work: snapshot
   replay/stale-order protection, Phase 3E transaction and locking mechanics, and
   Session-template application behavior are decided and implemented. Game Type
@@ -4313,15 +4374,18 @@ delete_users.
   templates imported, second run a domain no-op), so Phase 3E is COMPLETE.
   The separate multi-Hall tenant-isolation proof — Phase 3F — also PASSED and is
   COMPLETE (387/387 assertions). Production deployment is not claimed. Phase 3G
-  is COMPLETE (ADR-041). Current next implementation work is automatic Commerce
-  enable/suspend provisioning under ADR-042 / BR-076 (decision complete;
-  implementation not started). Local writer restrictions after synchronization
-  stay deliberately transitional until reconciliation and recovery are proven.
-  Webhooks, scheduling, and reconciliation remain deferred and unimplemented.
-  SSO remains later.
-- Schema-specific compatibility/refactoring review for the implemented local
-  Game Type and Session models. The review must not assume either domain or the
-  existing Session tables are deleted or replaced.
+  is COMPLETE (ADR-041). The BingoCommerce-side ADR-042 machine path is
+  implemented and tested; its remaining work is the Portal control and a
+  practical cross-repository end-to-end workflow. Local writer restrictions
+  after synchronization stay deliberately transitional until reconciliation
+  and recovery are proven. Webhooks remain deferred and unimplemented.
+  Commerce scheduling and occurrence reconciliation exist in the current
+  repository under DRAFT ADR-043 and are not deployed. SSO
+  remains later.
+- ADR-043 remains DRAFT and unapproved even though its additive,
+  non-destructive Session schedule/occurrence implementation exists in the
+  current repository. Separate ratification remains; production deployment is
+  not claimed.
 - Offline QR/Package usability **technical implementation** (local-server /
   cache / network architecture). The **business expectation** is locked by
   BR-060: previously synchronized QR/Package information should remain

@@ -15,7 +15,17 @@
  * to the opening snapshot.
  *
  * Run from the repository root:
- * php tests/portal-snapshot-application.php
+ * BC_TEST_DB=bingocommerce_state_test_suites php tests/portal-snapshot-application.php
+ *
+ * THE DATABASE NAME IS NOW REQUIRED (ADR-043 §16 amendment). This suite creates
+ * disposable Multisite SITES, and `bingocommerce-sessions` is network-active, so
+ * every wp_insert_site() fires its `wp_initialize_site` handler and provisions
+ * the CURRENT Sessions schema into whichever database is booted. Once ADR-043
+ * raised that schema to v3, the previous invocation — plain
+ * `php tests/portal-snapshot-application.php`, which fell through the shared bootstrap to
+ * wp-load.php — would have written v3 structure into the development
+ * installation. tests/fixtures/wordpress-bootstrap.php no longer has that
+ * fallback and refuses to boot without `BC_TEST_DB`.
  */
 
 if ( 'cli' !== PHP_SAPI ) {
@@ -67,6 +77,17 @@ final class PortalSnapshotApplicationTest {
 	private const HALL_E = 990005;
 	private const HALL_F = 990006;
 
+	/**
+	 * ADR-043 §16 test 100 runs on its OWN hall.
+	 *
+	 * The scenario imports a Game Type and a Session template and then has no way
+	 * to take them back: a later snapshot that OMITTED an already-imported Game
+	 * Type would be refused with `portal_game_type_missing`, which is correct
+	 * transport behaviour and not something a test should work around. A private
+	 * hall is destroyed in cleanup, so nothing needs undoing.
+	 */
+	private const HALL_G = 990007;
+
 	/** @var array<int,bool> */
 	private array $disposable_sites = [];
 
@@ -91,6 +112,10 @@ final class PortalSnapshotApplicationTest {
 	private int $assertions    = 0;
 	private int $super_admin_id = 0;
 	private int $fetch_count   = 0;
+
+	/** @var array<int,string> statements observed while `observing` is true */
+	private array $observed_sql = [];
+	private bool $observing     = false;
 
 	public function run(): void {
 		$this->assert_true( is_multisite(), 'WordPress Multisite is enabled' );
@@ -124,6 +149,7 @@ final class PortalSnapshotApplicationTest {
 			$this->malformed_sync_state_marker( $c );
 			$this->wrong_hall_sync_state_marker( $c );
 			$this->innodb_requirement( $c );
+			$this->sessions_v2_synchronization( $this->provision_hall( 'G', self::HALL_G ) );
 			$this->tenant_isolation( $a, $b );
 			// After tenant_isolation, so the different-hall attempt nested inside the
 			// outer fetch is a genuine idempotent no-op rather than a first import.
@@ -410,6 +436,7 @@ final class PortalSnapshotApplicationTest {
 		$before_game_types = $this->game_type_rows( $site_id );
 		$before_templates  = $this->template_rows( $site_id );
 		$before_marker     = $this->marker_row( $site_id );
+
 
 		$stale = $this->sync(
 			$site_id,
@@ -942,6 +969,205 @@ final class PortalSnapshotApplicationTest {
 
 		$this->write_marker_value( $site_id, $valid );
 		$this->assert_same( $valid, (string) $this->marker_row( $site_id )['option_value'], 'the valid marker is restored' );
+	}
+
+	/**
+	 * ADR-043 §16 test 100 — a hall at Sessions v2 still synchronizes.
+	 *
+	 * THROUGH THE REAL PUBLIC ENTRY POINT. Calling
+	 * `PortalSyncService::assert_snapshot_schemas()` directly proves only that
+	 * the gate returns true; it proves nothing about whether synchronization
+	 * actually completes, whether the snapshot lands, or whether something else
+	 * on the path independently refuses a hall at v2. This drives
+	 * `synchronizeHall()` — the same method production calls — with the suite's
+	 * existing injected fetcher, and asserts on the replica rows and the
+	 * sync-state marker afterwards.
+	 *
+	 * WHY IT MATTERS. ADR-043 raises `Sessions\Migrations::DB_VERSION` to 3 for
+	 * three schedule tables and seven `bingo_sessions` columns, none of which a
+	 * snapshot touches. The previous gate compared whole-plugin versions, so the
+	 * moment that constant changed, every hall still recorded at 2 would have
+	 * stopped receiving Portal updates until it migrated. §11.3 replaces that
+	 * with structural verification of exactly what the transport writes into.
+	 *
+	 * The version marker is lowered to 2 for the duration and restored in the
+	 * `finally`, together with the replica state, so no later scenario inherits
+	 * either. The REQUIRED structures are left entirely intact — this scenario is
+	 * about the version marker alone, and a damaged-replica case would prove
+	 * something different.
+	 */
+	private function sessions_v2_synchronization( int $site_id ): void {
+		$version_option = \BingoCommerce\Sessions\Migrations::VERSION_OPTION;
+
+		switch_to_blog( $site_id );
+		$recorded_version = get_option( $version_option );
+		restore_current_blog();
+
+		$before_game_types = $this->game_type_rows( $site_id );
+		$before_templates  = $this->template_rows( $site_id );
+		$before_marker     = $this->marker_row( $site_id );
+
+		$existing_game_types = [];
+		foreach ( $before_game_types as $row ) {
+			if ( null !== $row['portal_game_type_id'] ) {
+				$existing_game_types[] = [ (int) $row['portal_game_type_id'], (string) $row['name'] ];
+			}
+		}
+		$existing_templates = [];
+		foreach ( $before_templates as $row ) {
+			$existing_templates[] = [ (int) $row['portal_session_id'], (string) $row['name'], (string) $row['portal_status'] ];
+		}
+
+		switch_to_blog( $site_id );
+		update_option( $version_option, 2 );
+		$at_v2          = (int) get_option( $version_option, 0 );
+		$is_current     = \BingoCommerce\Sessions\Migrations::is_current();
+		$replica_intact = \BingoCommerce\Sessions\Migrations::verify_portal_session_templates_structure();
+		$catalog_intact = \BingoCommerce\Catalog\Migrations::verify_game_types_structure_for_sync();
+		restore_current_blog();
+
+		try {
+			$this->assert_same( 2, $at_v2, 'the hall is recorded at Sessions version 2' );
+			$this->assert_false( $is_current, '  so the whole-plugin version gate is false for this hall' );
+			$this->assert_true( true === $replica_intact, '  while the Session-template replica structure is intact' );
+			$this->assert_true( true === $catalog_intact, '  and so is the Game Type replica structure' );
+
+			/*
+			 * Every statement the synchronization emits is observed, so "no
+			 * migration or DDL ran" is proved from what actually reached the
+			 * database rather than inferred from the absence of a symptom.
+			 */
+			$this->observed_sql = [];
+			$this->observing    = true;
+			add_filter( 'query', [ $this, 'observe_sql' ], 1 );
+
+			/*
+			 * The snapshot carries every Game Type this hall has ALREADY imported,
+			 * plus one new one. A snapshot that omitted an imported Game Type
+			 * would be refused with `portal_game_type_missing` — correctly, and
+			 * for a reason that has nothing to do with the schema version this
+			 * scenario is about. The existing set is therefore read from the
+			 * replica rather than hardcoded, so earlier scenarios on this hall
+			 * cannot make this one fail for the wrong reason.
+			 */
+			$result = $this->sync(
+				$site_id,
+				$this->body(
+					self::HALL_G,
+					'2026-09-09T19:15:00-04:00',
+					array_merge( $existing_game_types, [ [ 5910, 'Added At V2' ] ] ),
+					array_merge( $existing_templates, [ [ 8910, 'Session Added At V2', 'active' ] ] )
+				)
+			);
+
+			remove_filter( 'query', [ $this, 'observe_sql' ], 1 );
+			$this->observing = false;
+
+			/* --- synchronization succeeds --- */
+			$this->assert_false( is_wp_error( $result ), 'a hall at Sessions v2 SYNCHRONIZES successfully through synchronizeHall()' );
+			$this->assert_same( 1, $this->fetch_count, '  performing exactly one Portal fetch' );
+
+			/* --- the snapshot is applied to the expected replica state --- */
+			$game_type = $this->game_type_row_by_portal_id( $site_id, 5910 );
+			$this->assert_same( 'Added At V2', (string) ( $game_type['name'] ?? '' ), 'the new Game Type landed in the replica at v2' );
+			$this->assert_same( 'active', (string) ( $game_type['status'] ?? '' ), '  with an active status' );
+
+			$templates = [];
+			foreach ( $this->template_rows( $site_id ) as $row ) {
+				$templates[ (int) $row['portal_session_id'] ] = $row;
+			}
+			$this->assert_same( 'Session Added At V2', (string) ( $templates[8910]['name'] ?? '' ), 'the new Session template landed in the replica at v2' );
+			$this->assert_same( 1, (int) ( $templates[8910]['is_current'] ?? 0 ), '  and is current' );
+			$this->assert_same( 'active', (string) ( $templates[8910]['portal_status'] ?? '' ), '  carrying its Portal status verbatim' );
+
+			$this->assert_true(
+				count( $this->game_type_rows( $site_id ) ) > count( $before_game_types ),
+				'the Game Type replica grew, so the snapshot really was applied'
+			);
+
+			/* --- the sync-state marker advanced, so the run was recorded --- */
+			$marker = $this->marker_row( $site_id );
+			$this->assert_true( [] !== $marker, 'the sync-state marker exists after the v2 synchronization' );
+			$this->assert_true(
+				( $before_marker['option_value'] ?? null ) !== ( $marker['option_value'] ?? null ),
+				'  and advanced, so the run completed rather than short-circuiting'
+			);
+
+			/* --- the Sessions version marker is untouched --- */
+			switch_to_blog( $site_id );
+			$after_version = (int) get_option( $version_option, 0 );
+			restore_current_blog();
+			$this->assert_same( 2, $after_version, 'the Sessions version marker REMAINS 2 — synchronization migrated nothing' );
+
+			/* --- no migration and no DDL ran --- */
+			$structural = [];
+			foreach ( $this->observed_sql as $sql ) {
+				$head = strtoupper( ltrim( $sql ) );
+				foreach ( [ 'CREATE TABLE', 'CREATE INDEX', 'ALTER TABLE', 'DROP TABLE', 'DROP INDEX', 'RENAME TABLE', 'TRUNCATE' ] as $verb ) {
+					if ( 0 === strpos( $head, $verb ) ) {
+						$structural[] = substr( trim( $sql ), 0, 70 );
+					}
+				}
+			}
+			$this->assert_same( [], $structural, 'the synchronization issued NO DDL of any kind' );
+
+			$version_writes = [];
+			foreach ( $this->observed_sql as $sql ) {
+				if ( false !== strpos( $sql, $version_option ) && 1 === preg_match( '/^\s*(INSERT|UPDATE|REPLACE|DELETE)/i', $sql ) ) {
+					$version_writes[] = substr( trim( $sql ), 0, 70 );
+				}
+			}
+			$this->assert_same( [], $version_writes, '  and wrote to no Sessions version marker' );
+
+			printf(
+				"NOTE: ADR-043 test 100 observed %d statements during the v2 synchronization, none structural.\n",
+				count( $this->observed_sql )
+			);
+		} finally {
+			remove_filter( 'query', [ $this, 'observe_sql' ], 1 );
+			$this->observing = false;
+
+			/*
+			 * Restore the version marker AND the replica state this scenario
+			 * changed, so nothing downstream inherits either. The rows added here
+			 * are removed by the snapshot that follows in the normal course of the
+			 * suite, but the marker is this scenario's own and must be put back
+			 * explicitly.
+			 */
+			switch_to_blog( $site_id );
+			if ( false === $recorded_version ) {
+				delete_option( $version_option );
+			} else {
+				update_option( $version_option, $recorded_version );
+			}
+			restore_current_blog();
+		}
+
+		switch_to_blog( $site_id );
+		$restored = get_option( $version_option );
+		restore_current_blog();
+		$this->assert_same( $recorded_version, $restored, 'the original Sessions version marker is restored' );
+
+		/*
+		 * NO REPLICA RESTORATION IS NEEDED OR POSSIBLE.
+		 *
+		 * This scenario owns its hall, which cleanup() destroys with every table
+		 * on it. That matters beyond tidiness: the rows imported above CANNOT be
+		 * withdrawn through the public path, because a snapshot that omitted an
+		 * already-imported Game Type is refused with `portal_game_type_missing` —
+		 * correct transport behaviour, and not something a test should route
+		 * around by deleting rows by hand. The version marker is this scenario's
+		 * own change and is restored explicitly above.
+		 */
+	}
+
+	/** @internal Public only because WordPress needs a callable. */
+	public function observe_sql( string $sql ): string {
+		if ( $this->observing ) {
+			$this->observed_sql[] = $sql;
+		}
+
+		return $sql;
 	}
 
 	/** Every participating table must be InnoDB before BEGIN, or nothing runs. */
@@ -1774,7 +2000,11 @@ final class PortalSnapshotApplicationTest {
 
 		foreach ( array_keys( $this->bound_mappings ) as $portal_hall_id ) {
 			$portal_hall_id = (int) $portal_hall_id;
-			if ( $portal_hall_id < 990001 || $portal_hall_id > 990006 ) {
+			// The range must cover every HALL_* constant above. It is deliberately
+			// a hard refusal rather than a filter: a mapping this suite did not
+			// create must never be removed, and adding a hall without widening
+			// this range should fail loudly — as it did when HALL_G was added.
+			if ( $portal_hall_id < 990001 || $portal_hall_id > 990007 ) {
 				throw new \RuntimeException( 'Refusing to remove a Portal Hall mapping outside the test range.' );
 			}
 			$wpdb->delete( PortalMigrations::hall_mappings_table(), [ 'portal_hall_id' => $portal_hall_id ], [ '%d' ] );

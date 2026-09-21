@@ -120,8 +120,12 @@ deferred.
   quantities only when that exact relationship explicitly configures a larger
   maximum; selected quantity must satisfy
   `1 <= selected_quantity <= max_quantity`. (BR-049, BR-062, ADR-031)
-- **Catalog authority and BR-032 compatibility projection:** under BR-065, the seven per-site
-  relational Catalog/Session tables selected by ADR-031 are authoritative.
+- **Catalog authority and BR-032 compatibility projection:** under BR-065,
+  ADR-031's five-table conceptual Catalog design and two baseline Session tables
+  remain authoritative for their domains. Catalog schema v5 currently
+  implements four of those Catalog tables; `bingo_package_addons` and
+  `PackageAddonService` remain approved but deferred. The additive Portal-template
+  and Commerce-schedule tables in Session schema v3 do not replace them.
   `bc_product_kind` and `bc_package_relation` remain deterministic WooCommerce
   compatibility/cart-enforcement projections maintained by Catalog services.
   A Package row projects `bc_product_kind = package`. Permanent Package removal
@@ -175,39 +179,46 @@ deferred.
   commerce time—and the exact dated commerce occurrences generated from it.
   Structured Commerce time is owned by BingoCommerce and may be entered manually
   by the Hall Manager in v1. It is never parsed from a human display name;
-  database columns, UI controls, storage schema, and timezone implementation are
-  deferred. A
-  customer purchases against one exact occurrence, and the order retains that
+  the implemented schedule captures the Hall's valid named WordPress timezone
+  when created and keeps it immutable for the schedule's lifetime. All
+  user-facing dates use `MM/DD/YYYY`; database, SQL, API and other internal
+  canonical dates may remain `YYYY-MM-DD`, with conversion at trusted
+  input/output boundaries. A customer purchases against one exact occurrence,
+  and the order retains that
   occurrence identity. Package availability, purchase validity, future entitlement
   state, and electronic accumulation attach to that occurrence. Display names are
   labels only and no business logic may parse them for time. (BR-041, BR-050,
   BR-052, BR-073; ADR-035 narrows the earlier BingoCommerce Session-identity
   language and BR-073 supersedes only BR-050's no-structured-time provision)
-- The existing `bingo_sessions` / `bingo_session_packages` implementation remains
-  in place until a schema-specific compatibility/refactoring review determines how
-  it maps to the template/schedule/occurrence model. This requirement does not
-  authorize deleting the tables, destructively migrating them, or discarding
-  compatible Package assignments. Sessions/occurrences do not contain the retired
-  session-wide capacity counter. (BR-073, ADR-035)
+- The additive Session schema v3 implementation in the current repository
+  preserves `bingo_sessions` / `bingo_session_packages`, adds a separate Portal
+  Session-template replica and Commerce-schedule definition tables, and links
+  generated dated occurrences without destructively replacing legacy rows or
+  Package assignments. ADR-043 remains DRAFT and unapproved, and production
+  deployment is not claimed. Sessions/occurrences do not contain the retired
+  session-wide capacity counter. (BR-073, ADR-035, DRAFT ADR-043)
 - One Package may be assigned to multiple dated commerce occurrences. No one-
   Package-to-one-occurrence restriction is introduced. Existing Package/Session
   relationship work remains preserved where compatible. (BR-073, ADR-035)
 - **Sales availability:** For dated commerce occurrence date `D`, storefront
   date eligibility is inclusive:
-  `D - 5 calendar days <= hall_local_today <= D`, using the hall
-  site's configured WordPress timezone. A Hall Manager-controlled Available for
-  Sale ON/OFF setting also applies. In the implemented current model, new Sessions
-  default to OFF; occurrence-generation defaults remain part of the compatibility
-  review. The dated occurrence appears on the customer storefront only when BOTH
-  the inclusive date predicate
-  and Available for Sale = ON are true. Beginning the calendar day after `D`, the
-  Session is no longer storefront-eligible.
-  Turning Available for Sale ON does not bypass the 5-day window; turning it OFF
-  prevents the Session from appearing for purchase. Week- or month-ahead
-  future-occurrence browsing is not a current requirement. Do not invent an
-  automatic sales-window close from display-name text. This sales boundary does
-  not make an otherwise-valid QR automatically unusable when the occurrence starts.
-  (BR-051, BR-056, BR-063)
+  `D - 30 calendar days <= hall_local_today <= D`. A Hall Manager-controlled
+  Available for Sale ON/OFF setting also applies. A schedule-managed occurrence
+  must additionally belong to its schedule's current committed definition. One
+  centralized membership rule governs guarded ON, purchase eligibility,
+  Upcoming and administration actions, and an unreadable definition fails
+  closed. New and generated occurrences default to OFF. Beginning the calendar
+  day after `D`, the occurrence is no longer storefront-eligible. Turning
+  Available for Sale ON bypasses neither the thirty-day window nor membership.
+  (BR-051, BR-056, BR-063, BR-077, BR-078)
+- **Removed/re-added dates:** A Manager may remove a strictly future date even
+  while its generated occurrence is ON. Membership immediately makes the row
+  ineligible; a successful definition edit turns it OFF, removes it from
+  Upcoming, and removes/refuses Enable Sales. Existing reconciliation,
+  withdrawal, sale-lock, archival and historical-retention rules remain
+  unchanged—no automatic archival is introduced. Re-adding a retained date
+  preserves its identity and Package assignments but leaves sales OFF until an
+  explicit Enable Sales request passes every current guard. (BR-078)
 - **Customer selection:** Customers see only dated occurrences currently eligible
   for sale. Selection must clearly identify the exact date and Session name. The
   customer selects the Session before selecting the Bingo Package. The order remains
@@ -271,12 +282,13 @@ deferred.
   Packages. The Portal authority change supersedes only the former Game Type
   starter-copy model. (BR-047, ADR-035)
 
-## Portal Integration (approved; not implemented)
+## Portal Integration (approved increments implemented; not deployed)
 - Within the single authoritative Bingo Innovation Portal environment,
   `halls.id` maps to WordPress Site ID, `game_types.id` identifies a Game Type,
   and `bingo_sessions.id` identifies an operational Session template. Names,
-  subdomains, and domains are not cross-system identity. Exact mapping
-  persistence and provisioning lifecycle are deferred.
+  subdomains, and domains are not cross-system identity. Hall mapping,
+  snapshot synchronization and the BingoCommerce-side ADR-042 provisioning
+  lifecycle are implemented and tested in the repository.
   (BR-072)
 - Approved integration shape: authenticated Portal read API, initial/full pull,
   proven idempotent mapping, Portal webhooks, reconciliation, tenant provisioning,
@@ -288,10 +300,15 @@ deferred.
   Managers/Admins may manage commerce only after enablement. Future SSO is a
   short-lived secure handoff into the correct mapped tenant, but is not in the
   first integration increment. (BR-075)
-- API/webhook contracts, authentication, mapping persistence, reconciliation,
-  provisioning, recurrence expansion/timezone/DST behavior, and SSO protocol are
-  deferred to dedicated implementation/security designs. No API, webhook, schema,
-  provisioning, or SSO implementation is authorized by these requirements.
+- The authenticated snapshot/full-pull path, mapping persistence, manual Hall
+  synchronization, machine provisioning endpoint/orchestrator, platform
+  provisioning filter and automatic site-creation path are implemented and
+  tested. The Portal Enable/Disable Ecommerce control and practical
+  cross-repository end-to-end workflow remain incomplete. Portal webhooks and
+  SSO remain deferred. Commerce schedule persistence, recurrence,
+  timezone/DST behavior and occurrence reconciliation exist in the current
+  repository under DRAFT, unapproved ADR-043; production deployment is not
+  claimed.
 
 ## Sales Reporting
 - Keep purchase/payment date separate from Session attribution. Example: $4,000
@@ -373,13 +390,14 @@ the same standard regardless of this correction — nothing here is over-built
 for the smaller real starting scale. (BR-014)
 
 ## Still Open (do not build against an assumed answer)
-- Portal integration implementation details: mapping persistence; Portal API
-  authentication and contract; webhook signature/retry/order behavior;
-  reconciliation/conflict policy; recurrence expansion horizon and timezone/DST
-  rules; enablement/provisioning lifecycle; and SSO protocol/account mapping.
-- Schema-specific compatibility/refactoring plan for the implemented local Game
-  Type and Session models. Do not assume either domain or the existing Session
-  tables are deleted or replaced.
+- Portal integration work still open: the Portal Enable/Disable Ecommerce
+  control, practical cross-repository provisioning workflow, webhook
+  signature/retry/order behavior, transitional synchronization conflict policy,
+  and SSO protocol/account mapping.
+- Separate ratification and deployment decisions for DRAFT ADR-043. Its
+  non-destructive Session schedule/occurrence implementation exists in the
+  current repository; do not infer approval or production deployment from
+  that fact.
 - Offline QR/Package usability **technical implementation** (local-server / cache /
   network architecture). The **business expectation** is locked by BR-060:
   previously synchronized QR/Package information should remain usable at the hall

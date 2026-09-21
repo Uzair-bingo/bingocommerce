@@ -34,9 +34,10 @@ alwaysApply: false
   the Package/Bingo Play Product implementation-design slice; do not add a
   table or automatically reuse ADR-025.
 - The linked WooCommerce Package product's native price is the Package base-
-  price authority. `bingo_package_addons` owns Package-specific add-on price,
-  maximum quantity, and exact eligibility. Component-product prices are never
-  summed into Package price.
+  price authority. Under the approved conceptual design, the deferred
+  `bingo_package_addons` table will own Package-specific add-on price, maximum
+  quantity, and exact eligibility. That table and `PackageAddonService` are not
+  implemented. Component-product prices are never summed into Package price.
 - Under BR-065, BR-032's `bc_product_kind` and `bc_package_relation` are
   required derived compatibility/cart-enforcement projections maintained by
   Catalog services, not independent authorities. Projection updates must be deterministic,
@@ -56,14 +57,18 @@ alwaysApply: false
 - One cart and one order belong to exactly ONE hall (BR-003). Because each hall
   is its own Multisite site, this is native — never write code that merges or
   references another site's cart/products/orders.
-- Availability rules (calendar-dated Session, 5-day sales window, Available
+- Availability rules (calendar-dated Session, 30-day sales window, Available
   for Sale ON/OFF) are enforced authoritatively server-side at pre-payment
   commerce boundaries: display, add-to-cart, cart update, checkout, and the
   appropriate pre-payment/payment-initiation boundary. Front-end hiding alone
   is never authorization. A Session appears for purchase only
-  when `session_date - 5 calendar days <= hall-local today <= session_date`,
-  using the hall site's WordPress timezone, AND Available for Sale = ON
-  (BR-051/BR-063). New Sessions default to Available for Sale OFF.
+  when `session_date - 30 calendar days <= hall-local today <= session_date`,
+  using the applicable hall/schedule timezone, AND Available for Sale = ON
+  (BR-051/BR-063/BR-077). A schedule-managed occurrence must also belong to
+  the schedule's current committed definition (BR-078). Removing a strictly
+  future date immediately makes it ineligible and a successful edit turns it
+  OFF; re-adding a retained occurrence leaves it OFF until explicitly enabled.
+  New Sessions default to Available for Sale OFF.
   The customer selects the Session before the Bingo Package (BR-052). Do not
   implement week/month future-Session browsing as a requirement, and do not
   invent automatic open/close times from text in the Session name (BR-050).
