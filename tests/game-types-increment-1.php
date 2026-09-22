@@ -683,6 +683,7 @@ final class GameTypeIncrementOneTest {
 		// Include the Session tables provisioned for this run's disposable hall.
 		// WordPress does not remove these custom tables when deleting the site.
 		$catalog_tables = [
+			Migrations::package_addons_table(),
 			Migrations::package_components_table(),
 			Migrations::packages_table(),
 			Migrations::play_products_table(),
@@ -701,7 +702,7 @@ final class GameTypeIncrementOneTest {
 
 		foreach ( $catalog_tables as $table ) {
 			// Exact, site-scoped identifier. Anything else is refused.
-			if ( 1 === preg_match( '/^bc_' . $site_id . '_bingo_(package_components|packages|play_products|game_types|sessions|session_packages|portal_session_templates|session_schedules|session_schedule_dates|session_schedule_packages)$/', $table ) ) {
+			if ( 1 === preg_match( '/^bc_' . $site_id . '_bingo_(package_addons|package_components|packages|play_products|game_types|sessions|session_packages|portal_session_templates|session_schedules|session_schedule_dates|session_schedule_packages)$/', $table ) ) {
 				$wpdb->query( "DROP TABLE IF EXISTS `{$table}`" );
 			}
 		}

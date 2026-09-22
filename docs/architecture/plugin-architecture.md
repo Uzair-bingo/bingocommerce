@@ -6,7 +6,7 @@ independently activatable and testable.
 | Plugin | Responsibility | Depends on |
 |---|---|---|
 | `bingocommerce-core` | Roles & capabilities, tenant context helpers, audit log service, migration framework | WooCommerce (network) |
-| `bingocommerce-catalog` | Hall-scoped Game Type replica/domain behavior, Bingo Play Product domain metadata/mapping, Bingo Package definitions/components, ADR-044-approved Package add-on eligibility/configuration, BR-032/BR-065 metadata projections, hall electronic-limit override/current-value resolver, starter-product domain logic when that deferred copy exists (ADR-026/ADR-031/ADR-035/ADR-044; add-on implementation pending; ADR-042 MVP runs no starter copy) | core |
+| `bingocommerce-catalog` | Hall-scoped Game Type replica/domain behavior, Bingo Play Product domain metadata/mapping, Bingo Package definitions/components, ADR-044-approved Package add-on eligibility/configuration, BR-032/BR-065 metadata projections, hall electronic-limit override/current-value resolver, starter-product domain logic when that deferred copy exists (ADR-026/ADR-031/ADR-035/ADR-044; add-on schema-only Slice 1 implemented, behavior pending; ADR-042 MVP runs no starter copy) | core |
 | `bingocommerce-sessions` | Portal Session-template replica; Commerce schedules with immutable named timezone and structured time; dated occurrence generation/reconciliation; inclusive hall-local 30-day window; centralized current-definition membership; Available for Sale; Package assignment; and customer occurrence-before-Package selection (BR-050–BR-052/BR-063/BR-073/BR-077/BR-078; approved ADR-043) | core, catalog |
 | `bingocommerce-digital-tickets` | Purchase-time entitlement snapshot (activated on successful online payment confirmation — BR-053), QR issue/redeem, device binding, staff reactivation, Android REST API, redemption accumulation | core, catalog, sessions |
 | `bingocommerce-portal-integration` | Portal-facing machine endpoint; request authentication/validation; provisioning-operation persistence/sequencing; Portal Hall mapping coordination; HallCommerceState/managed-marker coordination; Portal snapshot synchronization; safe API responses and integration audit attribution (ADR-035–ADR-042) | core |
@@ -29,9 +29,10 @@ and its commerce relationships. Portal webhook delivery/reconciliation remains
 deferred and must not be confused with the implemented occurrence reconciler.
 
 ADR-031 conceptually assigns five per-site Catalog tables to
-`bingocommerce-catalog`, but Catalog schema v5 currently implements four;
-ADR-044 approves `bingo_package_addons`, `PackageAddonService` and Catalog v6
-for Package Add-ons Increment 1, but they are not implemented. Its two
+`bingocommerce-catalog`; Catalog schema v6 now implements all five, including
+ADR-044 Slice 1's `bingo_package_addons` migration and schema verification.
+`PackageAddonService`, the mutation profile, UI, projection and add-on audit
+remain unimplemented. No real Hall migration or deployment is claimed. Its two
 baseline Session tables belong to `bingocommerce-sessions`. Session schema v3
 adds the Portal-template replica and three schedule-definition tables in the
 same plugin without replacing those baseline tables. `bingocommerce-platform` owns Platform
@@ -193,18 +194,17 @@ A feature that works on existing halls but fails on a newly created hall is inco
 
 For ADR-031 artifacts:
 
-- `bingocommerce-catalog` owns per-site `bc_catalog_db_version = 5` for the four
+- `bingocommerce-catalog` owns per-site `bc_catalog_db_version = 6` for the five
   implemented tables: `bingo_game_types`, `bingo_play_products`,
-  `bingo_packages`, and `bingo_package_components`. ADR-044 approves
-  `bingo_package_addons` and Catalog v6 for the next implementation increment;
-  neither is present yet.
+  `bingo_packages`, `bingo_package_components`, and `bingo_package_addons`.
+  ADR-044 Slice 1 records v6 only after all five schemas verify; migration
+  creates no relationship rows and performs no WooCommerce writes.
 - `bingocommerce-sessions` owns one per-site Session schema version
   (`bc_sessions_db_version = 3`) for `bingo_sessions`, `bingo_session_packages`,
   `bingo_portal_session_templates`, `bingo_session_schedules`,
   `bingo_session_schedule_dates`, and `bingo_session_schedule_packages`.
-- All ten implemented Catalog/Session tables use `$wpdb->prefix` and contain no
-  redundant `blog_id`. The same tenant rule is mandatory for the approved
-  not-yet-implemented add-on table.
+- All eleven implemented Catalog/Session tables use `$wpdb->prefix` and contain no
+  redundant `blog_id`, including the add-on table.
 - Initial relationships are indexed logical relationships with restrictive
   service-level validation; do not assume physical foreign keys or cascades.
 

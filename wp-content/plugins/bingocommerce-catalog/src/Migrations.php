@@ -11,7 +11,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 /** Owns the hall-local Catalog schema and its per-site version state. */
 final class Migrations {
 
-	public const DB_VERSION = 5;
+	public const DB_VERSION = 6;
 	public const VERSION_OPTION = 'bc_catalog_db_version';
 	public const NETWORK_SWEEP_OPTION = 'bc_catalog_network_migration_sweep_version';
 	public const GAME_TYPES_TABLE = 'bingo_game_types';
@@ -28,6 +28,7 @@ final class Migrations {
 
 	/** ADR-031 Package base composition, created by Catalog v3. */
 	public const PACKAGE_COMPONENTS_TABLE = 'bingo_package_components';
+	public const PACKAGE_ADDONS_TABLE = 'bingo_package_addons';
 
 	/** @return true|\WP_Error */
 	public static function maybe_migrate_current_site() {
@@ -140,6 +141,20 @@ final class Migrations {
 		if ( $game_types !== $wpdb->get_blog_prefix( get_current_blog_id() ) . 'bingo_game_types' || 1 !== preg_match( '/^[A-Za-z0-9_]+$/D', $game_types ) ) {
 			return self::verification_error( 'The Game Type migration table does not match the current hall.' );
 		}
+		// v6 introduces this table; an unexpected existing shape is not an
+		// approved conversion. In particular, do not let dbDelta reduce monetary
+		// precision or otherwise reinterpret data in a malformed table.
+		$package_addons = self::package_addons_table();
+		$addons_exist = self::table_exists( $package_addons );
+		if ( '' !== (string) $wpdb->last_error ) {
+			return self::verification_error( 'The Package add-on table presence could not be inspected.' );
+		}
+		if ( $addons_exist ) {
+			$addons = self::verify_package_addons_schema();
+			if ( is_wp_error( $addons ) ) {
+				return $addons;
+			}
+		}
 		$local_name_collation = '';
 		if ( self::table_exists( $game_types ) ) {
 			$columns = self::columns_by_name( $game_types );
@@ -228,7 +243,25 @@ final class Migrations {
 ) ENGINE=InnoDB {$charset_collate};"
 		);
 
-		// The version is the hall's promise that EVERY Catalog schema through v5
+		dbDelta(
+			"CREATE TABLE {$package_addons} (
+	package_addon_id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+	package_id bigint(20) unsigned NOT NULL,
+	bingo_play_product_id bigint(20) unsigned NOT NULL,
+	unit_price decimal(19,2) NOT NULL,
+	max_quantity tinyint(3) unsigned NOT NULL DEFAULT 1,
+	enabled tinyint(1) unsigned NOT NULL DEFAULT 1,
+	sort_order int(10) unsigned NOT NULL DEFAULT 0,
+	created_at datetime NOT NULL,
+	updated_at datetime NOT NULL,
+	PRIMARY KEY  (package_addon_id),
+	UNIQUE KEY package_play_product_unique (package_id,bingo_play_product_id),
+	KEY package_enabled_sort (package_id,enabled,sort_order),
+	KEY play_product (bingo_play_product_id)
+) ENGINE=InnoDB {$charset_collate};"
+		);
+
+		// The version is the hall's promise that EVERY Catalog schema through v6
 		// is usable, so it is persisted only after every required structure
 		// verifies.
 		$verified = self::verify_current_site_schema();
@@ -275,6 +308,12 @@ final class Migrations {
 		return $wpdb->prefix . self::PACKAGE_COMPONENTS_TABLE;
 	}
 
+	public static function package_addons_table(): string {
+		global $wpdb;
+
+		return $wpdb->prefix . self::PACKAGE_ADDONS_TABLE;
+	}
+
 	/** @return true|\WP_Error */
 	public static function verify_current_site_schema() {
 		$game_types = self::verify_game_types_schema();
@@ -292,7 +331,12 @@ final class Migrations {
 			return $packages;
 		}
 
-		return self::verify_package_components_schema();
+		$components = self::verify_package_components_schema();
+		if ( is_wp_error( $components ) ) {
+			return $components;
+		}
+
+		return self::verify_package_addons_schema();
 	}
 
 	/** @return true|\WP_Error */
@@ -669,6 +713,74 @@ final class Migrations {
 		return self::assert_engine_and_charset( $table, 'Bingo Package component' );
 	}
 
+	/**
+	 * ADR-044 persistence only; business-value validation belongs to the future service.
+	 *
+	 * @return true|\WP_Error
+	 */
+	public static function verify_package_addons_schema() {
+		global $wpdb;
+		$table = self::package_addons_table();
+		if ( ! HallContext::is_hall() || $table !== $wpdb->get_blog_prefix( get_current_blog_id() ) . self::PACKAGE_ADDONS_TABLE || 1 !== preg_match( '/^[A-Za-z0-9_]+$/D', $table ) || ! self::table_exists( $table ) ) {
+			return self::verification_error( 'The Package add-on table is missing or is not the current hall table.' );
+		}
+
+		$by_name = self::columns_by_name( $table );
+		if ( null === $by_name || 9 !== count( $by_name ) ) {
+			return self::verification_error( 'The Package add-on columns could not be inspected or have an unexpected shape.' );
+		}
+		// MySQL 8.0.17+ omits integer display widths (as dbDelta itself allows).
+		// When a server reports a width it must be the approved width; decimal
+		// precision/scale and signedness are always checked exactly.
+		$columns = self::assert_columns(
+			$by_name,
+			[
+				'package_addon_id'      => [ '/^bigint(?:\(20\))? unsigned$/', 'NO', null, 'auto_increment' ],
+				'package_id'            => [ '/^bigint(?:\(20\))? unsigned$/', 'NO', null, '' ],
+				'bingo_play_product_id' => [ '/^bigint(?:\(20\))? unsigned$/', 'NO', null, '' ],
+				'unit_price'            => [ '/^decimal\(19,2\)$/', 'NO', null, '' ],
+				'max_quantity'          => [ '/^tinyint(?:\(3\))? unsigned$/', 'NO', '1', '' ],
+				'enabled'               => [ '/^tinyint(?:\(1\))? unsigned$/', 'NO', '1', '' ],
+				'sort_order'            => [ '/^int(?:\(10\))? unsigned$/', 'NO', '0', '' ],
+				'created_at'            => [ '/^datetime$/', 'NO', null, '' ],
+				'updated_at'            => [ '/^datetime$/', 'NO', null, '' ],
+			],
+			'Package add-on'
+		);
+		if ( is_wp_error( $columns ) ) {
+			return $columns;
+		}
+		$indexes = self::assert_indexes(
+			$table,
+			[
+				'PRIMARY'                     => [ true, [ 'package_addon_id' ] ],
+				'package_play_product_unique' => [ true, [ 'package_id', 'bingo_play_product_id' ] ],
+				'package_enabled_sort'        => [ false, [ 'package_id', 'enabled', 'sort_order' ] ],
+				'play_product'                => [ false, [ 'bingo_play_product_id' ] ],
+			],
+			'Package add-on',
+			true
+		);
+		if ( is_wp_error( $indexes ) ) {
+			return $indexes;
+		}
+		$storage = self::assert_engine_and_charset( $table, 'Package add-on', true );
+		if ( is_wp_error( $storage ) ) {
+			return $storage;
+		}
+
+		$foreign_keys = $wpdb->get_var( $wpdb->prepare(
+			'SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS WHERE CONSTRAINT_SCHEMA = DATABASE() AND TABLE_NAME = %s AND CONSTRAINT_TYPE = %s',
+			$table,
+			'FOREIGN KEY'
+		) );
+		if ( '0' !== (string) $foreign_keys || '' !== (string) $wpdb->last_error ) {
+			return self::verification_error( 'The Package add-on foreign-key absence could not be verified.' );
+		}
+
+		return true;
+	}
+
 	private static function table_exists( string $table ): bool {
 		global $wpdb;
 
@@ -722,7 +834,7 @@ final class Migrations {
 	 * @param array<string,array{0:bool,1:array<int,string>}> $required
 	 * @return true|\WP_Error
 	 */
-	private static function assert_indexes( string $table, array $required, string $label ) {
+	private static function assert_indexes( string $table, array $required, string $label, bool $exact = false ) {
 		global $wpdb;
 
 		$indexes = $wpdb->get_results( "SHOW INDEX FROM `{$table}`", ARRAY_A );
@@ -732,6 +844,9 @@ final class Migrations {
 
 		$actual_indexes = [];
 		foreach ( $indexes as $index ) {
+			if ( $exact && ( 'BTREE' !== $index['Index_type'] || 'A' !== $index['Collation'] || null !== ( $index['Expression'] ?? null ) || 'YES' !== ( $index['Visible'] ?? 'YES' ) ) ) {
+				return self::verification_error( sprintf( 'The %s index structure is incompatible.', $label ) );
+			}
 			$key = (string) $index['Key_name'];
 			$actual_indexes[ $key ]['unique'] = 0 === (int) $index['Non_unique'];
 			$actual_indexes[ $key ]['columns'][ (int) $index['Seq_in_index'] ] = (string) $index['Column_name'];
@@ -742,6 +857,9 @@ final class Migrations {
 			$index['columns'] = array_values( $index['columns'] );
 		}
 		unset( $index );
+		if ( $exact && count( $required ) !== count( $actual_indexes ) ) {
+			return self::verification_error( sprintf( 'The %s index inventory is incompatible.', $label ) );
+		}
 
 		foreach ( $required as $name => [ $unique, $index_columns ] ) {
 			if (
@@ -758,7 +876,7 @@ final class Migrations {
 	}
 
 	/** @return true|\WP_Error */
-	private static function assert_engine_and_charset( string $table, string $label ) {
+	private static function assert_engine_and_charset( string $table, string $label, bool $exact_collation = false ) {
 		global $wpdb;
 
 		$status = $wpdb->get_row(
@@ -767,8 +885,10 @@ final class Migrations {
 		);
 		if (
 			! is_array( $status )
+			|| '' !== (string) $wpdb->last_error
 			|| 'innodb' !== strtolower( (string) ( $status['Engine'] ?? '' ) )
 			|| 0 !== strpos( strtolower( (string) ( $status['Collation'] ?? '' ) ), 'utf8mb4_' )
+			|| ( $exact_collation && $wpdb->collate !== ( $status['Collation'] ?? null ) )
 		) {
 			return self::verification_error( sprintf( 'The %s table engine or utf8mb4 collation is incompatible.', $label ) );
 		}

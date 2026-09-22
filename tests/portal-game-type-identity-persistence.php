@@ -89,7 +89,7 @@ final class PortalGameTypeIdentityPersistenceTest {
 
 	public function run(): void {
 		$this->assert_true( is_multisite(), 'WordPress Multisite is enabled' );
-		$this->assert_same( 5, Migrations::DB_VERSION, 'Catalog v5 name compatibility is current' );
+		$this->assert_same( 6, Migrations::DB_VERSION, 'Catalog v6 retains v5 name compatibility' );
 		$this->super_admin_id = $this->find_super_admin_id();
 		$this->assert_true( $this->super_admin_id > 0, 'native Super Admin fixture exists' );
 
@@ -176,7 +176,7 @@ final class PortalGameTypeIdentityPersistenceTest {
 			$this->assert_same( $before[0]['name'], $wpdb->get_var( "SELECT local_name_key FROM `{$table}` WHERE code = 'v4-name-0'" ), 'replacement key is backfilled before legacy index removal' );
 			$this->assert_same( 1, count( $this->name_index( $table, 'name_unique' ) ), 'failed DROP leaves the legacy index intact' );
 			$this->assert_true( true === Migrations::migrate_current_site(), 'interrupted v4 upgrade resumes successfully' );
-			$this->assert_same( 5, (int) get_option( Migrations::VERSION_OPTION ), 'v5 advances after complete verification' );
+			$this->assert_same( 6, (int) get_option( Migrations::VERSION_OPTION ), 'current Catalog version advances after complete verification' );
 			$this->assert_v5_names( $table );
 			$after = $wpdb->get_results( "SELECT * FROM `{$table}` ORDER BY game_type_id", ARRAY_A );
 			foreach ( $after as &$row ) {
@@ -304,9 +304,9 @@ final class PortalGameTypeIdentityPersistenceTest {
 			$protected_rows = $this->snapshot_current_site_tables( [ 'bingo_packages', 'bingo_package_components', 'bingo_sessions', 'bingo_session_packages' ] );
 			$protected_ddl  = $this->schema_snapshot( [ Migrations::packages_table(), Migrations::package_components_table(), $wpdb->prefix . 'bingo_sessions', $wpdb->prefix . 'bingo_session_packages' ] );
 
-			$this->assert_true( true === Migrations::migrate_current_site(), 'existing disposable hall upgrades from Catalog v3 to v5' );
-			$this->assert_same( 5, (int) get_option( Migrations::VERSION_OPTION, 0 ), 'v5 is recorded only after migration verification' );
-			$this->assert_true( true === Migrations::verify_current_site_schema(), 'complete Catalog v5 schema verifies' );
+			$this->assert_true( true === Migrations::migrate_current_site(), 'existing disposable hall upgrades from Catalog v3 to v6' );
+			$this->assert_same( 6, (int) get_option( Migrations::VERSION_OPTION, 0 ), 'v6 is recorded only after migration verification' );
+			$this->assert_true( true === Migrations::verify_current_site_schema(), 'complete Catalog v6 schema verifies' );
 			$this->assert_portal_column_and_index( $game_types, 'upgraded hall' );
 
 			$game_after = $wpdb->get_row( $wpdb->prepare( "SELECT game_type_id, code, name, status, created_at, updated_at, archived_at, portal_game_type_id FROM `{$game_types}` WHERE game_type_id = %d", $game_type_id ), ARRAY_A );
@@ -360,7 +360,7 @@ final class PortalGameTypeIdentityPersistenceTest {
 				$this->assert_same( null, $wpdb->get_var( $wpdb->prepare( "SELECT portal_game_type_id FROM `{$game_types}` WHERE game_type_id = %d", $created_id ) ), 'local service creation fabricates no Portal identity' );
 			}
 
-			$this->assert_true( true === Migrations::migrate_current_site(), 'v5 migration rerun is idempotent' );
+			$this->assert_true( true === Migrations::migrate_current_site(), 'current Catalog migration rerun is idempotent' );
 			$this->assert_true( true === Migrations::verify_current_site_schema(), 'schema still verifies after rerun' );
 		} finally {
 			restore_current_blog();
@@ -376,8 +376,8 @@ final class PortalGameTypeIdentityPersistenceTest {
 
 		switch_to_blog( $site_id );
 		try {
-			$this->assert_same( 5, (int) get_option( Migrations::VERSION_OPTION, 0 ), 'normal new-site provisioning records Catalog v5' );
-			$this->assert_true( true === Migrations::verify_current_site_schema(), 'normal new-site provisioning produces the complete v5 schema' );
+			$this->assert_same( 6, (int) get_option( Migrations::VERSION_OPTION, 0 ), 'normal new-site provisioning records Catalog v6' );
+			$this->assert_true( true === Migrations::verify_current_site_schema(), 'normal new-site provisioning produces the complete v6 schema' );
 			$this->assert_portal_column_and_index( Migrations::game_types_table(), 'newly provisioned hall' );
 			$this->assert_v5_names( Migrations::game_types_table() );
 		} finally {

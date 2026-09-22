@@ -57,11 +57,11 @@ current model.
   tickets/entitlement snapshots, redemption events, hall billing status,
   audit log per ADR-023, reporting facts) must not be dumped into unindexed
   postmeta merely for convenience. ADR-031 defines a seven-table conceptual
-  baseline. The current repository implements six of those baseline tables
-  plus the additive Portal-template and three Commerce-schedule tables: ten
-  tables total. ADR-044/BR-079 approve `bingo_package_addons`,
-  `PackageAddonService`, Catalog v6 and the fixed add-on mutation profile, but
-  none is implemented in the current repository.
+  baseline. The current repository implements all seven baseline tables
+  plus the additive Portal-template and three Commerce-schedule tables: eleven
+  tables total. ADR-044 Slice 1 implements Catalog v6's `bingo_package_addons`
+  migration and schema verification only. `PackageAddonService`, the fixed
+  mutation profile, UI, projection and add-on audit remain unimplemented.
   Operational domains still explicitly deferred — including final entitlement,
   redemption accumulation, device, and offline persistence — MUST NOT have
   storage invented ahead of their dedicated designs. Where an existing ADR
@@ -123,9 +123,9 @@ ADR-031's seven approved conceptual baseline tables are:
 - `$wpdb->prefix . 'bingo_sessions'`
 - `$wpdb->prefix . 'bingo_session_packages'`
 
-Of that baseline, the current Catalog v5 and Session v3 schemas implement every
-listed table except `bingo_package_addons`; ADR-044 approves that table and
-`PackageAddonService` for Catalog v6, but implementation is pending. The current
+Of that baseline, the current Catalog v6 and Session v3 schemas implement every
+listed table. ADR-044 Slice 1 implements only the add-on migration/schema
+verifier; its service and other behavior remain pending. The current
 repository's Session schema v3 also contains these hall-local tables under
 approved ADR-043:
 

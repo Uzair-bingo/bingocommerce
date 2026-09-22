@@ -2364,11 +2364,52 @@
   WordPress `dbDelta()` type/index parser was reviewed. No production PHP,
   migration or test file was changed; no migration or implementation test ran;
   nothing was staged, committed, pushed or deployed. Implementation remains
-  pending a separate review-first pass.
+  pending a separate review-first pass at that documentation checkpoint.
+- **[2026-09-22] Package Add-ons Increment 1 — Slice 1 implemented and
+  isolated-tested.** Catalog schema v6 adds only the Hall-local
+  `bingo_package_addons` table under ADR-044, using signed `DECIMAL(19,2)`, the
+  approved quantity/enabled/sort defaults and four exact indexes. The existing
+  `bc_catalog_db_version` advances only after all five Catalog tables verify.
+  `SHOW FULL COLUMNS`/`SHOW INDEX`, InnoDB, exact WordPress collation and
+  foreign-key absence are checked. Modern MySQL's omitted integer display
+  widths are accepted; wrong reported widths, storage types, signedness or
+  decimal precision are rejected. Unexpected existing add-on shapes fail
+  without automatic conversion. Existing network catch-up, new-site hooks,
+  current-Hall self-heal, failure reporting and retry boundaries are preserved.
+  - Focused `tests/package-addons-schema.php`: **196 passed, 0 failed** on the
+    allowlisted, sentinel-owned `bingocommerce_state_recon` fixture. Covers v5
+    upgrade, exact shape, empty table, idempotence, new Halls, 23 malformed
+    shapes, failed creation/reads, all-five-table verification, network retry,
+    post-sweep self-heal, per-site isolation, data preservation and owned cleanup.
+  - Affected regression suites passed: Game Types **164**, Play Products
+    **472**, Package Stage A **320**, Package Stage B **258**, legacy Sessions
+    **352**, Portal Game Type persistence **142**, Session-template persistence
+    **104**, Portal foundation **77**, snapshot application **424**, setup
+    readiness **199**: **2,708 assertions passed, 0 failed** across the eleven
+    final suite runs. All nine changed PHP files passed syntax checks;
+    `git diff --check` passed. Missing-database, unallowlisted-database and
+    reserved-scratch guard probes all refused execution as intended.
+  - Read-only development Catalog before/after snapshots matched exactly
+    (table definitions, serialized rows, table absence and schema-version
+    options); no development Hall was migrated. The v5 upgrade fixture also
+    proved existing Hall data unchanged except the added empty table and
+    Catalog version option. All current-run disposable Hall cleanup verified.
+  - Initial `_test_suites` run: **189 passed, 2 failed** because its pre-existing
+    Hall 2 options table is missing. It was not repaired or cleaned. The healthy
+    `_recon` fixture was used instead. Session-template persistence's narrower
+    guard rejects `_recon`; that suite passed on its existing approved
+    `bingocommerce_state_test` fixture without weakening the guard. Existing
+    regression harnesses emit injected-failure/teardown diagnostics; all final
+    assertion counts above pass.
+  - No `PackageAddonService`, result/plan classes, add-on transaction profile,
+    UI, price prefill, lifecycle/medium extension, bulk saving, projection or
+    add-on audit is implemented. These remain later slices, not authorized by
+    this implementation. No real Hall migration, staging, commit, push,
+    deployment or production-readiness claim.
 - No Hall Staff Management work currently in progress.
 - Package Increment 1 and the legacy Session Increment 1 remain COMPLETE and
   are recorded under Done. Package Add-ons Increment 1 is approved by
-  ADR-044/BR-079 but implementation has not begun.
+  ADR-044/BR-079; only Slice 1 migration/schema verification is implemented.
 
 ---
 
@@ -2432,7 +2473,9 @@ Everything below is tracked work that is NOT a blocker to that demo.
 3. Package add-ons: ADR-044/BR-079 approve `PackageAddonService`, Catalog v6's
    `bingo_package_addons`, the 1–99 quantity rule, lifecycle/medium integrity,
    fixed transaction profile, and BR-065 `bc_package_relation` projection.
-   Implementation and verification remain pending as a separate focused slice.
+   Slice 1 migration/schema verification is implemented and isolated-tested.
+   Service, mutation profile, lifecycle/medium extensions, UI, projection and
+   add-on audit remain pending separate implementation approval.
 4. Checkout electronic-limit enforcement (BR-042) and redemption accumulation
    (BR-045), including the effective-limit resolver (BR-038, BR-064).
 5. Entitlement snapshot (BR-043, ADR-029), QR issuance (BR-044) and Android
@@ -2680,9 +2723,11 @@ Everything below is tracked work that is NOT a blocker to that demo.
   `HallCommerceGate` (Commerce access enforcement). The gate IS registered on `plugins_loaded`; every development
   Hall is a legacy Hall (no state table, no `bc_portal_provisioning_db_version`,
   no `bc_commerce_managed`), so it allows every one of them
-- **Catalog schema:** per-site `bc_catalog_db_version` = **5**
+- **Catalog schema:** current repository per-site `bc_catalog_db_version` = **6**
   (`bingo_game_types`, `bingo_play_products`, `bingo_packages`,
-  `bingo_package_components`); v4 added nullable, unique
+  `bingo_package_components`, `bingo_package_addons`); v6 adds only the approved
+  add-on schema/verifier. Real Halls were not migrated in this pass.
+  v4 added nullable, unique
   `bingo_game_types.portal_game_type_id`, and v5 is implemented and tested as
   the Portal-compatible Game Type name/index and imported-code design
 - **Session schema:** current repository `bc_sessions_db_version` = **3**
@@ -2692,8 +2737,8 @@ Everything below is tracked work that is NOT a blocker to that demo.
   the Portal Session-template replica and v3 adds the non-destructive
   Commerce-schedule definition and generated-occurrence fields under approved
   ADR-043. This is repository state, not a production-deployment claim.
-- **Current Catalog/Session inventory:** **ten implemented tables** — four
-  Catalog v5 tables and six Session v3 tables. ADR-044/BR-079 approve
-  `bingo_package_addons`, `PackageAddonService` and Catalog v6, but they remain
-  absent from the current implementation.
+- **Current Catalog/Session inventory:** **eleven implemented tables** — five
+  Catalog v6 tables and six Session v3 tables. ADR-044 Slice 1 implements only
+  the add-on migration and schema verifier. `PackageAddonService`, mutation
+  profile, UI, projection and add-on audit remain absent from the implementation.
 - **Rule for AI agents:** Read `AGENTS.md`, `docs/architecture/plugin-architecture.md`, and this file before coding. Do not re-scaffold Multisite, WooCommerce, or core bootstrap.

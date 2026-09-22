@@ -190,9 +190,10 @@ deferred.
   and-drop workflow. (BR-079, ADR-044)
 - **Catalog authority and BR-032 compatibility projection:** under BR-065,
   ADR-031's five-table conceptual Catalog design and two baseline Session tables
-  remain authoritative for their domains. Catalog schema v5 currently
-  implements four of those Catalog tables. ADR-044 approves the fifth table,
-  `PackageAddonService` and Catalog v6, but they are not implemented. The
+  remain authoritative for their domains. Catalog schema v6 implements all
+  five tables; ADR-044 Slice 1 adds only the add-on migration/schema verifier.
+  `PackageAddonService`, the mutation profile, UI, projection and add-on audit
+  remain unimplemented; no real Hall migration or deployment is claimed. The
   additive Portal-template and Commerce-schedule tables in Session schema v3 do
   not replace them.
   `bc_product_kind` and `bc_package_relation` remain deterministic WooCommerce

@@ -25,12 +25,13 @@ BingoCommerce is a hosted multi-tenant e-commerce platform for bingo halls, chur
 - Custom indexed tables where appropriate
 - ADR-031 hybrid Catalog/Session persistence baseline: seven approved
   conceptual hall-local domain tables plus linked WooCommerce commerce shells.
-  The current repository implements six of those baseline tables (four Catalog
-  v5 and two Session tables) plus Session schema v3's Portal-template replica
-  and three Commerce-schedule definition tables: ten implemented tables total.
-  ADR-044/BR-079 approve `bingo_package_addons`, `PackageAddonService`, Catalog
-  v6, and the fixed Package-add-on mutation profile, but they are not yet
-  implemented. Add-on prices are canonical `DECIMAL(19,2)` values. A new-row UI
+  The current repository implements all seven baseline tables (five Catalog
+  v6 and two Session tables) plus Session schema v3's Portal-template replica
+  and three Commerce-schedule definition tables: eleven implemented tables total.
+  ADR-044 Slice 1 implements only the `bingo_package_addons` migration and schema
+  verification. `PackageAddonService`, the fixed mutation profile, UI, projection
+  and add-on audit remain unimplemented. No real Hall migration or deployment is
+  claimed. Add-on prices are canonical `DECIMAL(19,2)` values. A future new-row UI
   prefill loads the linked product with `\wc_get_product( $wc_product_id )`,
   requires `\WC_Product`, and reads the unfiltered edit-context string with
   `$product->get_regular_price( 'edit' )`; it never uses a sale/effective price
@@ -100,9 +101,9 @@ Custom code lives ONLY in:
    ADR-031 specifically locks the Catalog/Session authority to the per-site
    `bingo_game_types`, `bingo_play_products`, `bingo_packages`,
    `bingo_package_components`, `bingo_package_addons`, `bingo_sessions`, and
-   `bingo_session_packages` tables. Of that approved conceptual baseline,
-   ADR-044/BR-079 approve `bingo_package_addons` and `PackageAddonService` for
-   Catalog v6, but they are not part of the current implemented schema. The
+   `bingo_session_packages` tables. Catalog v6 implements `bingo_package_addons`
+   and schema verification under ADR-044 Slice 1; `PackageAddonService` and all
+   add-on mutation/UI/projection/audit behavior remain unimplemented. The
    current additive Session schema also uses `bingo_portal_session_templates`,
    `bingo_session_schedules`,
    `bingo_session_schedule_dates`, and `bingo_session_schedule_packages` for

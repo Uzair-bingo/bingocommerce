@@ -1587,6 +1587,7 @@ final class SessionIncrementOneTest {
 			Migrations::portal_session_templates_table(),
 			Migrations::session_packages_table(),
 			Migrations::sessions_table(),
+			\BingoCommerce\Catalog\Migrations::package_addons_table(),
 			\BingoCommerce\Catalog\Migrations::package_components_table(),
 			\BingoCommerce\Catalog\Migrations::packages_table(),
 			\BingoCommerce\Catalog\Migrations::play_products_table(),
@@ -1598,7 +1599,7 @@ final class SessionIncrementOneTest {
 		wp_delete_site( $site_id );
 
 		foreach ( $tables as $table ) {
-			if ( 1 === preg_match( '/^bc_' . $site_id . '_bingo_(portal_session_templates|session_packages|sessions|session_schedules|session_schedule_dates|session_schedule_packages|package_components|packages|play_products|game_types)$/', $table ) ) {
+			if ( 1 === preg_match( '/^bc_' . $site_id . '_bingo_(portal_session_templates|session_packages|sessions|session_schedules|session_schedule_dates|session_schedule_packages|package_addons|package_components|packages|play_products|game_types)$/', $table ) ) {
 				$wpdb->query( "DROP TABLE IF EXISTS `{$table}`" );
 			}
 		}

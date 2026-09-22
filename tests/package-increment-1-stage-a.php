@@ -208,7 +208,7 @@ final class PackageStageATest {
 		global $wpdb;
 		$this->group( 'Migration' );
 
-		$this->same( 5, Migrations::DB_VERSION, 'Catalog DB_VERSION is 5' );
+		$this->same( 6, Migrations::DB_VERSION, 'Catalog DB_VERSION is 6' );
 
 		// Persistent halls run ONLY the production self-heal path, which is the
 		// same idempotent dbDelta + verify that admin_init runs. Nothing here
@@ -1485,7 +1485,7 @@ final class PackageStageATest {
 			$wpdb->query( "DROP TRIGGER IF EXISTS {$trigger}" );
 		}
 		// Include every Catalog/Session table provisioned for this run's own hall.
-		$tables = [ Migrations::package_components_table(), Migrations::packages_table(), Migrations::play_products_table(), Migrations::game_types_table(), $wpdb->prefix . 'bingo_sessions', $wpdb->prefix . 'bingo_session_packages', $wpdb->prefix . 'bingo_portal_session_templates', $wpdb->prefix . 'bingo_session_schedules', $wpdb->prefix . 'bingo_session_schedule_dates', $wpdb->prefix . 'bingo_session_schedule_packages' ];
+		$tables = [ Migrations::package_addons_table(), Migrations::package_components_table(), Migrations::packages_table(), Migrations::play_products_table(), Migrations::game_types_table(), $wpdb->prefix . 'bingo_sessions', $wpdb->prefix . 'bingo_session_packages', $wpdb->prefix . 'bingo_portal_session_templates', $wpdb->prefix . 'bingo_session_schedules', $wpdb->prefix . 'bingo_session_schedule_dates', $wpdb->prefix . 'bingo_session_schedule_packages' ];
 		$this->disposable_tables[ $site_id ] = $tables;
 		$wpdb->query( $wpdb->prepare( 'DELETE FROM ' . CoreMigrations::audit_log_table() . ' WHERE blog_id = %d', $site_id ) );
 		restore_current_blog();

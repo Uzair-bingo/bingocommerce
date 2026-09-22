@@ -137,16 +137,18 @@ automatic Enable/Disable. See
   the digital entitlement only (BR-044, ADR-030).
 - Catalog/Session persistence (ADR-031, narrowed by ADR-035 and extended in the
   current repository by approved ADR-043): WooCommerce
-  products are commerce shells. The current implementation has ten per-site
-  custom tables: four Catalog v5 tables (`bingo_game_types`,
-  `bingo_play_products`, `bingo_packages`, `bingo_package_components`) and six
+  products are commerce shells. The current implementation has eleven per-site
+  custom tables: five Catalog v6 tables (`bingo_game_types`,
+  `bingo_play_products`, `bingo_packages`, `bingo_package_components`,
+  `bingo_package_addons`) and six
   Session v3 tables:
   `bingo_sessions`, `bingo_session_packages`,
   `bingo_portal_session_templates`, `bingo_session_schedules`,
   `bingo_session_schedule_dates`, and `bingo_session_schedule_packages`, each appended to
-  `$wpdb->prefix`. ADR-044/BR-079 approve `bingo_package_addons`, Catalog v6,
-  `PackageAddonService`, and the fixed add-on mutation profile, but they remain
-  absent from the current schema and code.
+  `$wpdb->prefix`. ADR-044 Slice 1 implements only Catalog v6 migration and
+  schema verification. `PackageAddonService`, the fixed mutation profile, UI,
+  projection and add-on audit remain unimplemented; no real Hall migration,
+  deployment or production readiness is claimed.
   Game Type, Bingo Play Product, Package, and Session use local
   surrogate domain IDs; Portal `game_types.id` is the trusted cross-
   system Game Type identity, and the local Game Type row becomes its hall-scoped

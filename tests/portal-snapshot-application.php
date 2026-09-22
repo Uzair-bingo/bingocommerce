@@ -1519,14 +1519,11 @@ final class PortalSnapshotApplicationTest {
 			$this->assert_same( 0, (int) $wpdb->get_var( "SELECT COUNT(*) FROM `{$sessions}`" ), 'Phase 3E created no dated Commerce Session' );
 			$this->assert_same( 0, (int) $wpdb->get_var( "SELECT COUNT(*) FROM `{$relations}`" ), 'Phase 3E created no Session/Package assignment' );
 
-			// bingo_package_addons is an ADR-031 table the Catalog schema does not
-			// create yet, so it is asserted only where it exists rather than probed
-			// into a database error.
+			// Catalog v6 provisions the add-on table too. Snapshot application
+			// must leave every commerce table empty on this new disposable Hall.
 			foreach ( [ 'bingo_play_products', 'bingo_packages', 'bingo_package_components', 'bingo_package_addons' ] as $suffix ) {
 				$table = $wpdb->prefix . $suffix;
-				if ( ! $this->table_exists( $table ) ) {
-					continue;
-				}
+				$this->assert_true( $this->table_exists( $table ), "Catalog table {$suffix} exists" );
 				$this->assert_same( 0, (int) $wpdb->get_var( "SELECT COUNT(*) FROM `{$table}`" ), "Phase 3E created no row in {$suffix}" );
 			}
 

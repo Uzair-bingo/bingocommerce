@@ -7713,11 +7713,12 @@ delete_users.
 
 ## Still Open / TBD Items (Unresolved)
 
-- ADR-044 and BR-079 approve Package Add-ons Increment 1, but no Catalog v6
-  migration, table, service, administration, transaction-profile extension,
-  projection synchronization or automated verification is implemented yet.
-  The current repository remains Catalog v5 until that separately reviewed
-  implementation pass is complete.
+- ADR-044 Slice 1 implements only Catalog v6's `bingo_package_addons` migration,
+  schema verification and isolated-fixture tests. `PackageAddonService`,
+  administration, transaction-profile extension, lifecycle/medium extensions,
+  projection synchronization and add-on audit remain unimplemented. ADR-044
+  and BR-079 business decisions are unchanged; no real Hall migration,
+  deployment or production readiness is claimed.
 - Portal integration details still open after ADR-036 through ADR-042: webhook
   signing, retry, replay and ordering; transitional synchronization conflict
   policy; and SSO protocol/account/tenant mapping. Commerce-schedule recurrence,

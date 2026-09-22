@@ -2816,7 +2816,7 @@ final class PlayProductIncrementOneTest {
 
 		// Every disposable hall this run created — the migration hall, the
 		// Package-claim hall, the concurrency hall, and the two shared-product-ID
-		// halls — together with all four of its Catalog tables and any trigger it
+		// halls — together with all five of its Catalog tables and any trigger it
 		// carried.
 		$this->destroy_all_disposable_sites();
 
@@ -3092,9 +3092,10 @@ final class PlayProductIncrementOneTest {
 			$wpdb->query( "DROP TRIGGER IF EXISTS {$trigger}" );
 		}
 
-		// ALL FOUR hall-local Catalog v3 tables. WordPress does not know these
+		// ALL FIVE hall-local Catalog v6 tables. WordPress does not know these
 		// custom tables, so wp_delete_site() leaves every one of them behind.
 		$catalog_tables = [
+			Migrations::package_addons_table(),
 			Migrations::package_components_table(),
 			Migrations::packages_table(),
 			Migrations::play_products_table(),
@@ -3126,7 +3127,7 @@ final class PlayProductIncrementOneTest {
 		foreach ( $catalog_tables as $table ) {
 			// Exact, site-scoped identifier. Anything else is refused rather than
 			// guessed at.
-			if ( 1 === preg_match( '/^bc_' . $site_id . '_bingo_(package_components|packages|play_products|game_types)$/', $table ) ) {
+			if ( 1 === preg_match( '/^bc_' . $site_id . '_bingo_(package_addons|package_components|packages|play_products|game_types)$/', $table ) ) {
 				$wpdb->query( "DROP TABLE IF EXISTS `{$table}`" );
 			}
 		}
