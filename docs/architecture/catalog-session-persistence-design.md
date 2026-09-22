@@ -2,8 +2,9 @@
 
 Status: ADR-031's seven-table baseline is approved conceptual architecture. The
 current repository implements four Catalog tables at schema v5 and six Session
-tables at schema v3, for ten implemented tables total. The conceptual
-`bingo_package_addons` table and `PackageAddonService` remain deferred. The
+tables at schema v3, for ten implemented tables total. ADR-044/BR-079 approve
+`bingo_package_addons`, `PackageAddonService`, and Catalog v6 for Package Add-ons
+Increment 1, but none is implemented in the current repository. The
 additive Session schedule/occurrence model exists under approved ADR-043;
 production deployment is not claimed.
 
@@ -72,9 +73,10 @@ The ten implemented tables are:
 10. `bingo_session_schedule_packages`
 
 ADR-031's approved conceptual baseline additionally includes
-`bingo_package_addons`, but that table and `PackageAddonService` are deferred
-and absent from the current implemented schema. The conceptual design remains
-documented below without implying implementation.
+`bingo_package_addons`. ADR-044/BR-079 now approve its Increment 1 schema,
+service, transaction profile and administration, but the table and service are
+still absent from the current implementation. The approved design below does
+not imply that Catalog v6 has been migrated or deployed.
 
 Game Type, Bingo Play Product, Package, and Session use local surrogate
 BingoCommerce domain IDs. Portal `game_types.id` is the trusted cross-system
@@ -289,22 +291,23 @@ Base-composition rules from BR-061:
 - Hybrid: at least one Paper and at least one Digital base component.
 - Optional add-ons do not change stored `package_type`.
 
-### 2.5 `$wpdb->prefix . 'bingo_package_addons'` (conceptual; deferred)
+### 2.5 `$wpdb->prefix . 'bingo_package_addons'` (approved ADR-044; not implemented)
 
-Approved conceptual authority for Package-specific add-on eligibility, price,
-and quantity ceiling. This table and `PackageAddonService` are not implemented.
+Approved Hall-local authority for Package-specific add-on eligibility, price,
+quantity ceiling and enabled state. This table and `PackageAddonService` are not
+yet implemented.
 
 | Column | Nullability/default intent | Meaning |
 |---|---|---|
-| `package_addon_id` | Non-null | Unsigned numeric surrogate row primary key |
-| `package_id` | Non-null | Logical relationship to `bingo_packages` |
-| `bingo_play_product_id` | Non-null | Logical relationship to `bingo_play_products` |
-| `unit_price` | Non-null | Non-negative Package-specific monetary value |
-| `max_quantity` | Non-null; default `1` | Maximum selectable quantity for this relationship |
-| `enabled` | Non-null | Whether this relationship is currently selectable |
-| `sort_order` | Non-null; default `0` | Administrative/display ordering |
-| `created_at` | Non-null | Creation timestamp |
-| `updated_at` | Non-null | Last-change timestamp |
+| `package_addon_id` | `bigint(20) unsigned`; non-null; auto-increment | Surrogate row primary key |
+| `package_id` | `bigint(20) unsigned`; non-null | Logical relationship to `bingo_packages` |
+| `bingo_play_product_id` | `bigint(20) unsigned`; non-null | Logical relationship to `bingo_play_products` |
+| `unit_price` | `decimal(19,2)`; non-null | Canonical non-negative Package-specific monetary value; non-negativity is service-validated |
+| `max_quantity` | `tinyint(3) unsigned`; non-null; default `1` | Maximum selectable quantity; business range 1–99 |
+| `enabled` | `tinyint(1) unsigned`; non-null; default `1` | Whether this relationship is currently selectable |
+| `sort_order` | `int(10) unsigned`; non-null; default `0` | Stable administrative/display ordering; not editable in Increment 1 |
+| `created_at` | `datetime`; non-null | UTC creation timestamp |
+| `updated_at` | `datetime`; non-null | UTC last-change timestamp |
 
 Constraints and indexes:
 
@@ -312,16 +315,52 @@ Constraints and indexes:
 - Unique: `(package_id, bingo_play_product_id)`.
 - Index: `(package_id, enabled, sort_order)`.
 - Index: `bingo_play_product_id`.
-- `unit_price` is non-negative and uses a WooCommerce-compatible decimal
-  monetary representation in the hall's store currency.
-- `max_quantity >= 1`; default is `1`.
-- When selected, `1 <= selected_quantity <= max_quantity`.
+- `unit_price` is a canonical non-negative two-decimal string in the Hall store's
+  currency. A Manager-submitted or service-supplied value is valid only when it
+  already contains exactly two fractional digits. `5.00`, `4.23`, `10.29` and
+  `0.00` are valid. `5`, `5.0`, `5.5`, floating-point input, exponent notation,
+  signs, currency symbols, grouping commas, malformed values, noncanonical
+  leading zeros, values outside `DECIMAL(19,2)`, and more than two fractional
+  digits are rejected. Manager/service input is never normalized or rounded.
+  Persisted/displayed and submitted values, no-op comparisons, audit values and
+  fingerprint inputs always use exactly two fractional digits.
+- `max_quantity` defaults to 1 and must be an integer from 1 through the BR-079
+  business maximum of 99.
+- When selected, `1 <= selected_quantity <= max_quantity <= 99`.
+- `enabled` is exactly 0 or 1.
+- Listing order is `sort_order`, then `package_addon_id`; Increment 1 writes the
+  default sort order and exposes no reordering surface.
+- The same Play Product may be a base component and optional add-on in one
+  Package; the two quantities remain independent.
 
-The relationship's `unit_price` is authoritative. The underlying reusable
-Bingo Play Product's WooCommerce price is not the Package-specific add-on
-price. `bingo_package_addons` is the only authority for which exact Package may
-use the add-on. Product-level `bc_package_relation` metadata never answers that
-question.
+The relationship's `unit_price` is authoritative. The underlying reusable Bingo
+Play Product's WooCommerce price is not the Package-specific add-on price, and
+existing relationships always display their saved price.
+`bingo_package_addons` is the only authority for which exact Package may use the
+add-on. Product-level `bc_package_relation` metadata never answers that question.
+For an eligible never-configured row only, form preparation after WooCommerce
+initialization and outside the Catalog transaction loads the linked product with
+`\wc_get_product( $wc_product_id )`, confirms the result is an instance of
+`\WC_Product`, and reads `$product->get_regular_price( 'edit' )`. The return is
+treated as a string and never converted to floating point. The implementation
+must not use `get_price()`, sale price, direct `_regular_price` post meta,
+formatted HTML price, a tax-adjusted display price or a filtered `view` value.
+
+Prefill is UI convenience only and persists nothing before the Manager selects
+and submits the row. During form preparation only, the returned string `5` may
+be padded without rounding to `5.00`, and `5.5` to `5.50`; a value already
+containing exactly two decimal digits remains unchanged. The displayed and
+submitted field value contains exactly two decimal digits. Blank, negative,
+signed, exponent-form, malformed, noncanonical-leading-zero, overflowing or
+greater-than-two-decimal regular price leaves the field blank so the Manager
+must enter a valid value when selecting that row. No price is silently rounded,
+and UI-only padding never makes loose Manager/service input acceptable.
+Once saved, later WooCommerce regular- or sale-price changes never overwrite or
+refresh the Package-specific value.
+
+`PackageAddonService::create()` receives the submitted canonical two-decimal
+price. It never reads WooCommerce to derive, replace or repair that value, and no
+WooCommerce API call runs in relationship-mutation preflight or the transaction.
 
 ### 2.6 `$wpdb->prefix . 'bingo_sessions'`
 
@@ -543,7 +582,7 @@ missing or undefined `bc_product_kind`.
 
 ### Package-add-on relation projection
 
-When the deferred add-on slice is implemented, `PackageAddonService` will
+When approved ADR-044 is implemented, `PackageAddonService` will
 recalculate the complete enabled relationship count for that Bingo Play Product
 after every authoritative relationship mutation:
 
@@ -584,8 +623,9 @@ Canonical service ownership:
 
 - `PackageService` owns Package mutations, linked-product coordination, native
   base-price coordination, and `bc_product_kind` projection maintenance.
-- The deferred `PackageAddonService` will own add-on relationship mutations,
-  enabled-count recalculation, and `bc_package_relation` projection maintenance.
+- The ADR-044-approved, not-yet-implemented `PackageAddonService` owns add-on
+  relationship mutations, enabled-count recalculation, and
+  `bc_package_relation` projection maintenance.
 - `BingoPlayProductService` owns authoritative membership and the v1 non-
   independently-purchasable boundary.
 
@@ -600,16 +640,27 @@ result rather than reporting the operation as wholly healthy. Expected
 projection state is derived from current authoritative rows, so retry does not
 depend on replaying an old request payload.
 
-A targeted reconciliation accepts a WooCommerce product ID. A bounded hall-
-level mismatch scan covers the union of products referenced by authoritative
-Catalog rows and products carrying either relevant BR-032/BR-065 projection
-value.
-Including projected products allows stale metadata to be found after an
-authoritative relationship was permanently removed. No new projection queue or
-table is required for persistence correctness.
+A targeted Package-add-on reconciliation accepts the current Hall's
+`bingo_play_product_id`, derives the expected value from current authoritative
+relationships, and internally resolves the Play Product's linked current-Hall
+WooCommerce product through the normal product API. It does not accept a
+WooCommerce product ID, and a request-supplied WooCommerce product ID is never
+reconciliation authority.
 
 No direct-SQL transaction spans custom Catalog rows and WooCommerce metadata.
 ADR-025's Hall Staff direct-mysqli transport does not automatically apply.
+
+ADR-044 narrows the repair surface: the Package edit screen offers the same
+targeted Bingo-Play-Product-ID Retry synchronization action only after a
+projection warning or detected mismatch, not an ordinary reconciliation
+dashboard. The bounded current-Hall-wide mismatch scanner is deferred until the
+later storefront/readiness phase. This simplifies Increment 1 without changing
+authority: `bingo_package_addons` remains authoritative, stale projection
+metadata cannot change exact Package eligibility, and targeted repair remains
+available when the affected Play Product is known. A later scanner must remain
+current-Hall scoped and must not become a normal Hall Manager dashboard.
+Increment 1 adds no queue, cron job, table, WP-CLI command or background worker
+for reconciliation.
 
 ## 5a. Package Composition Atomicity and Stale-Edit Detection
 
@@ -655,18 +706,25 @@ BEGIN
   1. SELECT ... FROM bingo_packages WHERE package_id = ? FOR UPDATE NOWAIT
        absent   -> package_not_found
        archived -> package_archived                                 (BR-068)
-  2. SELECT current components from bingo_package_components
-  3. canonicalize and compute the current fingerprint
-  4. current != expected -> ROLLBACK, return package_composition_stale
-  5. determine the bingo_play_product_id set this mutation depends on
-       = (requested set) UNION (currently referenced set)
-  6. SELECT ... FROM bingo_play_products WHERE bingo_play_product_id IN (...)
-       ORDER BY bingo_play_product_id FOR UPDATE NOWAIT      -- ascending order
-  7. validate UNDER THOSE LOCKS
+  2. read current base components; canonicalize and validate their expected
+     composition fingerprint
+       current != expected -> ROLLBACK, return package_composition_stale
+  3. read this Package's enabled bingo_package_addons relationships
+       the held Package lock prevents every conforming add-on writer from
+       changing them; do NOT acquire an add-on relationship lock before its
+       Play Product
+  4. build the complete bingo_play_product_id dependency set
+       = current base components
+         UNION requested final base components
+         UNION enabled add-on Play Products
+  5. SELECT ... FROM bingo_play_products WHERE bingo_play_product_id IN (...)
+       ORDER BY bingo_play_product_id FOR UPDATE NOWAIT
+       lock each required Play Product exactly once, in ascending ID order;
+       validate base-component shape and lifecycle UNDER THOSE LOCKS:
        empty requested set          -> package_requires_component    (BR-067)
        duplicate play product       -> duplicate_component           (BR-067)
        unknown / cross-hall         -> play_product_not_found
-         applies to EVERY id in the step-5 dependency union, including a
+         applies to EVERY id in the step-4 dependency union, including a
          CURRENT-ONLY component this edit would remove: a component whose
          authoritative row has gone missing fails closed and is never
          silently repaired
@@ -676,11 +734,15 @@ BEGIN
        archived existing component,
          quantity unchanged         -> allowed (retained)            (BR-067)
        quantity out of bound        -> invalid_component_quantity
-  8. DELETE component rows no longer requested
-  9. INSERT / UPDATE the requested rows
- 10. recompute package_type from the `medium` values READ UNDER LOCK at step 6,
-     considering ONLY the Play Products in the FINAL REQUESTED set
- 11. UPDATE bingo_packages.package_type, updated_at
+  6. derive the resulting package_type only from the medium values read under
+     lock for the FINAL REQUESTED BASE COMPONENTS
+  7. validate every enabled add-on against that resulting Package type using
+     its locked Play Product row; missing/corrupt state fails closed
+  8. any enabled add-on incompatibility -> ROLLBACK, reject replacement
+  9. only after every validation succeeds:
+       DELETE component rows no longer requested
+       INSERT / UPDATE requested component rows
+       UPDATE bingo_packages.package_type, updated_at
 COMMIT
 (audit catalog.package.components_updated, outside the boundary, after commit)
 ```
@@ -691,20 +753,24 @@ component from Paper to Digital between validation and the `package_type`
 write, persisting a Package whose stored type contradicts its own composition
 and violating BR-061.
 
-**The lock set and the derivation set are not the same set.** Step 6 locks the
-UNION of currently referenced and requested Bingo Play Product IDs, because a row
-being removed must also be held still for the duration of the mutation. Step 10
-derives `package_type` from ONLY the Play Products remaining in the final
-requested set; a component being removed is locked but contributes nothing to
-the resulting type.
+**The lock set and the derivation set are not the same set.** Step 5 locks the
+UNION of currently referenced base components, requested base components and
+enabled add-on Play Product IDs. A base row being removed must be held still,
+and an enabled add-on's medium must remain stable through compatibility
+validation. Step 6 derives `package_type` from ONLY the Play Products remaining
+in the final requested base set. A component being removed and every add-on are
+locked but contribute nothing to the resulting type.
 
 ```text
 current   = Paper A + Digital B
 requested = Paper A
 
-locked     : A and B          (union — B must be held while it is removed)
+enabled add-on: Digital C
+
+locked     : A, B and C       (complete dependency union)
 derived from: A only          (final requested set)
 package_type = paper
+result      : rejected because enabled Digital C is incompatible with Paper
 ```
 
 ### Medium immutability while Package-referenced (BR-069)
@@ -718,40 +784,50 @@ The serialization anchor is the `bingo_play_products` row itself:
 
 | Writer | Holds | Then |
 |---|---|---|
-| `updateMedium` (either direction) | that `bingo_play_products` row | reads `bingo_package_components` for references; rejects if any exist |
+| `updateMedium` (either direction) | that `bingo_play_products` row | performs the existing locking `bingo_package_components` reference check, then a locking enabled-`bingo_package_addons` reference check; rejects if either blocking reference exists |
 | Package create | that `bingo_play_products` row (step 3) | inserts the component row |
-| `replaceComponents` | that `bingo_play_products` row (step 6) | inserts or retains the component row |
+| `replaceComponents` | each dependency `bingo_play_products` row (step 5) | validates enabled add-on compatibility, then inserts or retains base-component rows |
+| Package add-on create/update/remove | Package row, then that `bingo_play_products` row | probes/locks or mutates the relationship only after both parent anchors are held |
 
-Because all three take an exclusive lock on the same row, they cannot overlap.
-Either the medium change commits first and the Package writer then derives
-`package_type` from the new value under lock, or the component row already
-exists and the medium change is rejected. No interleaving produces a stale
-`package_type`, and no new lock-order inversion is introduced: the reference
-check reads a table that is only ever written while the same
-`bingo_play_products` row is already held.
+Because every conforming writer takes an exclusive lock on the same Play Product
+row before checking or mutating its component/add-on references, the critical
+parts cannot overlap. Either the medium change commits first and a later Package
+or add-on writer validates the new medium under lock, or a blocking reference
+exists first and the medium change is rejected. No interleaving produces stale
+Package/add-on medium compatibility. Both relationship tables are written only
+after the same `bingo_play_products` row is held.
 
 **Settled mechanism (ADR-034).** Both medium transitions run inside the ADR-032
 captured-mysqli transport and serialize on the Play Product's own
-`bingo_play_products` row. Paper to Digital already ran there and gains the
-reference check; Digital to Paper moves out of the ordinary single-statement
-`$wpdb` path and into the transport, and is no longer an ordinary Catalog
-mutation. A referenced medium change is rejected with
-`play_product_package_referenced`.
+`bingo_play_products` row. Paper to Digital already ran there and retains its
+Game Type and Package-component checks; Digital to Paper remains out of the
+ordinary single-statement `$wpdb` path. Both directions now also perform a
+locking enabled-add-on-reference check after the existing component check. Any
+enabled add-on relationship blocks the actual transition; disabled add-on
+relationships do not block it and are revalidated if later enabled. No Package
+row lock is added to either medium-transition path. A component-referenced
+medium change remains `play_product_package_referenced`; the enabled-add-on
+check returns that same `play_product_package_referenced` code. Structured error
+details and the Manager message identify whether base-component references,
+enabled add-on references, or both caused the block; no second overlapping error
+code is introduced.
 
-Because Package creation, `replaceComponents`, and the medium change all take an
-exclusive lock on the same `bingo_play_products` row before touching component
-references, `package_type` cannot become stale from a conforming medium change:
-either the medium change commits first and the Package writer then derives the
-type from the new value under lock, or the reference exists first and the medium
-change is refused.
+Because Package creation, `replaceComponents`, add-on relationship writers and
+the medium change all take an exclusive lock on the same
+`bingo_play_products` row before touching their relevant references,
+`package_type` and enabled add-on compatibility cannot become stale from a
+conforming medium change: either the medium change commits first and the later
+writer validates the new value under lock, or the reference exists first and
+the medium change is refused.
 
-The component-reference check uses `SELECT ... FOR UPDATE NOWAIT`, not a plain
-`SELECT`. A plain read was measured as correct across both REPEATABLE READ and
-READ COMMITTED in all fourteen required interleavings, but only while it was the
-transaction's first consistent read; when an earlier non-locking read opened the
-snapshot sooner, it observed zero references while a committed reference existed
-and would have permitted the forbidden change. A locking read removes that
-ordering and isolation dependency entirely.
+The component-reference and enabled-add-on-reference checks use locking
+`SELECT ... FOR UPDATE NOWAIT` reads, not plain `SELECT`s. The Play Product row
+is locked before either relationship table. A plain component read was measured
+as correct across both REPEATABLE READ and READ COMMITTED in all fourteen
+required interleavings, but only while it was the transaction's first consistent
+read; when an earlier non-locking read opened the snapshot sooner, it observed
+zero references while a committed reference existed and would have permitted the
+forbidden change. Locking reads remove that ordering and isolation dependency.
 
 The single guarded autocommit `UPDATE ... AND NOT EXISTS (...)` alternative was
 rejected on measured behaviour: safe under REPEATABLE READ, but under READ
@@ -849,13 +925,16 @@ acquisition is contiguous and no `bingo_packages` lock is held while a
 | Play Product create | ADR-032 | posts, game_types, play_products(claim), packages(claim) |
 | Play Product restore | ADR-032 | posts, play_products, game_types |
 | `assignGameType` | ADR-032 | play_products, game_types |
-| `updateMedium` Paper -> Digital | ADR-032 (ADR-034) | play_products, game_types, package_components(reference check) |
-| `updateMedium` Digital -> Paper | ADR-032 (ADR-034) | play_products, package_components(reference check) |
+| `updateMedium` Paper -> Digital | ADR-032 (ADR-034 plus ADR-044 extension) | play_products, game_types, package_components(reference check), package_addons(enabled-reference check) |
+| `updateMedium` Digital -> Paper | ADR-032 (ADR-034 plus ADR-044 extension) | play_products, package_components(reference check), package_addons(enabled-reference check) |
 | `clearGameType` | ordinary `$wpdb` | one PK-qualified row |
 | `archive` | ordinary `$wpdb` | one PK-qualified row |
 | `updateFacesPerUnit` | ordinary `$wpdb` | one PK-qualified row |
 | Package create | ADR-032 | posts, play_products(claim), play_products(components asc), packages(claim) |
-| `replaceComponents` | ADR-033 | packages, play_products(asc) |
+| `replaceComponents` | ADR-033 plus ADR-044 extension | packages, read enabled package_addons under Package anchor without locking relationship rows, play_products(complete dependency set asc) |
+| Add-on create | ADR-044 fixed profile | packages, play_products, package_addons(unique relationship probe/insert) |
+| Add-on update | ADR-044 fixed profile | packages, play_products, package_addons(relationship row) |
+| Add-on remove | ADR-044 fixed profile | packages, play_products, package_addons(relationship row) |
 | Package `archive` | ordinary `$wpdb` | one PK-qualified row |
 | Package `restore` | ordinary `$wpdb` | one PK-qualified row |
 
@@ -866,7 +945,16 @@ Two relative inversions exist across these paths:
    `bingo_play_products` first. This inversion is pre-existing and shipped.
 2. Package create takes `bingo_play_products` before `bingo_packages`, while
    Play Product create takes them in the same relative order — consistent — but
-   `replaceComponents` takes `bingo_packages` before `bingo_play_products`.
+   `replaceComponents` and every add-on relationship writer take
+   `bingo_packages` before `bingo_play_products`.
+
+ADR-044 does not introduce a Play-Product/relationship inversion. Medium
+transition locks the Play Product before its enabled-add-on-reference locking
+read and never requests a Package lock. Add-on writers lock Package, then Play
+Product, then relationship. `replaceComponents` holds the Package anchor while
+reading enabled relationships but does not lock those relationship rows before
+acquiring the complete ascending Play Product set. All ADR-044 paths use the
+existing bounded Catalog conflict retry rules.
 
 **These inversions matter, because the boundary is NOT wait-free.** An earlier
 revision of this document asserted that every Catalog statement uses
@@ -954,6 +1042,105 @@ Because `PackageService` refuses to operate below Catalog v3, and because after
 Stage A no worker can still hold a stale "Package table absent" decision, no old
 Bingo Play Product request can overlap the first live Package writer.
 
+## 5c. Package Add-ons Increment 1 (ADR-044 / BR-079; approved, not implemented)
+
+The add-on slice extends, but does not replace, the existing Catalog boundaries.
+Eligibility requires an active Package, active Play Product, enabled relationship
+and compatible medium. Paper Packages accept Paper add-ons only; Digital and
+Hybrid Packages accept Paper or Digital add-ons. Add-ons never participate in
+stored `package_type` derivation, and a Paper Package never gains QR behavior
+from an add-on.
+
+Archive preserves relationship rows and enabled values. An archived Package is
+read-only for actual mutations until restore. For an archived Play Product, only
+explicit disable or remove is permitted as an actual relationship mutation.
+Restore changes no relationship state. Disabled relationships preserve price
+and maximum; those values may be edited only while both parents are active. A
+verified unchanged submission may return the normal no-op result even against
+archived state, but only after parent and relationship existence/integrity are
+verified. Exact no-ops perform no DML, timestamp change, audit write or
+projection rewrite.
+
+`CatalogTransactionTransport` gains one fixed add-on profile, not a generic
+transaction abstraction. One relationship mutation locks Package, Play Product,
+then relationship; validates an opaque stale fingerprint where applicable; and
+executes at most one relationship mutation. Bulk administration invokes that
+same operation independently per row and never wraps the selection in one
+transaction. Recognized contention receives the existing bounded Catalog retry;
+ambiguous COMMIT returns unknown with no retry, projection or audit.
+
+The relationship fingerprint is `hash('sha256', payload)`, returned as 64
+lowercase hexadecimal characters. `payload` concatenates fixed-order
+`LP(value)` records, where `LP` is the
+base-10 ASCII byte length, `:`, then the value. The values are the version marker
+`bc-package-addon-fingerprint-v1`, `package_addon_id`, `package_id`,
+`bingo_play_product_id`, canonical exactly-two-decimal `unit_price`,
+`max_quantity`, and enabled `0`/`1`. Integer fields use canonical base-10 ASCII.
+That means digits only, no sign and no leading zero; zero is exactly `0`. The
+form renderer and locked recheck use the identical serialization. The token is
+opaque; locale formatting, PHP floats, ambiguous delimiter concatenation,
+timestamps and `sort_order` are excluded.
+
+ADR-034's medium-transition profile adds a locking enabled-add-on-reference
+check, blocking actual transitions in both directions while any enabled add-on
+references the Play Product. ADR-033 composition replacement reads enabled
+add-ons under its Package lock, adds their Play Products to the ascending lock
+set, derives type from final base components only, and rejects a type that would
+conflict with an enabled add-on. A Play Product used in both roles is locked once;
+base and add-on quantities remain separate.
+
+Audit and WooCommerce projection occur only after confirmed commit. Projection
+recounts every enabled current-Hall relationship for the Play Product, writes
+through WooCommerce CRUD, verifies, rechecks authoritative state, and uses a
+bounded convergence loop when a concurrent mutation changes the expected value.
+Failure leaves the Catalog mutation committed and returns an explicit
+reconciliation-required warning. Targeted retry accepts
+`reconcileProjection(int $bingo_play_product_id)` and internally resolves that
+current-Hall row's linked WooCommerce product; it never accepts a request-
+supplied WooCommerce product ID as authority. The Hall-wide mismatch scanner is
+deferred until the storefront/readiness phase. That later design remains
+current-Hall scoped and cannot become a normal Manager dashboard.
+
+The existing Edit Package screen gains one Optional Add-ons section: a
+searchable/filterable current-Hall checkbox list with configured relationships
+first, including disabled relationships. It always shows every existing
+relationship for the Package, including a disabled or currently ineligible row
+whose Play Product is archived, unresolved or now incompatible. Those rows are
+never silently hidden or removed and remain available for review and for any
+lifecycle-permitted disable or remove operation. A configured-but-disabled row
+shows `Configured — disabled` and remains distinct from a never-configured
+product. For products without a relationship, the candidate list includes only
+active, medium-compatible current-Hall Play Products and never exposes another
+Hall's products.
+
+| Existing state | Manager action | Result |
+|---|---|---|
+| Never configured | Leave unchecked | No relationship exists |
+| Never configured | Check | Create an enabled relationship |
+| Configured and enabled | Leave checked | Remains enabled; exact unchanged submission is a no-op |
+| Configured and enabled | Uncheck | Disable while preserving price and maximum |
+| Configured and disabled | Leave unchecked | Remains configured and disabled |
+| Configured and disabled | Check | Re-enable after lifecycle and medium validation |
+| Configured relationship | Explicit Remove | Permanently remove that relationship after confirmation |
+
+Configured rows expose the canonical two-decimal saved Package-specific price
+and maximum. Eligible never-configured rows use only the exact WooCommerce
+edit-context regular-price prefill contract stated above; saving severs the
+dependency. The section is one form with one `Save Add-ons` action. An unchecked
+never-configured row is ignored completely: it needs no price or maximum and
+causes no operation, validation error, relationship, audit, projection or
+timestamp update. Each submitted configured or selected row is one independent
+relationship operation; partial success remains permitted and each failed row
+keeps its own message. No separate save modes exist.
+
+Unchecking a configured row is reversible disable. Permanent Remove uses simple
+browser confirmation only: cancellation sends no request and makes no mutation;
+confirmation submits that row's remove operation. No custom modal, framework or
+separate confirmation screen is added. The workflow is complete on this single
+Edit Package screen and adds no Hall selector, Package-type editor, modal,
+wizard, drag-and-drop, separate dashboard, storefront behavior, or ordinary
+technical reconciliation control.
+
 ## 6. Electronic-Limit Configuration
 
 The platform electronic maximum is stored as a network option controlled by
@@ -990,18 +1177,21 @@ capacity.
 
 Owns:
 
-- The four implemented Catalog v5 tables. ADR-031's conceptual fifth Catalog
-  table, `bingo_package_addons`, and `PackageAddonService` remain deferred.
+- The four implemented Catalog v5 tables. ADR-044 approves the fifth Catalog
+  table, `bingo_package_addons`, for Catalog v6; it is not implemented yet.
 - Hall-scoped Game Type replica/domain behavior plus Bingo Play Product,
-  Package, and component services; approved add-on service responsibilities
-  remain deferred.
+  Package, and component services; `PackageAddonService` responsibilities are
+  approved by ADR-044 but not implemented.
 - WooCommerce product-link validation and BR-032/BR-065 projections.
-- Package composition; add-on quantity/price validation remains deferred.
+- Package composition plus the approved future add-on price, quantity,
+  lifecycle and compatibility validation.
 - Hall override configuration and the effective-limit resolver.
 - Starter WooCommerce Product/Bingo Play Product copy logic owned by Catalog
   when that deferred mechanism exists; ADR-042 MVP runs no starter copy.
   Game Types instead synchronize under ADR-035.
-- Per-site Catalog migration/version state: `bc_catalog_db_version = 5`.
+- Current per-site Catalog migration/version state:
+  `bc_catalog_db_version = 5`; ADR-044 authorizes v6 only when implemented and
+  fully verified.
 
 ### `bingocommerce-sessions`
 

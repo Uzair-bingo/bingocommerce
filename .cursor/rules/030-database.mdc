@@ -59,8 +59,9 @@ current model.
   postmeta merely for convenience. ADR-031 defines a seven-table conceptual
   baseline. The current repository implements six of those baseline tables
   plus the additive Portal-template and three Commerce-schedule tables: ten
-  tables total. The conceptual `bingo_package_addons` table and
-  `PackageAddonService` remain deferred.
+  tables total. ADR-044/BR-079 approve `bingo_package_addons`,
+  `PackageAddonService`, Catalog v6 and the fixed add-on mutation profile, but
+  none is implemented in the current repository.
   Operational domains still explicitly deferred — including final entitlement,
   redemption accumulation, device, and offline persistence — MUST NOT have
   storage invented ahead of their dedicated designs. Where an existing ADR
@@ -123,9 +124,10 @@ ADR-031's seven approved conceptual baseline tables are:
 - `$wpdb->prefix . 'bingo_session_packages'`
 
 Of that baseline, the current Catalog v5 and Session v3 schemas implement every
-listed table except `bingo_package_addons`; that table and
-`PackageAddonService` remain deferred. The current repository's Session schema
-v3 also contains these hall-local tables under approved ADR-043:
+listed table except `bingo_package_addons`; ADR-044 approves that table and
+`PackageAddonService` for Catalog v6, but implementation is pending. The current
+repository's Session schema v3 also contains these hall-local tables under
+approved ADR-043:
 
 - `$wpdb->prefix . 'bingo_portal_session_templates'`
 - `$wpdb->prefix . 'bingo_session_schedules'`
@@ -149,7 +151,9 @@ binds values through native mysqli prepared statements. The approved transports
 are ADR-025 (Hall Staff mandatory audit), ADR-032 (Catalog critical
 serialization, including ADR-034's approved third use for Play Product
 medium-change integrity against Package-component references), ADR-033
-(Package composition atomicity), and ADR-040 (Portal snapshot application).
+(Package composition atomicity), ADR-044 (the not-yet-implemented fixed
+Package-add-on mutation profile plus its narrow add-on integrity extensions to
+ADR-033/ADR-034), and ADR-040 (Portal snapshot application).
 ADR-033 additionally PROHIBITS `$wpdb->query()`
 for statements issued while its transaction is open. No other feature may
 introduce direct mysqli without reviewed authority. Raw value interpolation into
@@ -168,7 +172,8 @@ outside and to run only after a confirmed commit. Always follow the ADR that
 governs the boundary you are working in, and never carry a rule across from
 another one.
 
-Inside the CATALOG boundaries (ADR-032, its ADR-034 extension, and ADR-033) use
+Inside the CATALOG boundaries (ADR-032, its ADR-034 extension, ADR-033 and
+ADR-044) use
 the captured `$wpdb->dbh` connection, verified current-site context, and the
 canonical Catalog lock order; keep WooCommerce and WordPress writes,
 metadata/projection writes, AuditLog writes, hooks, callbacks, caches, emails,
@@ -188,12 +193,33 @@ in `docs/architecture/catalog-session-persistence-design.md`.
 
 Under BR-065, BR-032's `bc_product_kind` and `bc_package_relation` are required
 derived WooCommerce compatibility/cart-enforcement projections. Catalog tables
-are authoritative. Under the approved conceptual design, the deferred
-`bingo_package_addons` table alone will determine exact Package/add-on
-eligibility once that slice is implemented.
+are authoritative. Under ADR-044/BR-079, the not-yet-implemented
+`bingo_package_addons` table alone determines exact Package/add-on eligibility.
 Projection writes through WooCommerce CRUD are deterministic, idempotent,
 verifiable, and reconcilable. Do not create a direct-SQL transaction spanning
 Catalog rows and WooCommerce metadata or assume ADR-025 applies.
+
+ADR-044 fixes `unit_price` as canonical non-negative `DECIMAL(19,2)`, persisted,
+displayed, compared for no-op, audited and fingerprinted with exactly two
+fractional digits, and `max_quantity` as an integer from 1 through 99, default
+1. Manager/service input must already contain exactly two fractional digits; do
+not normalize `5`, `5.0` or `5.5`. Reject floating-point input, exponent form,
+signs, noncanonical leading zeros, excess precision, overflow and silent
+rounding. UI-only WooCommerce prefill padding does not relax the service rule.
+The fixed add-on writer locks Package, Play Product, then relationship; bulk UI
+saves invoke that one-row operation independently. Enabled add-on references
+participate in both-direction medium integrity and Package composition
+compatibility. Medium transition locks the Play Product, performs the existing
+locking component-reference check, then the locking enabled-add-on-reference
+check; either blocking reference returns the existing
+`play_product_package_referenced` code with cause-identifying details, not a new
+overlapping code. It takes no Package lock. Composition replacement locks the
+Package, reads enabled add-ons without locking relationship rows ahead of their
+Play Products, then locks the complete base/add-on Play Product dependency set once
+in ascending ID order. Audit and projection run only after confirmed commit;
+ambiguous COMMIT emits neither. Targeted projection retry accepts the current-
+Hall `bingo_play_product_id` and resolves WooCommerce identity internally. The
+Hall-wide mismatch scanner is deferred to the storefront/readiness phase.
 
 ## Digital Ticket Table (conceptual data requirements — exact final schema is
 a later technical-design decision per ADR-029/ADR-030)

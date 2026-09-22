@@ -28,8 +28,22 @@ BingoCommerce is a hosted multi-tenant e-commerce platform for bingo halls, chur
   The current repository implements six of those baseline tables (four Catalog
   v5 and two Session tables) plus Session schema v3's Portal-template replica
   and three Commerce-schedule definition tables: ten implemented tables total.
-  `bingo_package_addons` and `PackageAddonService` remain deferred. ADR-043 is
-  approved and implemented; production deployment is not claimed.
+  ADR-044/BR-079 approve `bingo_package_addons`, `PackageAddonService`, Catalog
+  v6, and the fixed Package-add-on mutation profile, but they are not yet
+  implemented. Add-on prices are canonical `DECIMAL(19,2)` values. A new-row UI
+  prefill loads the linked product with `\wc_get_product( $wc_product_id )`,
+  requires `\WC_Product`, and reads the unfiltered edit-context string with
+  `$product->get_regular_price( 'edit' )`; it never uses a sale/effective price
+  or floating-point conversion. UI form preparation may pad `5`/`5.5` without
+  rounding to `5.00`/`5.50`, but Manager/service input must already be a
+  canonical exactly-two-decimal string and is never normalized.
+  `PackageAddonService::create()` never reads WooCommerce pricing. The Package editor shows every configured
+  relationship, including disabled or currently ineligible rows, while new
+  candidates are active, medium-compatible current-Hall Play Products only.
+  Increment 1 projection retry is targeted by current-Hall
+  Bingo Play Product ID; the Hall-wide mismatch scanner is deferred until the
+  storefront/readiness phase. ADR-043 is approved and implemented; production
+  deployment is not claimed.
 - ADR-035 Portal integration authority: Portal owns Hall/Game Type/operational
   Session-template identity; BingoCommerce owns commerce schedules, dated
   occurrences, Catalog/commerce, checkout, orders, and future entitlement state
@@ -71,7 +85,7 @@ Custom code lives ONLY in:
 3. **No Unapproved Plugins:** Do not install new third-party plugins without explicit architectural approval.
 
 ### Database & Security
-4. **Safe SQL Parameterization:** SQL values must never be interpolated unsafely. Normal `$wpdb` SQL MUST use `$wpdb->prepare()`. Direct mysqli is permitted ONLY inside an explicitly approved captured-`$wpdb->dbh` transport, and every such transport binds every value through native prepared mysqli statements. The approved transports are: ADR-025's Hall Staff mandatory-audit transport; ADR-032's Catalog critical-serialization transport, including ADR-034's approved third use (Play Product medium-change integrity against Package-component references); ADR-033's Package composition atomicity transport; and ADR-040's Portal snapshot application transport, which is the only boundary spanning the hall's Game Type replica, its Portal Session-template replica, and the Phase 3E sync-state marker. Those approved transports must not be rewritten to `$wpdb` merely to satisfy this rule — ADR-033 in particular PROHIBITS `$wpdb->query()` for statements issued while its transaction is open, because `wpdb::query()` fires the `query` filter on every statement and is not callback-free. No other feature may introduce direct mysqli without a reviewed decision. Raw string interpolation into SQL is prohibited in all cases.
+4. **Safe SQL Parameterization:** SQL values must never be interpolated unsafely. Normal `$wpdb` SQL MUST use `$wpdb->prepare()`. Direct mysqli is permitted ONLY inside an explicitly approved captured-`$wpdb->dbh` transport, and every such transport binds every value through native prepared mysqli statements. The approved transports are: ADR-025's Hall Staff mandatory-audit transport; ADR-032's Catalog critical-serialization transport, including ADR-034's Play Product medium-change integrity; ADR-033's Package composition atomicity transport; ADR-044's not-yet-implemented fixed Package-add-on mutation profile and its narrowly approved add-on integrity extensions to ADR-033/ADR-034; and ADR-040's Portal snapshot application transport, which is the only boundary spanning the hall's Game Type replica, its Portal Session-template replica, and the Phase 3E sync-state marker. Those approved transports must not be rewritten to `$wpdb` merely to satisfy this rule — ADR-033/ADR-044 in particular PROHIBIT `$wpdb->query()` for statements issued while their Catalog transactions are open, because `wpdb::query()` fires the `query` filter on every statement and is not callback-free. No other feature may introduce direct mysqli without a reviewed decision. Raw string interpolation into SQL is prohibited in all cases.
 5. **REST API Hardening:** Every custom REST API endpoint MUST include an explicit `permission_callback` checking `current_user_can()` (or verifying valid Application Passwords) AND a `sanitize_callback` on every input parameter.
 6. **Hall Isolation:** Every hall-scoped query, cache key, and file path MUST
    carry verified tenant context. Hall-owned per-site tables use the resolved
@@ -87,9 +101,10 @@ Custom code lives ONLY in:
    `bingo_game_types`, `bingo_play_products`, `bingo_packages`,
    `bingo_package_components`, `bingo_package_addons`, `bingo_sessions`, and
    `bingo_session_packages` tables. Of that approved conceptual baseline,
-   `bingo_package_addons` and `PackageAddonService` remain deferred and are not
-   part of the current implemented schema. The current additive Session schema also
-   uses `bingo_portal_session_templates`, `bingo_session_schedules`,
+   ADR-044/BR-079 approve `bingo_package_addons` and `PackageAddonService` for
+   Catalog v6, but they are not part of the current implemented schema. The
+   current additive Session schema also uses `bingo_portal_session_templates`,
+   `bingo_session_schedules`,
    `bingo_session_schedule_dates`, and `bingo_session_schedule_packages` for
    the approved ADR-043 model; this does not replace the ADR-031
    tables. Production deployment is not claimed. Per BR-065, do not treat

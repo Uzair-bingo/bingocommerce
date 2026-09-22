@@ -144,8 +144,9 @@ automatic Enable/Disable. See
   `bingo_sessions`, `bingo_session_packages`,
   `bingo_portal_session_templates`, `bingo_session_schedules`,
   `bingo_session_schedule_dates`, and `bingo_session_schedule_packages`, each appended to
-  `$wpdb->prefix`. ADR-031's approved conceptual `bingo_package_addons` table and
-  `PackageAddonService` remain deferred and are absent from the current schema.
+  `$wpdb->prefix`. ADR-044/BR-079 approve `bingo_package_addons`, Catalog v6,
+  `PackageAddonService`, and the fixed add-on mutation profile, but they remain
+  absent from the current schema and code.
   Game Type, Bingo Play Product, Package, and Session use local
   surrogate domain IDs; Portal `game_types.id` is the trusted cross-
   system Game Type identity, and the local Game Type row becomes its hall-scoped
@@ -160,27 +161,52 @@ automatic Enable/Disable. See
   lifecycle feature. WooCommerce CRUD and projection writes remain outside the critical
   transaction. Detailed conceptual columns, indexes, relationships, and rules
   are in `docs/architecture/catalog-session-persistence-design.md`.
-- Bingo Catalog domain (BR-037/BR-039/BR-040/BR-061/BR-062/BR-071/BR-072,
-  ADR-026/ADR-031/ADR-035):
+- Bingo Catalog domain (BR-037/BR-039/BR-040/BR-061/BR-062/BR-071/BR-072/BR-079,
+  ADR-026/ADR-031/ADR-035/ADR-044):
   Game Type, Bingo Play Product metadata, and Package/component/add-on
   definitions are never inferred from a WooCommerce title, SKU, tag, or
   category. Portal owns Game Type identity/configuration and Portal
   `game_types.id` is cross-system identity; the local surrogate and machine code
   remain internal compatibility identifiers. The linked Package product's native
   WooCommerce price is the Package base-price authority; the Package/add-on
-  relationship owns its unit price and maximum quantity. Package type is
-  validated from base components only; optional add-ons do not change it.
+  relationship owns its canonical, exactly-two-decimal `DECIMAL(19,2)` unit
+  price and 1–99 maximum quantity. While preparing an eligible
+  never-configured row outside the transaction, the UI loads
+  `\wc_get_product( $wc_product_id )`, requires `\WC_Product`, and treats
+  `$product->get_regular_price( 'edit' )` as a string-only prefill. It never uses
+  `get_price()`, sale/effective price, direct meta, formatted/tax-adjusted output,
+  filtered `view` context or floats; invalid precision leaves the field blank.
+  Existing relationships keep their saved independent price. Package type is
+  validated from base components only; optional add-ons do not change it. Paper
+  Packages accept only Paper add-ons and never gain QR behavior from one;
+  Digital and Hybrid Packages
+  accept either medium.
 - BR-032 product metadata projection (BR-065/ADR-031): `bc_product_kind` and
   `bc_package_relation` are derived compatibility/cart-enforcement projections,
   not Catalog authorities. `PackageService` and `BingoPlayProductService` own
-  their implemented projection writes. The deferred `PackageAddonService` will
-  own add-on projection writes; under the approved conceptual design,
-  Package-specific eligibility comes only from `bingo_package_addons`. Final
+  their implemented projection writes. ADR-044 assigns add-on projection writes
+  to the not-yet-implemented `PackageAddonService`; Package-specific eligibility
+  comes only from `bingo_package_addons`. Final
   cart/checkout checks use Catalog state. Projection synchronization is deterministic,
   idempotent, verifiable, and reconcilable; no direct-SQL transaction spans
   Catalog rows and WooCommerce metadata, and ADR-025 does not automatically
   apply. The initial model uses indexed logical relationships with restrictive
   service validation, not database cascades/physical foreign keys.
+  Increment 1 retry is targeted by current-Hall `bingo_play_product_id` and
+  internally resolves the linked WooCommerce product. The Hall-wide mismatch
+  scanner is deferred until storefront/readiness work and must remain
+  current-Hall scoped.
+- Package add-on concurrency (ADR-044): one fixed profile inside the existing
+  `CatalogTransactionTransport` locks Package, Play Product, then relationship;
+  uses stale fingerprints and bounded conflict retries; and preserves the
+  existing fail-closed ambiguous-COMMIT contract. Enabled add-ons also
+  participate in both-direction Play Product medium-transition integrity and in
+  Package composition replacement compatibility checks. Either a base-component
+  or enabled-add-on medium blocker returns `play_product_package_referenced`
+  with cause-identifying details. Audit and WooCommerce
+  projection remain outside the transaction after confirmed commit. Multi-row
+  administration invokes one relationship operation at a time and returns one
+  result per row; it never uses one bulk transaction.
 - Session domain (BR-041, ADR-028, BR-050–BR-052, BR-063, BR-073, ADR-035):
   Portal `bingo_sessions.id` identifies the Portal-owned operational template.
   Only templates satisfying `bingo_sessions.hall_id == mapped halls.id` are

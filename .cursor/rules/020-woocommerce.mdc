@@ -34,16 +34,51 @@ alwaysApply: false
   the Package/Bingo Play Product implementation-design slice; do not add a
   table or automatically reuse ADR-025.
 - The linked WooCommerce Package product's native price is the Package base-
-  price authority. Under the approved conceptual design, the deferred
-  `bingo_package_addons` table will own Package-specific add-on price, maximum
-  quantity, and exact eligibility. That table and `PackageAddonService` are not
-  implemented. Component-product prices are never summed into Package price.
+  price authority. ADR-044/BR-079 approve `bingo_package_addons` as the authority
+  for Package-specific add-on price, 1–99 maximum quantity, enabled state and
+  exact eligibility; that table and `PackageAddonService` are not yet
+  implemented. When preparing an eligible never-configured row after WooCommerce
+  initialization and outside the Catalog transaction, load
+  `\wc_get_product( $wc_product_id )`, require `\WC_Product`, and treat
+  `$product->get_regular_price( 'edit' )` as a string-only editable prefill. Do
+  not use `get_price()`, sale price, direct `_regular_price` post meta, formatted
+  HTML, tax-adjusted display price, filtered `view` context, or floats. During
+  form preparation only, returned strings `5` and `5.5` may be padded without
+  rounding to `5.00` and `5.50`; the displayed/submitted field has exactly two
+  fractional digits. Invalid values or values requiring rounding leave the field
+  blank; prefill persists nothing. Existing relationships always show their
+  saved price and are never refreshed from WooCommerce.
+
+  A Manager/service price must already be a canonical non-negative
+  `DECIMAL(19,2)` string with exactly two fractional digits. Reject `5`, `5.0`,
+  `5.5`, excess precision, exponent notation, signs, symbols, commas, malformed
+  values, noncanonical leading zeros and overflow; never normalize, convert
+  through floating point or round them. `PackageAddonService::create()` receives
+  that submitted canonical string and never reads WooCommerce pricing in
+  mutation preflight or the transaction. Later regular- or sale-price changes
+  never rewrite the saved relationship price. Component-product prices are never
+  summed into Package price.
 - Under BR-065, BR-032's `bc_product_kind` and `bc_package_relation` are
   required derived compatibility/cart-enforcement projections maintained by
   Catalog services, not independent authorities. Projection updates must be deterministic,
   idempotent, verifiable, and reconcilable through WooCommerce CRUD. Do not
   invent a direct-SQL transaction spanning Catalog rows and product metadata,
   and do not automatically reuse ADR-025's Hall Staff transaction transport.
+- ADR-044 approves one fixed add-on mutation profile within the existing
+  Catalog transport. Audit and WooCommerce CRUD/projection remain outside it.
+  Bulk administration calls one relationship operation at a time; no bulk
+  transaction is permitted. A failed projection leaves the Catalog mutation
+  committed and is surfaced for conditional synchronization retry. Targeted
+  retry accepts `bingo_play_product_id` and resolves its linked current-Hall
+  WooCommerce product internally; never trust a request-supplied WooCommerce
+  product ID. The Hall-wide mismatch scanner is deferred until the later
+  storefront/readiness phase and must not become a normal Manager dashboard.
+- The Package editor shows every existing configured relationship, including
+  disabled or currently ineligible rows. Never-configured candidates are active,
+  medium-compatible current-Hall Play Products only. The section is one form
+  with one `Save Add-ons` action; unchecked never-configured rows are ignored
+  without price/maximum validation or any write. Remove uses simple browser
+  confirmation only: cancel sends no request, confirm submits the row operation.
 - Membership in `bingo_play_products` remains authoritative and keeps that
   product non-independently-purchasable in v1 even if compatibility metadata
   says `bc_product_kind = regular` and `bc_package_relation = none`.

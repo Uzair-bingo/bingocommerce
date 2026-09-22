@@ -6,7 +6,7 @@ independently activatable and testable.
 | Plugin | Responsibility | Depends on |
 |---|---|---|
 | `bingocommerce-core` | Roles & capabilities, tenant context helpers, audit log service, migration framework | WooCommerce (network) |
-| `bingocommerce-catalog` | Hall-scoped Game Type replica/domain behavior, Bingo Play Product domain metadata/mapping, Bingo Package definitions/components, deferred add-on eligibility, BR-032/BR-065 metadata projections, hall electronic-limit override/current-value resolver, starter-product domain logic when that deferred copy exists (ADR-026/ADR-031/ADR-035; ADR-042 MVP runs no starter copy) | core |
+| `bingocommerce-catalog` | Hall-scoped Game Type replica/domain behavior, Bingo Play Product domain metadata/mapping, Bingo Package definitions/components, ADR-044-approved Package add-on eligibility/configuration, BR-032/BR-065 metadata projections, hall electronic-limit override/current-value resolver, starter-product domain logic when that deferred copy exists (ADR-026/ADR-031/ADR-035/ADR-044; add-on implementation pending; ADR-042 MVP runs no starter copy) | core |
 | `bingocommerce-sessions` | Portal Session-template replica; Commerce schedules with immutable named timezone and structured time; dated occurrence generation/reconciliation; inclusive hall-local 30-day window; centralized current-definition membership; Available for Sale; Package assignment; and customer occurrence-before-Package selection (BR-050–BR-052/BR-063/BR-073/BR-077/BR-078; approved ADR-043) | core, catalog |
 | `bingocommerce-digital-tickets` | Purchase-time entitlement snapshot (activated on successful online payment confirmation — BR-053), QR issue/redeem, device binding, staff reactivation, Android REST API, redemption accumulation | core, catalog, sessions |
 | `bingocommerce-portal-integration` | Portal-facing machine endpoint; request authentication/validation; provisioning-operation persistence/sequencing; Portal Hall mapping coordination; HallCommerceState/managed-marker coordination; Portal snapshot synchronization; safe API responses and integration audit attribution (ADR-035–ADR-042) | core |
@@ -30,7 +30,8 @@ deferred and must not be confused with the implemented occurrence reconciler.
 
 ADR-031 conceptually assigns five per-site Catalog tables to
 `bingocommerce-catalog`, but Catalog schema v5 currently implements four;
-`bingo_package_addons` and `PackageAddonService` remain deferred. Its two
+ADR-044 approves `bingo_package_addons`, `PackageAddonService` and Catalog v6
+for Package Add-ons Increment 1, but they are not implemented. Its two
 baseline Session tables belong to `bingocommerce-sessions`. Session schema v3
 adds the Portal-template replica and three schedule-definition tables in the
 same plugin without replacing those baseline tables. `bingocommerce-platform` owns Platform
@@ -194,15 +195,16 @@ For ADR-031 artifacts:
 
 - `bingocommerce-catalog` owns per-site `bc_catalog_db_version = 5` for the four
   implemented tables: `bingo_game_types`, `bingo_play_products`,
-  `bingo_packages`, and `bingo_package_components`. ADR-031's conceptual
-  `bingo_package_addons` table remains deferred.
+  `bingo_packages`, and `bingo_package_components`. ADR-044 approves
+  `bingo_package_addons` and Catalog v6 for the next implementation increment;
+  neither is present yet.
 - `bingocommerce-sessions` owns one per-site Session schema version
   (`bc_sessions_db_version = 3`) for `bingo_sessions`, `bingo_session_packages`,
   `bingo_portal_session_templates`, `bingo_session_schedules`,
   `bingo_session_schedule_dates`, and `bingo_session_schedule_packages`.
 - All ten implemented Catalog/Session tables use `$wpdb->prefix` and contain no
-  redundant `blog_id`. The same tenant rule applies to the deferred conceptual
-  add-on table if it is implemented later.
+  redundant `blog_id`. The same tenant rule is mandatory for the approved
+  not-yet-implemented add-on table.
 - Initial relationships are indexed logical relationships with restrictive
   service-level validation; do not assume physical foreign keys or cascades.
 
@@ -232,17 +234,20 @@ For ADR-031 artifacts:
 
 ### Catalog Services and WooCommerce Projections
 
-ADR-031 and BR-065 define these implemented and approved-deferred writer
+ADR-031, BR-065, BR-079 and ADR-044 define these implemented and approved writer
 boundaries in `bingocommerce-catalog`:
 
 - `PackageService` owns authoritative Package mutations, linked WooCommerce
   Package coordination/native base price, concurrency-safe linked-product
   exclusivity enforcement,
   and deterministic `bc_product_kind` projection maintenance.
-- The deferred `PackageAddonService` will own authoritative Package/add-on
-  relationship mutations, enabled-relationship recount, and deterministic
-  `bc_package_relation` projection maintenance when that approved slice is
-  implemented.
+- The ADR-044-approved, not-yet-implemented `PackageAddonService` owns
+  authoritative Package/add-on relationship mutations, per-row bulk results,
+  canonical two-decimal relationship pricing, enabled-relationship recount,
+  targeted `bingo_play_product_id`-based retry, and deterministic
+  `bc_package_relation` projection maintenance. It internally resolves the
+  current-Hall linked WooCommerce product and never trusts a request-supplied
+  WooCommerce product ID as reconciliation authority.
 - `BingoPlayProductService` owns authoritative Bingo Play Product membership,
   concurrency-safe linked-product exclusivity enforcement, and the v1 non-
   independently-purchasable boundary.
@@ -253,12 +258,28 @@ A standalone check-then-insert across `bingo_packages` and
 transport for the approved product-claim and Game-Type-reference boundaries;
 it adds no table and does not reuse or broaden ADR-025.
 
+ADR-044 separately authorizes one fixed Package-add-on mutation profile within
+the existing `CatalogTransactionTransport`. It shares transport safety and
+guards without converting the transport into a generic transaction wrapper.
+`PackageService` must extend composition replacement to validate enabled add-on
+compatibility, and `BingoPlayProductService` must extend actual medium
+transitions to reject enabled add-on references. A transition blocked by either
+a base component or an enabled add-on continues to return
+`play_product_package_referenced`, with details identifying the cause. Bulk
+administration uses one Add-ons form with one `Save Add-ons` action, calls the same
+one-relationship service operation independently for each submitted configured
+or selected row, and ignores unchecked never-configured rows; no bulk
+transaction or separate save mode is permitted.
+
 Catalog tables remain authoritative. Projection metadata is updated through
 WooCommerce CRUD after the authoritative Catalog mutation, then verified. A
 failed/unverifiable projection is surfaced as reconciliation-required and is
 safely retryable from current Catalog state; it is not reported as wholly
-healthy. Do not reuse ADR-025's Hall Staff direct-mysqli transport or invent a
-direct-SQL transaction spanning Catalog rows and WooCommerce metadata.
+healthy. Increment 1 defers the bounded Hall-wide mismatch scanner until the
+later storefront/readiness phase; targeted retry remains available and no
+ordinary Manager reconciliation dashboard is introduced. Do not reuse ADR-025's
+Hall Staff direct-mysqli transport or invent a direct-SQL transaction spanning
+Catalog rows and WooCommerce metadata.
 
 ### Shared Audit Service
 

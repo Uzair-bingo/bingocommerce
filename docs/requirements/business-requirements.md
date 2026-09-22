@@ -104,8 +104,12 @@ deferred.
   least one base component and only Paper base components; Digital Packages
   contain at least one Digital base component and no Paper base components;
   Hybrid Packages contain at least one Paper and one Digital base component.
-  Optional add-ons never change the stored Package type. (BR-040, BR-061;
-  BR-040 amends BR-021)
+  Optional add-ons never change the stored Package type. Paper Packages permit
+  only Paper add-ons and never gain QR behavior from an add-on; Digital and
+  Hybrid Packages permit Paper or Digital add-ons. A Package may have zero
+  add-ons. The same Play Product may be a base component and add-on in one
+  Package, with separate base and selected-add-on quantities. (BR-040, BR-061,
+  BR-079; BR-040 amends BR-021)
 - **Bingo Package pricing** is separate from Package composition: every Package has
   its own Hall-Manager-set fixed base price, never auto-summed from included
   component product prices, and never automatically recalculated when components or
@@ -116,16 +120,81 @@ deferred.
   separately per normal WooCommerce rules and is not part of that total. The
   linked WooCommerce Package product's native price is the authoritative base
   price; the authoritative Package/add-on relationship stores its own unit price
-  and maximum quantity. Add-ons default to maximum quantity 1 and permit larger
-  quantities only when that exact relationship explicitly configures a larger
-  maximum; selected quantity must satisfy
-  `1 <= selected_quantity <= max_quantity`. (BR-049, BR-062, ADR-031)
+  and maximum quantity. For an eligible never-configured row only, form
+  preparation after WooCommerce initialization and outside the Catalog
+  transaction loads `\wc_get_product( $wc_product_id )`, requires an instance of
+  `\WC_Product`, and treats `$product->get_regular_price( 'edit' )` as a string.
+  It never uses `get_price()`, sale price, direct `_regular_price` post meta,
+  formatted HTML, tax-adjusted display price, filtered `view` context, or
+  floating point. During UI form preparation only, returned strings `5` and
+  `5.5` may be padded without rounding to `5.00` and `5.50`; an already-
+  two-decimal value remains unchanged. Invalid values or values requiring
+  rounding leave the optional prefill blank. The displayed and submitted field
+  value has exactly two decimal digits. Existing relationships always display
+  their saved price; later WooCommerce price changes never overwrite or refresh
+  it. Prefill persists nothing before selection and submission.
+
+  A Manager-submitted or service-supplied add-on price is valid only when it is
+  already a canonical non-negative `DECIMAL(19,2)` string with exactly two
+  fractional digits. `5.00`, `4.23`, `10.29` and `0.00` are valid. `5`, `5.0`,
+  `5.5`, excess fractional precision, exponent notation, signs, currency
+  symbols, grouping commas, malformed values, noncanonical leading zeros and
+  overflow are rejected. Manager/service input is never normalized, converted
+  through floating point or rounded; UI-only prefill padding does not relax this
+  rule. Add-ons default to maximum quantity 1, the business
+  maximum is 99, and selected quantity must satisfy
+  `1 <= selected_quantity <= max_quantity <= 99`. (BR-049, BR-062, BR-079,
+  ADR-031, ADR-044)
+- **Package add-on configuration and lifecycle:** each Package independently
+  chooses its Play Product relationships, and one Play Product may carry
+  different price, maximum and enabled state in multiple Packages. New
+  relationships default enabled. Disable preserves configuration; price and
+  maximum remain editable while disabled only when both parents are active.
+  Archive preserves rows and enabled values. An archived Package is read-only
+  for actual mutations; an archived Play Product permits only explicit disable
+  or remove as actual mutations. Once parent and relationship integrity are
+  verified, an exact unchanged submission may return a no-op against archived
+  state; it performs no DML, timestamp, audit or projection write. Restore
+  changes no relationship state. Eligibility requires active parents, enabled
+  relationship and compatible medium. An actual Play Product medium change is
+  blocked by any enabled add-on reference, and Package composition replacement
+  rejects a resulting type incompatible with any enabled add-on. Exact no-ops
+  change no timestamp, audit or projection. A medium change blocked by a base
+  component, an enabled add-on, or both returns the existing
+  `play_product_package_referenced` code with cause-identifying details; no
+  overlapping code is added. (BR-070, BR-079, ADR-044)
+- **Package add-on Manager workflow:** the single Edit Package screen presents
+  one searchable/filterable checkbox list with configured relationships first,
+  including disabled relationships. `Configured — disabled` distinguishes a
+  disabled configured row from a never-configured Play Product. Every existing
+  configured relationship remains visible even when disabled or currently
+  ineligible because its Play Product is archived, unresolved or now
+  incompatible. It is never silently hidden or detached. Products without a
+  relationship are shown only when they are active, medium-compatible
+  current-Hall Play Products; another Hall's products are never exposed. State
+  changes are exact: unchecked never-configured rows create nothing; checking
+  one creates an enabled relationship; leaving an enabled configured row checked is a no-op;
+  unchecking disables and preserves configuration; leaving a disabled configured
+  row unchecked preserves it; checking it re-enables after validation; and
+  explicit Remove uses simple browser confirmation: cancel sends no request and
+  no mutation, while confirm submits that row's remove operation. No custom
+  modal, framework or separate confirmation screen is added.
+  The section is one form with one `Save Add-ons` action. An unchecked
+  never-configured row is ignored completely and requires no price or maximum;
+  it causes no relationship, validation error, audit, projection or timestamp
+  write. Each submitted configured or selected row is one independent service
+  operation, partial success is permitted, and every failed row keeps its own
+  error. There are no separate save modes.
+  This single Edit Package screen is the complete Manager workflow; there is no
+  second dashboard, modal, wizard, Hall selector, Package-type editor or drag-
+  and-drop workflow. (BR-079, ADR-044)
 - **Catalog authority and BR-032 compatibility projection:** under BR-065,
   ADR-031's five-table conceptual Catalog design and two baseline Session tables
   remain authoritative for their domains. Catalog schema v5 currently
-  implements four of those Catalog tables; `bingo_package_addons` and
-  `PackageAddonService` remain approved but deferred. The additive Portal-template
-  and Commerce-schedule tables in Session schema v3 do not replace them.
+  implements four of those Catalog tables. ADR-044 approves the fifth table,
+  `PackageAddonService` and Catalog v6, but they are not implemented. The
+  additive Portal-template and Commerce-schedule tables in Session schema v3 do
+  not replace them.
   `bc_product_kind` and `bc_package_relation` remain deterministic WooCommerce
   compatibility/cart-enforcement projections maintained by Catalog services.
   A Package row projects `bc_product_kind = package`. Permanent Package removal
@@ -136,7 +205,15 @@ deferred.
   `bc_package_relation = package_only_addon`, otherwise it projects
   `bc_package_relation = none`. Exact Package eligibility always comes from
   `bingo_package_addons`, and final cart/checkout enforcement always uses
-  authoritative Catalog state. (BR-032, BR-065, ADR-031)
+  authoritative Catalog state. A multi-row admin save uses one safe relationship
+  operation per row, preserves successful rows, reports every result, and never
+  uses one bulk transaction. Projection failure leaves a committed Catalog
+  mutation committed and visible as requiring synchronization retry. Targeted
+  retry accepts the current Hall's Bingo Play Product ID and internally resolves
+  its linked WooCommerce product; a request-supplied WooCommerce product ID is
+  never authority. The Hall-wide mismatch scanner is deferred until the later
+  storefront/readiness phase and cannot become a normal Manager dashboard.
+  (BR-032, BR-065, BR-079, ADR-031, ADR-044)
 - Ordinary merchandise is never a Game Type, never participates in digital-
   entitlement calculations, never generates a Bingo QR, and may coexist with one
   Bingo Package in the same checkout — the 0/1-Bingo-Package-per-checkout rule is

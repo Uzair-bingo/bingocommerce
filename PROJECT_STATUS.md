@@ -2340,9 +2340,35 @@
   deleted=0, spam=0. Automated tests were not rerun during this
   documentation-only pass. Real Retry/idempotency testing is not claimed.
   Production deployment is not claimed.
+- **[2026-09-21] Package Add-ons Increment 1 documentation and governance
+  approved.** Added BR-079 and ADR-044 after verifying BR-078/ADR-043 were the
+  live index endpoints. The approved design fixes medium compatibility,
+  Package-specific reuse, canonical exactly-two-decimal `DECIMAL(19,2)` pricing,
+  quantity range 1–99, lifecycle, administration, per-row bulk behavior,
+  Catalog v6 schema, the fixed add-on mutation profile, versioned injective
+  stale fingerprints, composition/medium concurrency, post-commit audit,
+  projection convergence and tenant isolation. The final correction passes fix
+  exact `wc_get_product()` / edit-context regular-price prefill, visibility of
+  all configured rows versus active compatible current-Hall new candidates, one
+  Save Add-ons form whose unchecked never-configured rows are ignored, simple
+  browser-confirmed permanent Remove, reuse of
+  `play_product_package_referenced` for both component and enabled-add-on medium
+  blockers, Bingo-Play-Product-ID targeted reconciliation, Hall-wide scanner
+  deferral to the later storefront/readiness phase, archived-state no-ops and
+  the ADR-044-aware lock order. The last correction distinguishes UI-only price
+  padding from strict already-canonical Manager/service input, removes every
+  WooCommerce price read from the create-operation boundary, and defines
+  same-numbered tenant IDs as independent current-Hall rows rather than automatic
+  not-found results. WooCommerce's separate
+  four-decimal lookup schema is not the add-on precision authority; the installed
+  WordPress `dbDelta()` type/index parser was reviewed. No production PHP,
+  migration or test file was changed; no migration or implementation test ran;
+  nothing was staged, committed, pushed or deployed. Implementation remains
+  pending a separate review-first pass.
 - No Hall Staff Management work currently in progress.
 - Package Increment 1 and the legacy Session Increment 1 remain COMPLETE and
-  are recorded under Done. No add-on or unrelated Catalog work is in progress.
+  are recorded under Done. Package Add-ons Increment 1 is approved by
+  ADR-044/BR-079 but implementation has not begun.
 
 ---
 
@@ -2403,10 +2429,10 @@ Everything below is tracked work that is NOT a blocker to that demo.
 2. The BR-066 storefront mechanism that enforces Bingo Play Product
    non-purchasability. Deferred by decision; requires a new reviewed entry
    before any implementer selects a mechanism.
-3. Package add-ons: `PackageAddonService`, `bingo_package_addons`, BR-062's
-   quantity ceiling, and the BR-065 `bc_package_relation` projection. This is a
-   SEPARATE concern from the Package base writer and must not be folded into it
-   without its own approved slice.
+3. Package add-ons: ADR-044/BR-079 approve `PackageAddonService`, Catalog v6's
+   `bingo_package_addons`, the 1–99 quantity rule, lifecycle/medium integrity,
+   fixed transaction profile, and BR-065 `bc_package_relation` projection.
+   Implementation and verification remain pending as a separate focused slice.
 4. Checkout electronic-limit enforcement (BR-042) and redemption accumulation
    (BR-045), including the effective-limit resolver (BR-038, BR-064).
 5. Entitlement snapshot (BR-043, ADR-029), QR issuance (BR-044) and Android
@@ -2497,12 +2523,15 @@ Everything below is tracked work that is NOT a blocker to that demo.
 
 ## Standing Execution Rules
 - Continue only through separately reviewed, focused implementation slices that
-  preserve ADR-031, ADR-032, ADR-033, ADR-034 and the detailed persistence
-  design.
-- The frozen `docs/architecture/catalog-session-persistence-design.md`
-  §"Catalog lock-order review" is accurate as written. ADR-033 locks
-  `bingo_packages` then `bingo_play_products` ascending, and locks no component
-  rows at all.
+  preserve ADR-031, ADR-032, ADR-033, ADR-034, ADR-044 and the detailed
+  persistence design.
+- The corrected ADR-044-aware
+  `docs/architecture/catalog-session-persistence-design.md` §"Catalog lock-order
+  review" is the current lock-order authority. It includes add-on
+  create/update/remove, enabled-add-on checks on both medium transitions, and
+  the complete base/add-on dependency set for `replaceComponents()`. ADR-033
+  locks `bingo_packages` then `bingo_play_products` ascending and locks no
+  component or add-on relationship row before its Play Product.
 - Latest verified results **[2026-09-19, ADR-043 focused schedule/admin
   verification]**: `tests/session-schedules-increment-1.php` **159/159 PASS**
   and `tests/session-schedule-admin-increment-1.php` **371/371 PASS**, for
@@ -2664,7 +2693,7 @@ Everything below is tracked work that is NOT a blocker to that demo.
   Commerce-schedule definition and generated-occurrence fields under approved
   ADR-043. This is repository state, not a production-deployment claim.
 - **Current Catalog/Session inventory:** **ten implemented tables** — four
-  Catalog v5 tables and six Session v3 tables. ADR-031's conceptual
-  `bingo_package_addons` table and `PackageAddonService` remain approved but
-  deferred and are absent from the current implementation.
+  Catalog v5 tables and six Session v3 tables. ADR-044/BR-079 approve
+  `bingo_package_addons`, `PackageAddonService` and Catalog v6, but they remain
+  absent from the current implementation.
 - **Rule for AI agents:** Read `AGENTS.md`, `docs/architecture/plugin-architecture.md`, and this file before coding. Do not re-scaffold Multisite, WooCommerce, or core bootstrap.

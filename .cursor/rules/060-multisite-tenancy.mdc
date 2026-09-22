@@ -29,8 +29,35 @@ network mapping repository and synchronized hall-local replicas are implemented.
   `bingo_package_components`, `bingo_package_addons`, `bingo_sessions`, and
   `bingo_session_packages` are all hall-owned per-site tables. Append these
   names to `$wpdb->prefix`; do not add another `bc_` sub-prefix or a redundant
-  `blog_id`. `bingo_package_addons` and `PackageAddonService` remain deferred;
-  the current schemas implement the other six baseline tables.
+  `blog_id`. ADR-044/BR-079 approve `bingo_package_addons` and
+  `PackageAddonService` for Catalog v6, but they are not implemented; the
+  current schemas implement the other six baseline tables.
+- Package add-on service/admin requests derive Hall context only from the
+  current WordPress site. Never accept a request Hall/blog/site ID. Resolve
+  Package, Play Product, relationship and WooCommerce product identities only
+  through the verified current Hall's prefixed tables/APIs. An ID absent from
+  the current Hall returns not found. If Hall A and Hall B contain the same
+  numeric ID, a Hall A request resolves only Hall A's entity and must never read,
+  expose, validate against, modify or return Hall B's entity. A request-supplied
+  Hall/blog/site ID cannot change that namespace. Super Admin must first enter
+  the intended Hall context, and multi-Hall switching must not retain table
+  names, rows, projection counts or cache state from the previous site.
+- Tenant-isolation tests must prove both namespace cases: an ID present only in
+  Hall B returns not found from Hall A; and when the same numeric ID exists in
+  both Halls, a Hall A request accesses only Hall A's row and leaves Hall B byte-
+  identical.
+- The Package add-on form always displays the current Package's configured
+  relationships, even when disabled or currently ineligible, but offers a Play
+  Product without a relationship only when it is active, medium-compatible and
+  resolved inside the current Hall. Never expose another Hall's candidate or
+  configured Play Product through IDs, labels, prefill, errors or retained UI
+  state.
+- Package add-on projection retry accepts the current Hall's
+  `bingo_play_product_id` and internally resolves its linked current-Hall
+  WooCommerce product. Never accept a request-supplied WooCommerce product ID as
+  reconciliation authority. Increment 1 defers the Hall-wide mismatch scanner;
+  any later scanner must remain current-Hall scoped and cannot become a normal
+  cross-Hall Manager surface.
 - The additive Session schema's `bingo_portal_session_templates`,
   `bingo_session_schedules`, `bingo_session_schedule_dates`, and
   `bingo_session_schedule_packages` are likewise hall-owned/per-site and use
