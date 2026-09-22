@@ -5688,11 +5688,11 @@ by construction, never deleted by anything.
   - `listForPackage(int $package_id)` returns every enabled and disabled
     relationship plus its fingerprint in deterministic listing order, or a
     read/integrity error. An archived Package remains readable.
-  - `create(int $package_id, int $bingo_play_product_id, string $unit_price,
-    int $max_quantity = 1)` always requests the approved enabled default and
+  - `create(int $package_id, int $bingo_play_product_id, mixed $unit_price,
+    mixed $max_quantity = 1)` always requests the approved enabled default and
     returns `package_addon_created` or `package_addon_unchanged`.
-  - `update(int $package_addon_id, string $expected_fingerprint, string
-    $unit_price, int $max_quantity, bool $enabled)` returns
+  - `update(int $package_addon_id, string $expected_fingerprint, mixed
+    $unit_price, mixed $max_quantity, bool $enabled)` returns
     `package_addon_updated` or `package_addon_unchanged`.
   - `remove(int $package_addon_id, string $expected_fingerprint)` returns
     `package_addon_removed`.
@@ -5702,6 +5702,14 @@ by construction, never deleted by anything.
     `package_addon_projection_unchanged`. It does not accept a WooCommerce
     product ID; a request-supplied WooCommerce product ID is never projection
     reconciliation authority.
+
+  Only the public price and maximum parameters use `mixed`: this preserves the
+  caller's original PHP types so non-strict callers cannot silently coerce a
+  float price or maximum. Validation immediately requires `is_string($unit_price)`
+  and `is_int($max_quantity)` before using either value. Price must already be
+  canonical; maximum must be a native PHP integer from 1 through 99 (numeric
+  strings and floats are rejected). The immutable plan receives validated
+  `string` and `int` values. No other parameter is loosened.
 
   Focused validation/conflict codes are
   `package_addon_management_denied`, `invalid_package_addon_id`,
@@ -7713,12 +7721,13 @@ delete_users.
 
 ## Still Open / TBD Items (Unresolved)
 
-- ADR-044 Slice 1 implements only Catalog v6's `bingo_package_addons` migration,
-  schema verification and isolated-fixture tests. `PackageAddonService`,
-  administration, transaction-profile extension, lifecycle/medium extensions,
-  projection synchronization and add-on audit remain unimplemented. ADR-044
-  and BR-079 business decisions are unchanged; no real Hall migration,
-  deployment or production readiness is claimed.
+- ADR-044 Slice 1 implements Catalog v6's `bingo_package_addons` migration,
+  schema verification and isolated-fixture tests. Slice 2 implements the backend
+  `PackageAddonService`, fixed transaction profile, lifecycle/medium extensions,
+  post-commit audit/projection and targeted reconciliation. Package
+  administration UI and request handling remain unimplemented. ADR-044 and
+  BR-079 business decisions are unchanged; no real Hall migration, deployment
+  or production readiness is claimed.
 - Portal integration details still open after ADR-036 through ADR-042: webhook
   signing, retry, replay and ordering; transitional synchronization conflict
   policy; and SSO protocol/account/tenant mapping. Commerce-schedule recurrence,

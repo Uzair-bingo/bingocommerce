@@ -352,13 +352,14 @@ foreach ( [ BC_FIXTURE_HALL_A, BC_FIXTURE_HALL_B, 4 ] as $bc_fixture_hall ) {
 		 * tables, so creating them here matches the shape the suites were
 		 * written against.
 		 *
-		 * Both schema classes are Action Scheduler's own, and register_tables()
-		 * is idempotent: it is a dbDelta wrapper that issues nothing once the
-		 * tables match.
+		 * Use Action Scheduler's normal version check: register_tables() still
+		 * registers table names and installs missing/outdated schemas. Forcing
+		 * an update rewrites its schema-version options with time() on every
+		 * worker boot, even when the schema already matches.
 		 */
 		foreach ( [ '\ActionScheduler_StoreSchema', '\ActionScheduler_LoggerSchema' ] as $bc_fixture_as_schema ) {
 			if ( class_exists( $bc_fixture_as_schema ) ) {
-				( new $bc_fixture_as_schema() )->register_tables( true );
+				( new $bc_fixture_as_schema() )->register_tables();
 			}
 		}
 		unset( $bc_fixture_as_schema );

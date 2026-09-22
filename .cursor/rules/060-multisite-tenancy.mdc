@@ -31,8 +31,10 @@ network mapping repository and synchronized hall-local replicas are implemented.
   names to `$wpdb->prefix`; do not add another `bc_` sub-prefix or a redundant
   `blog_id`. Catalog v6 implements ADR-044 Slice 1's `bingo_package_addons`
   migration/schema verifier; all seven baseline tables now exist in code.
-  `PackageAddonService`, mutation profile, UI, projection and add-on audit remain
-  unimplemented. No real Hall migration or deployment is claimed.
+  Slice 2 implements `PackageAddonService`, the fixed mutation profile,
+  lifecycle/medium integrity, post-commit audit/projection and targeted retry.
+  Package administration UI and request handling remain unimplemented for
+  Slice 3. No real Hall migration or deployment is claimed.
 - Package add-on service/admin requests derive Hall context only from the
   current WordPress site. Never accept a request Hall/blog/site ID. Resolve
   Package, Play Product, relationship and WooCommerce product identities only

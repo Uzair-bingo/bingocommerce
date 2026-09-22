@@ -28,17 +28,21 @@ BingoCommerce is a hosted multi-tenant e-commerce platform for bingo halls, chur
   The current repository implements all seven baseline tables (five Catalog
   v6 and two Session tables) plus Session schema v3's Portal-template replica
   and three Commerce-schedule definition tables: eleven implemented tables total.
-  ADR-044 Slice 1 implements only the `bingo_package_addons` migration and schema
-  verification. `PackageAddonService`, the fixed mutation profile, UI, projection
-  and add-on audit remain unimplemented. No real Hall migration or deployment is
-  claimed. Add-on prices are canonical `DECIMAL(19,2)` values. A future new-row UI
+  ADR-044 Slice 1 implements the `bingo_package_addons` migration and schema
+  verification; Slice 2 implements `PackageAddonService`, its fixed transaction
+  profile, lifecycle/medium integrity, post-commit audit, projection, targeted
+  reconciliation and backend tests. The Package Admin UI, nonce/controller
+  boundary, bulk-form orchestration, regular-price prefill and browser Remove
+  confirmation remain unimplemented for Slice 3. No real Hall migration or
+  deployment is claimed. Add-on prices are canonical `DECIMAL(19,2)` values. A future new-row UI
   prefill loads the linked product with `\wc_get_product( $wc_product_id )`,
   requires `\WC_Product`, and reads the unfiltered edit-context string with
   `$product->get_regular_price( 'edit' )`; it never uses a sale/effective price
   or floating-point conversion. UI form preparation may pad `5`/`5.5` without
   rounding to `5.00`/`5.50`, but Manager/service input must already be a
   canonical exactly-two-decimal string and is never normalized.
-  `PackageAddonService::create()` never reads WooCommerce pricing. The Package editor shows every configured
+  `PackageAddonService::create()` never reads WooCommerce pricing. The future
+  Slice 3 Package editor must show every configured
   relationship, including disabled or currently ineligible rows, while new
   candidates are active, medium-compatible current-Hall Play Products only.
   Increment 1 projection retry is targeted by current-Hall
@@ -86,7 +90,7 @@ Custom code lives ONLY in:
 3. **No Unapproved Plugins:** Do not install new third-party plugins without explicit architectural approval.
 
 ### Database & Security
-4. **Safe SQL Parameterization:** SQL values must never be interpolated unsafely. Normal `$wpdb` SQL MUST use `$wpdb->prepare()`. Direct mysqli is permitted ONLY inside an explicitly approved captured-`$wpdb->dbh` transport, and every such transport binds every value through native prepared mysqli statements. The approved transports are: ADR-025's Hall Staff mandatory-audit transport; ADR-032's Catalog critical-serialization transport, including ADR-034's Play Product medium-change integrity; ADR-033's Package composition atomicity transport; ADR-044's not-yet-implemented fixed Package-add-on mutation profile and its narrowly approved add-on integrity extensions to ADR-033/ADR-034; and ADR-040's Portal snapshot application transport, which is the only boundary spanning the hall's Game Type replica, its Portal Session-template replica, and the Phase 3E sync-state marker. Those approved transports must not be rewritten to `$wpdb` merely to satisfy this rule — ADR-033/ADR-044 in particular PROHIBIT `$wpdb->query()` for statements issued while their Catalog transactions are open, because `wpdb::query()` fires the `query` filter on every statement and is not callback-free. No other feature may introduce direct mysqli without a reviewed decision. Raw string interpolation into SQL is prohibited in all cases.
+4. **Safe SQL Parameterization:** SQL values must never be interpolated unsafely. Normal `$wpdb` SQL MUST use `$wpdb->prepare()`. Direct mysqli is permitted ONLY inside an explicitly approved captured-`$wpdb->dbh` transport, and every such transport binds every value through native prepared mysqli statements. The approved transports are: ADR-025's Hall Staff mandatory-audit transport; ADR-032's Catalog critical-serialization transport, including ADR-034's Play Product medium-change integrity; ADR-033's Package composition atomicity transport; ADR-044's implemented fixed Package-add-on mutation profile and its narrow add-on integrity extensions to ADR-033/ADR-034; and ADR-040's Portal snapshot application transport, which is the only boundary spanning the hall's Game Type replica, its Portal Session-template replica, and the Phase 3E sync-state marker. Those approved transports must not be rewritten to `$wpdb` merely to satisfy this rule — ADR-033/ADR-044 in particular PROHIBIT `$wpdb->query()` for statements issued while their Catalog transactions are open, because `wpdb::query()` fires the `query` filter on every statement and is not callback-free. No other feature may introduce direct mysqli without a reviewed decision. Raw string interpolation into SQL is prohibited in all cases.
 5. **REST API Hardening:** Every custom REST API endpoint MUST include an explicit `permission_callback` checking `current_user_can()` (or verifying valid Application Passwords) AND a `sanitize_callback` on every input parameter.
 6. **Hall Isolation:** Every hall-scoped query, cache key, and file path MUST
    carry verified tenant context. Hall-owned per-site tables use the resolved
@@ -102,8 +106,10 @@ Custom code lives ONLY in:
    `bingo_game_types`, `bingo_play_products`, `bingo_packages`,
    `bingo_package_components`, `bingo_package_addons`, `bingo_sessions`, and
    `bingo_session_packages` tables. Catalog v6 implements `bingo_package_addons`
-   and schema verification under ADR-044 Slice 1; `PackageAddonService` and all
-   add-on mutation/UI/projection/audit behavior remain unimplemented. The
+   and schema verification under ADR-044 Slice 1; Slice 2 implements its backend
+   service, fixed mutations, integrity extensions, post-commit audit/projection
+   and targeted reconciliation. Package administration UI and request handling
+   remain unimplemented for Slice 3. The
    current additive Session schema also uses `bingo_portal_session_templates`,
    `bingo_session_schedules`,
    `bingo_session_schedule_dates`, and `bingo_session_schedule_packages` for

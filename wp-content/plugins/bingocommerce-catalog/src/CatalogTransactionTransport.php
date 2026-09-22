@@ -7,9 +7,11 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 /**
- * The Catalog critical-serialization boundaries (ADR-032, ADR-033, ADR-034).
+ * The Catalog critical-serialization boundaries (ADR-032, ADR-033, ADR-034,
+ * ADR-044).
  *
- * Scope is deliberately tiny. Only four invariants justify this transport:
+ * Scope is deliberately tiny. Only five reviewed profiles/invariants justify
+ * this transport:
  *
  *   1. ADR-032 — WooCommerce-product exclusivity between bingo_play_products
  *      and bingo_packages, anchored on the current site's posts row. This covers
@@ -20,15 +22,20 @@ if ( ! defined( 'ABSPATH' ) ) {
  *      on the Game Type row that a future hard-delete writer will lock;
  *   3. ADR-033 — Bingo Package composition replacement, which must be
  *      all-or-nothing across bingo_package_components and the derived BR-061
- *      package_type on bingo_packages; and
+ *      package_type on bingo_packages, with ADR-044's enabled Package-add-on
+ *      read and compatibility check under the held Package anchor;
  *   4. ADR-034 — Bingo Play Product medium reference integrity, where BR-069
- *      requires the Package-component reference check and the medium write to
- *      happen under one held bingo_play_products row lock.
+ *      requires the Package-component reference check, ADR-044's locking
+ *      Package-add-on reference check, and the medium write to happen under one
+ *      held bingo_play_products row lock; and
+ *   5. ADR-044 — one fixed Package add-on mutation profile, locking Package,
+ *      then Play Product, then the relationship unique key/row for one create,
+ *      update, or remove operation.
  *
- * ADR-032 and ADR-033 are DISTINCT boundaries with distinct lock orders and
- * distinct statement sequences. They share this class only for the $active and
- * $untrusted guards, so neither can nest inside the other and a session poisoned
- * by one is poisoned for both. They are not one contract.
+ * These are DISTINCT boundaries with distinct lock orders and statement
+ * sequences. They share this class only for the $active and $untrusted guards,
+ * so none can nest inside another and a session poisoned by one is poisoned for
+ * all. They are not one contract.
  *
  * Everything else — Play Product archive, faces-per-unit, clearing a Game Type,
  * and Package archive/restore (BR-070) — is a single conditional statement
@@ -42,15 +49,18 @@ if ( ! defined( 'ABSPATH' ) ) {
  *
  *   - BEGIN, COMMIT, ROLLBACK;
  *   - SELECT ... FOR UPDATE NOWAIT against the posts row, bingo_play_products,
- *     bingo_game_types, bingo_packages, and — for ADR-034's reference check
- *     only — bingo_package_components;
- *   - one PLAIN, unlocked SELECT of the current composition from
- *     bingo_package_components (ADR-033 step 2; see read_package_components()
- *     for the first-consistent-read invariant that keeps it correct);
+ *     bingo_game_types, bingo_packages, bingo_package_addons for ADR-044's
+ *     relationship locks/add-on medium-reference check, and
+ *     bingo_package_components for ADR-034's component-reference check;
+ *   - PLAIN, unlocked SELECTs of the current composition and the Package's
+ *     add-on relationships under the held Package anchor (ADR-033/ADR-044; see
+ *     read_package_components() for the first-consistent-read invariant);
  *   - INSERT and UPDATE against bingo_play_products;
  *   - narrow INSERT, single-row UPDATE, and DELETE against
  *     bingo_package_components;
- *   - INSERT and UPDATE against bingo_packages.
+ *   - INSERT and UPDATE against bingo_packages; and
+ *   - fixed SELECT, INSERT, single-row UPDATE, and DELETE statements against
+ *     bingo_package_addons.
  *
  * ADR-033 takes NO lock on bingo_package_components, so there is no
  * package_components -> play_products lock rank.
@@ -125,6 +135,150 @@ final class CatalogTransactionTransport {
 	private string $game_types_table;
 	private string $packages_table;
 	private string $package_components_table;
+	private string $package_addons_table;
+
+	/** ADR-044: Package -> Play Product -> unique relationship probe/insert. */
+	public static function createPackageAddon( CatalogPackageAddonPlan $plan ) {
+		return self::run_package_addon( $plan, CatalogPackageAddonPlan::CREATE );
+	}
+
+	/** ADR-044: Package -> Play Product -> relationship. */
+	public static function updatePackageAddon( CatalogPackageAddonPlan $plan ) {
+		return self::run_package_addon( $plan, CatalogPackageAddonPlan::UPDATE );
+	}
+
+	/** ADR-044: Package -> Play Product -> relationship. */
+	public static function removePackageAddon( CatalogPackageAddonPlan $plan ) {
+		return self::run_package_addon( $plan, CatalogPackageAddonPlan::REMOVE );
+	}
+
+	/** One fixed add-on profile, not a callback-based transaction API. */
+	private static function run_package_addon( CatalogPackageAddonPlan $plan, string $expected_mutation ) {
+		if ( $plan->mutation !== $expected_mutation || $plan->blog_id < 1 || $plan->package_id < 1 || $plan->bingo_play_product_id < 1 || ! CatalogPackageAddonPlan::validTimestamp( $plan->now ) ) {
+			return self::error( 'catalog_transport_plan_mismatch', 'The Catalog write plan does not match the requested boundary.' );
+		}
+		if ( CatalogPackageAddonPlan::CREATE !== $plan->mutation && ( $plan->package_addon_id < 1 || 1 !== preg_match( '/\A[0-9a-f]{64}\z/', $plan->expected_fingerprint ) ) ) {
+			return self::error( 'package_addon_stale', 'The add-on fingerprint is invalid. Reload and try again.' );
+		}
+		if ( CatalogPackageAddonPlan::REMOVE !== $plan->mutation ) {
+			if ( 1 !== preg_match( CatalogPackageAddonPlan::PRICE_PATTERN, $plan->unit_price ) ) {
+				return self::error( 'package_addon_price_invalid', 'The add-on price must be a canonical non-negative two-decimal string.' );
+			}
+			if ( $plan->max_quantity < 1 || $plan->max_quantity > 99 ) {
+				return self::error( 'package_addon_max_quantity_invalid', 'The add-on maximum quantity must be an integer from 1 through 99.' );
+			}
+		}
+		if ( self::$untrusted ) {
+			return self::error( self::STATE_UNTRUSTED, 'The Catalog database session can no longer be trusted for a critical transaction.' );
+		}
+		if ( self::$active ) {
+			return self::error( self::NESTED_USE, 'A Catalog critical transaction is already in progress.' );
+		}
+		$transport = new self();
+		$captured = $transport->capture( $plan->blog_id );
+		if ( $captured instanceof \WP_Error ) { return $captured; }
+		$attempt = 0;
+		while ( true ) {
+			++$attempt;
+			$outcome = $transport->attempt_package_addon( $plan );
+			if ( ! ( $outcome instanceof \WP_Error ) || self::$untrusted || ! self::is_lock_conflict( $outcome ) ) { return $outcome; }
+			if ( $attempt >= self::RETRY_ATTEMPTS ) {
+				return self::error( self::WRITE_CONFLICT, 'The Catalog change could not be serialized against concurrent activity. Reload and try again.', [ 'attempts' => $attempt, 'db_errno' => $outcome->get_error_data()['db_errno'] ?? 0 ] );
+			}
+			$base = self::RETRY_BACKOFF_US[ min( $attempt - 1, count( self::RETRY_BACKOFF_US ) - 1 ) ];
+			usleep( (int) ( $base * ( 0.5 + ( random_int( 0, 1000 ) / 1000 ) ) ) );
+		}
+	}
+
+	/** Shares the existing rollback, poison and ambiguous-COMMIT contract verbatim. */
+	private function attempt_package_addon( CatalogPackageAddonPlan $plan ) {
+		$begun = $this->begin();
+		if ( $begun instanceof \WP_Error ) { return $begun; }
+		self::$active = true;
+		try {
+			$outcome = $this->package_addon_sequence( $plan );
+			if ( $outcome instanceof \WP_Error ) {
+				if ( ! $this->rollback() ) {
+					self::$untrusted = true;
+					return self::error( self::STATE_UNTRUSTED, 'The Catalog transaction could not be rolled back, so the database session is no longer trustworthy.', [ 'original_code' => $outcome->get_error_code() ] );
+				}
+				return $outcome;
+			}
+			if ( true !== $this->commit() ) {
+				self::$untrusted = true;
+				$this->rollback_quietly();
+				return self::error( self::COMMIT_OUTCOME_UNKNOWN, 'The Catalog change was submitted but its result could not be confirmed. Reload this screen and check the current state before retrying.' );
+			}
+			return $outcome;
+		} finally {
+			self::$active = false;
+		}
+	}
+
+	/** All authoritative decisions are made here, after the ordered parent locks. */
+	private function package_addon_sequence( CatalogPackageAddonPlan $plan ) {
+		$package = $this->lock_package_row( $plan->package_id );
+		if ( $package instanceof \WP_Error ) { return $package; }
+		if ( [] === $package ) { return self::error( 'package_not_found', 'The Bingo Package was not found.' ); }
+		$product = $this->lock_play_product_row( $plan->bingo_play_product_id );
+		if ( $product instanceof \WP_Error ) { return $product; }
+		if ( [] === $product ) { return self::error( 'play_product_not_found', 'The Bingo Play Product was not found.' ); }
+		if ( ! CatalogPackageAddonPlan::validPackage( $package ) || ! CatalogPackageAddonPlan::validPlayProduct( $product ) ) {
+			return self::error( 'package_addon_state_inconsistent', 'The add-on parent state is inconsistent.' );
+		}
+		$create = CatalogPackageAddonPlan::CREATE === $plan->mutation;
+		$row = $this->select_one(
+			"SELECT package_addon_id, package_id, bingo_play_product_id, unit_price, max_quantity, enabled, sort_order, created_at, updated_at FROM {$this->package_addons_table}"
+			. ( $create ? ' WHERE package_id = ? AND bingo_play_product_id = ? FOR UPDATE NOWAIT' : ' WHERE package_addon_id = ? FOR UPDATE NOWAIT' ),
+			$create ? 'ii' : 'i',
+			$create ? [ $plan->package_id, $plan->bingo_play_product_id ] : [ $plan->package_addon_id ]
+		);
+		if ( $row instanceof \WP_Error ) { return $row; }
+		if ( ! $create && [] === $row ) { return self::error( 'package_addon_not_found', 'The Package add-on relationship was not found.' ); }
+		if ( [] !== $row ) {
+			if ( ! CatalogPackageAddonPlan::validRelationship( $row ) || (int) $row['package_id'] !== $plan->package_id || (int) $row['bingo_play_product_id'] !== $plan->bingo_play_product_id ) {
+				return self::error( 'package_addon_state_inconsistent', 'The stored add-on relationship is inconsistent.' );
+			}
+			if ( ! $create && ! hash_equals( CatalogPackageAddonPlan::fingerprint( $row ), $plan->expected_fingerprint ) ) {
+				return self::error( 'package_addon_stale', 'The Package add-on changed. Reload and try again.' );
+			}
+			$identical = $plan->unit_price === $row['unit_price'] && $plan->max_quantity === (int) $row['max_quantity'] && (int) $plan->enabled === (int) $row['enabled'];
+			if ( CatalogPackageAddonPlan::REMOVE !== $plan->mutation && $identical ) {
+				// Validated exact no-op precedes lifecycle mutation restrictions.
+				return new CatalogWriteOutcome( (int) $row['package_addon_id'], false, [ 'before' => $row, 'after' => $row ] );
+			}
+			if ( $create ) { return self::error( 'package_addon_already_exists', 'This Play Product already has a differently configured add-on relationship in this Package.' ); }
+		}
+		if ( 'archived' === $package['status'] ) { return self::error( 'package_archived', 'An archived Bingo Package is read-only. Restore it before changing add-ons.' ); }
+		$remove = CatalogPackageAddonPlan::REMOVE === $plan->mutation;
+		if ( 'archived' === $product['status'] && ! $remove ) {
+			$disable_only = ! $create && ! $plan->enabled && 1 === (int) $row['enabled'] && $plan->unit_price === $row['unit_price'] && $plan->max_quantity === (int) $row['max_quantity'];
+			if ( ! $disable_only ) { return self::error( 'play_product_not_active', 'An archived Bingo Play Product add-on may only be disabled or removed.' ); }
+		}
+		if ( ! $remove && $plan->enabled && ! CatalogPackageAddonPlan::compatible( $package['package_type'], $product['medium'] ) ) {
+			return self::error( 'package_addon_medium_incompatible', 'A Paper Package may offer only Paper add-ons.' );
+		}
+		if ( $create ) {
+			$written = $this->execute_write(
+				"INSERT INTO {$this->package_addons_table} (package_id, bingo_play_product_id, unit_price, max_quantity, enabled, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+				'iisiiiss', [ $plan->package_id, $plan->bingo_play_product_id, $plan->unit_price, $plan->max_quantity, 1, 0, $plan->now, $plan->now ]
+			);
+			if ( $written instanceof \WP_Error ) { return $written; }
+			$id = (int) $this->connection->insert_id;
+			if ( $id < 1 ) { return self::error( 'persistence_failed', 'The Package add-on relationship could not be created.' ); }
+			$after = [ 'package_addon_id' => $id, 'package_id' => $plan->package_id, 'bingo_play_product_id' => $plan->bingo_play_product_id, 'unit_price' => $plan->unit_price, 'max_quantity' => $plan->max_quantity, 'enabled' => 1, 'sort_order' => 0, 'created_at' => $plan->now, 'updated_at' => $plan->now ];
+			return new CatalogWriteOutcome( $id, true, [ 'before' => null, 'after' => $after ] );
+		}
+		if ( $remove ) {
+			$written = $this->execute_write( "DELETE FROM {$this->package_addons_table} WHERE package_addon_id = ?", 'i', [ $plan->package_addon_id ] );
+			$after = null;
+		} else {
+			$written = $this->execute_write( "UPDATE {$this->package_addons_table} SET unit_price = ?, max_quantity = ?, enabled = ?, updated_at = ? WHERE package_addon_id = ?", 'siisi', [ $plan->unit_price, $plan->max_quantity, (int) $plan->enabled, $plan->now, $plan->package_addon_id ] );
+			$after = array_replace( $row, [ 'unit_price' => $plan->unit_price, 'max_quantity' => $plan->max_quantity, 'enabled' => (int) $plan->enabled, 'updated_at' => $plan->now ] );
+		}
+		if ( $written instanceof \WP_Error ) { return $written; }
+		return new CatalogWriteOutcome( $plan->package_addon_id, true, [ 'before' => $row, 'after' => $after ] );
+	}
 
 	/** ADR-032 lock order 1 — Woo row, Game Type row, claim checks, insert. */
 	public static function createWithProductClaim( CatalogPlayProductPlan $plan ) {
@@ -175,7 +329,7 @@ final class CatalogTransactionTransport {
 		}
 
 		$shape = self::assert_package_plan_shape( $plan );
-		if ( is_wp_error( $shape ) ) {
+		if ( $shape instanceof \WP_Error ) {
 			return $shape;
 		}
 
@@ -189,7 +343,7 @@ final class CatalogTransactionTransport {
 
 		$transport = new self();
 		$captured  = $transport->capture( $plan->blog_id );
-		if ( is_wp_error( $captured ) ) {
+		if ( $captured instanceof \WP_Error ) {
 			return $captured;
 		}
 
@@ -198,7 +352,7 @@ final class CatalogTransactionTransport {
 			++$attempt;
 			$outcome = $transport->attempt_package_create( $plan );
 
-			if ( ! is_wp_error( $outcome ) ) {
+			if ( ! ( $outcome instanceof \WP_Error ) ) {
 				return $outcome;
 			}
 
@@ -290,7 +444,7 @@ final class CatalogTransactionTransport {
 		}
 
 		$shape = self::assert_composition_plan_shape( $plan );
-		if ( is_wp_error( $shape ) ) {
+		if ( $shape instanceof \WP_Error ) {
 			return $shape;
 		}
 
@@ -304,7 +458,7 @@ final class CatalogTransactionTransport {
 
 		$transport = new self();
 		$captured  = $transport->capture( $plan->blog_id );
-		if ( is_wp_error( $captured ) ) {
+		if ( $captured instanceof \WP_Error ) {
 			return $captured;
 		}
 
@@ -313,7 +467,7 @@ final class CatalogTransactionTransport {
 			++$attempt;
 			$outcome = $transport->attempt_composition( $plan );
 
-			if ( ! is_wp_error( $outcome ) ) {
+			if ( ! ( $outcome instanceof \WP_Error ) ) {
 				return $outcome;
 			}
 
@@ -444,7 +598,7 @@ final class CatalogTransactionTransport {
 
 		$transport = new self();
 		$captured  = $transport->capture( $plan->blog_id );
-		if ( is_wp_error( $captured ) ) {
+		if ( $captured instanceof \WP_Error ) {
 			return $captured;
 		}
 
@@ -453,7 +607,7 @@ final class CatalogTransactionTransport {
 			++$attempt;
 			$outcome = $transport->attempt( $plan );
 
-			if ( ! is_wp_error( $outcome ) ) {
+			if ( ! ( $outcome instanceof \WP_Error ) ) {
 				return $outcome;
 			}
 
@@ -479,7 +633,7 @@ final class CatalogTransactionTransport {
 	/** @return CatalogWriteOutcome|\WP_Error */
 	private function attempt( CatalogPlayProductPlan $plan ) {
 		$begun = $this->begin();
-		if ( is_wp_error( $begun ) ) {
+		if ( $begun instanceof \WP_Error ) {
 			return $begun;
 		}
 
@@ -506,7 +660,7 @@ final class CatalogTransactionTransport {
 					$outcome = self::error( 'catalog_transport_plan_mismatch', 'The Catalog write plan is not supported.' );
 			}
 
-			if ( is_wp_error( $outcome ) ) {
+			if ( $outcome instanceof \WP_Error ) {
 				// COMMIT was never issued, so nothing can be committed. A lock
 				// timeout or NOWAIT rejection rolls back only the statement, so
 				// the explicit ROLLBACK matters; after a deadlock it is a no-op.
@@ -563,7 +717,7 @@ final class CatalogTransactionTransport {
 	 */
 	private function attempt_package_create( CatalogPackagePlan $plan ) {
 		$begun = $this->begin();
-		if ( is_wp_error( $begun ) ) {
+		if ( $begun instanceof \WP_Error ) {
 			return $begun;
 		}
 
@@ -572,7 +726,7 @@ final class CatalogTransactionTransport {
 		try {
 			$outcome = $this->create_package_sequence( $plan );
 
-			if ( is_wp_error( $outcome ) ) {
+			if ( $outcome instanceof \WP_Error ) {
 				if ( ! $this->rollback() ) {
 					self::$untrusted = true;
 
@@ -610,7 +764,7 @@ final class CatalogTransactionTransport {
 	 */
 	private function attempt_composition( CatalogPackageCompositionPlan $plan ) {
 		$begun = $this->begin();
-		if ( is_wp_error( $begun ) ) {
+		if ( $begun instanceof \WP_Error ) {
 			return $begun;
 		}
 
@@ -619,7 +773,7 @@ final class CatalogTransactionTransport {
 		try {
 			$outcome = $this->replace_composition_sequence( $plan );
 
-			if ( is_wp_error( $outcome ) ) {
+			if ( $outcome instanceof \WP_Error ) {
 				if ( ! $this->rollback() ) {
 					self::$untrusted = true;
 
@@ -671,18 +825,18 @@ final class CatalogTransactionTransport {
 	private function create_package_sequence( CatalogPackagePlan $plan ) {
 		// 1. Woo anchor row, then the minimal revalidation ADR-032 permits.
 		$post = $this->lock_posts_row( $plan->wc_product_id );
-		if ( is_wp_error( $post ) ) {
+		if ( $post instanceof \WP_Error ) {
 			return $post;
 		}
 
 		$eligible = self::assert_woo_row_eligible( $post );
-		if ( is_wp_error( $eligible ) ) {
+		if ( $eligible instanceof \WP_Error ) {
 			return $eligible;
 		}
 
 		// 2. A rival Bingo Play Product claim on the same product.
 		$claimed = $this->lock_play_product_by_wc_product( $plan->wc_product_id );
-		if ( is_wp_error( $claimed ) ) {
+		if ( $claimed instanceof \WP_Error ) {
 			return $claimed;
 		}
 		if ( [] !== $claimed ) {
@@ -710,7 +864,7 @@ final class CatalogTransactionTransport {
 		sort( $dependency, SORT_NUMERIC );
 
 		$play_products = $this->lock_play_product_rows( $dependency );
-		if ( is_wp_error( $play_products ) ) {
+		if ( $play_products instanceof \WP_Error ) {
 			return $play_products;
 		}
 
@@ -756,7 +910,7 @@ final class CatalogTransactionTransport {
 
 		// 4. A rival Bingo Package claim on the same product.
 		$package_claim = $this->lock_package_claim( $plan->wc_product_id );
-		if ( is_wp_error( $package_claim ) ) {
+		if ( $package_claim instanceof \WP_Error ) {
 			return $package_claim;
 		}
 		if ( [] !== $package_claim ) {
@@ -783,7 +937,7 @@ final class CatalogTransactionTransport {
 			'isss',
 			[ $plan->wc_product_id, $package_type, $plan->now, $plan->now ]
 		);
-		if ( is_wp_error( $inserted ) ) {
+		if ( $inserted instanceof \WP_Error ) {
 			return $inserted;
 		}
 
@@ -802,7 +956,7 @@ final class CatalogTransactionTransport {
 				'iiiss',
 				[ $package_id, $id, $requested[ $id ], $plan->now, $plan->now ]
 			);
-			if ( is_wp_error( $component ) ) {
+			if ( $component instanceof \WP_Error ) {
 				return $component;
 			}
 		}
@@ -829,7 +983,7 @@ final class CatalogTransactionTransport {
 	 */
 	private function replace_composition_sequence( CatalogPackageCompositionPlan $plan ) {
 		$package = $this->lock_package_row( $plan->package_id );
-		if ( is_wp_error( $package ) ) {
+		if ( $package instanceof \WP_Error ) {
 			return $package;
 		}
 		if ( [] === $package ) {
@@ -844,7 +998,7 @@ final class CatalogTransactionTransport {
 		}
 
 		$current = $this->read_package_components( $plan->package_id );
-		if ( is_wp_error( $current ) ) {
+		if ( $current instanceof \WP_Error ) {
 			return $current;
 		}
 
@@ -893,13 +1047,36 @@ final class CatalogTransactionTransport {
 			];
 		}
 
-		// Dependency set is the UNION of requested and currently referenced IDs:
-		// a row being removed must also be held still for the mutation's duration.
-		$dependency = array_values( array_unique( array_merge( array_keys( $requested ), array_keys( $existing ) ) ) );
+		// ADR-044: the Package anchor excludes conforming add-on writers. The
+		// snapshot was opened by read_package_components() after acquiring it.
+		// No relationship lock may precede the complete Play Product lock set.
+		$addons = $this->select_all(
+			"SELECT package_addon_id, package_id, bingo_play_product_id, unit_price, max_quantity, enabled, sort_order, created_at, updated_at FROM {$this->package_addons_table} WHERE package_id = ? ORDER BY package_addon_id",
+			'i', [ $plan->package_id ]
+		);
+		if ( $addons instanceof \WP_Error ) { return $addons; }
+		$addon_ids = [];
+		foreach ( $addons as $key => $addon ) {
+			// Validate before excluding disabled rows; a corrupt nonzero value
+			// must never disappear behind an enabled = 1 SQL predicate.
+			if ( ! in_array( $addon['enabled'], [ 0, 1, '0', '1' ], true ) ) {
+				return self::error( 'package_addon_state_inconsistent', 'A Package add-on holds an invalid enabled state.' );
+			}
+			if ( 0 === (int) $addon['enabled'] ) {
+				unset( $addons[ $key ] );
+				continue;
+			}
+			if ( ! CatalogPackageAddonPlan::validRelationship( $addon ) ) {
+				return self::error( 'package_addon_state_inconsistent', 'An enabled Package add-on holds invalid stored state.' );
+			}
+			$addon_ids[] = (int) $addon['bingo_play_product_id'];
+		}
+		// Lock each current/final base or enabled add-on dependency exactly once.
+		$dependency = array_values( array_unique( array_merge( array_keys( $requested ), array_keys( $existing ), $addon_ids ) ) );
 		sort( $dependency, SORT_NUMERIC );
 
 		$play_products = $this->lock_play_product_rows( $dependency );
-		if ( is_wp_error( $play_products ) ) {
+		if ( $play_products instanceof \WP_Error ) {
 			return $play_products;
 		}
 
@@ -961,6 +1138,27 @@ final class CatalogTransactionTransport {
 			}
 		}
 
+		// Derive type from FINAL BASE COMPONENTS ONLY, before any component DML.
+		$has_paper = false;
+		$has_digital = false;
+		foreach ( array_keys( $requested ) as $id ) {
+			if ( 'digital' === $play_products[ $id ]['medium'] ) {
+				$has_digital = true;
+			} else {
+				$has_paper = true;
+			}
+		}
+		$package_type = $has_paper && $has_digital ? 'hybrid' : ( $has_digital ? 'digital' : 'paper' );
+		foreach ( $addons as $addon ) {
+			$product = $play_products[ (int) $addon['bingo_play_product_id'] ];
+			if ( ! CatalogPackageAddonPlan::validPlayProduct( $product ) ) {
+				return self::error( 'package_addon_state_inconsistent', 'An enabled add-on Play Product holds invalid stored state.' );
+			}
+			if ( ! CatalogPackageAddonPlan::compatible( $package_type, $product['medium'] ) ) {
+				return self::error( 'package_addon_medium_incompatible', 'The resulting Package type is incompatible with an enabled add-on.', [ 'package_addon_id' => (int) $addon['package_addon_id'], 'bingo_play_product_id' => (int) $addon['bingo_play_product_id'] ] );
+			}
+		}
+
 		// Mutation-aware DML. An exact identical component ID + quantity set
 		// performs NO component statement at all, so package_component_id,
 		// created_at, updated_at and sort_order all survive untouched and the
@@ -984,7 +1182,7 @@ final class CatalogTransactionTransport {
 				str_repeat( 'i', count( $params ) ),
 				$params
 			);
-			if ( is_wp_error( $deleted ) ) {
+			if ( $deleted instanceof \WP_Error ) {
 				return $deleted;
 			}
 		}
@@ -998,7 +1196,7 @@ final class CatalogTransactionTransport {
 				'iiiss',
 				[ $plan->package_id, $id, $requested[ $id ], $plan->now, $plan->now ]
 			);
-			if ( is_wp_error( $inserted ) ) {
+			if ( $inserted instanceof \WP_Error ) {
 				return $inserted;
 			}
 		}
@@ -1012,26 +1210,12 @@ final class CatalogTransactionTransport {
 				'isi',
 				[ $quantity, $plan->now, $existing[ $id ]['package_component_id'] ]
 			);
-			if ( is_wp_error( $updated ) ) {
+			if ( $updated instanceof \WP_Error ) {
 				return $updated;
 			}
 		}
 
 		$components_changed = [] !== $removed || [] !== $added || [] !== $changed;
-
-		// BR-061. Derived ONLY from the FINAL REQUESTED set, using medium values
-		// read under the locks acquired above. A component being removed is locked
-		// but contributes nothing.
-		$has_paper   = false;
-		$has_digital = false;
-		foreach ( array_keys( $requested ) as $id ) {
-			if ( 'digital' === $play_products[ $id ]['medium'] ) {
-				$has_digital = true;
-			} else {
-				$has_paper = true;
-			}
-		}
-		$package_type = $has_paper && $has_digital ? 'hybrid' : ( $has_digital ? 'digital' : 'paper' );
 
 		// The parent row is written only when the composition actually changed, or
 		// when the stored type no longer matches what the composition derives. An
@@ -1047,7 +1231,7 @@ final class CatalogTransactionTransport {
 				// updated_at already held these exact values.
 				true
 			);
-			if ( is_wp_error( $typed ) ) {
+			if ( $typed instanceof \WP_Error ) {
 				return $typed;
 			}
 		}
@@ -1071,24 +1255,24 @@ final class CatalogTransactionTransport {
 	 */
 	private function create_sequence( CatalogPlayProductPlan $plan ) {
 		$post = $this->lock_posts_row( $plan->wc_product_id );
-		if ( is_wp_error( $post ) ) {
+		if ( $post instanceof \WP_Error ) {
 			return $post;
 		}
 
 		$eligible = self::assert_woo_row_eligible( $post );
-		if ( is_wp_error( $eligible ) ) {
+		if ( $eligible instanceof \WP_Error ) {
 			return $eligible;
 		}
 
 		if ( null !== $plan->target_game_type_id ) {
 			$game_type = $this->lock_active_game_type_row( $plan->target_game_type_id );
-			if ( is_wp_error( $game_type ) ) {
+			if ( $game_type instanceof \WP_Error ) {
 				return $game_type;
 			}
 		}
 
 		$claimed = $this->lock_play_product_by_wc_product( $plan->wc_product_id );
-		if ( is_wp_error( $claimed ) ) {
+		if ( $claimed instanceof \WP_Error ) {
 			return $claimed;
 		}
 		if ( [] !== $claimed ) {
@@ -1097,7 +1281,7 @@ final class CatalogTransactionTransport {
 
 		if ( $plan->check_package_claim ) {
 			$package = $this->lock_package_claim( $plan->wc_product_id );
-			if ( is_wp_error( $package ) ) {
+			if ( $package instanceof \WP_Error ) {
 				return $package;
 			}
 			if ( [] !== $package ) {
@@ -1112,7 +1296,7 @@ final class CatalogTransactionTransport {
 			'isiiss',
 			[ $plan->wc_product_id, $plan->medium, $plan->faces_per_unit, $plan->target_game_type_id, $plan->now, $plan->now ]
 		);
-		if ( is_wp_error( $inserted ) ) {
+		if ( $inserted instanceof \WP_Error ) {
 			return $inserted;
 		}
 
@@ -1135,7 +1319,7 @@ final class CatalogTransactionTransport {
 	 */
 	private function assign_game_type_sequence( CatalogPlayProductPlan $plan ) {
 		$row = $this->lock_play_product_row( $plan->bingo_play_product_id );
-		if ( is_wp_error( $row ) ) {
+		if ( $row instanceof \WP_Error ) {
 			return $row;
 		}
 		if ( [] === $row ) {
@@ -1151,7 +1335,7 @@ final class CatalogTransactionTransport {
 		}
 
 		$game_type = $this->lock_active_game_type_row( (int) $plan->target_game_type_id );
-		if ( is_wp_error( $game_type ) ) {
+		if ( $game_type instanceof \WP_Error ) {
 			return $game_type;
 		}
 
@@ -1160,7 +1344,7 @@ final class CatalogTransactionTransport {
 			'isi',
 			[ $plan->target_game_type_id, $plan->now, $plan->bingo_play_product_id ]
 		);
-		if ( is_wp_error( $written ) ) {
+		if ( $written instanceof \WP_Error ) {
 			return $written;
 		}
 
@@ -1178,7 +1362,7 @@ final class CatalogTransactionTransport {
 	 */
 	private function to_digital_sequence( CatalogPlayProductPlan $plan ) {
 		$row = $this->lock_play_product_row( $plan->bingo_play_product_id );
-		if ( is_wp_error( $row ) ) {
+		if ( $row instanceof \WP_Error ) {
 			return $row;
 		}
 		if ( [] === $row ) {
@@ -1191,7 +1375,7 @@ final class CatalogTransactionTransport {
 		}
 
 		$game_type = $this->lock_active_game_type_row( (int) $plan->target_game_type_id );
-		if ( is_wp_error( $game_type ) ) {
+		if ( $game_type instanceof \WP_Error ) {
 			return $game_type;
 		}
 
@@ -1201,7 +1385,7 @@ final class CatalogTransactionTransport {
 		// so the reference check is skipped for it.
 		if ( 'digital' !== $row['medium'] ) {
 			$referenced = $this->assert_not_package_referenced( $plan->bingo_play_product_id );
-			if ( is_wp_error( $referenced ) ) {
+			if ( $referenced instanceof \WP_Error ) {
 				return $referenced;
 			}
 		}
@@ -1211,7 +1395,7 @@ final class CatalogTransactionTransport {
 			'isi',
 			[ $plan->target_game_type_id, $plan->now, $plan->bingo_play_product_id ]
 		);
-		if ( is_wp_error( $written ) ) {
+		if ( $written instanceof \WP_Error ) {
 			return $written;
 		}
 
@@ -1229,7 +1413,7 @@ final class CatalogTransactionTransport {
 	 */
 	private function to_paper_sequence( CatalogPlayProductPlan $plan ) {
 		$row = $this->lock_play_product_row( $plan->bingo_play_product_id );
-		if ( is_wp_error( $row ) ) {
+		if ( $row instanceof \WP_Error ) {
 			return $row;
 		}
 		if ( [] === $row ) {
@@ -1243,7 +1427,7 @@ final class CatalogTransactionTransport {
 		}
 
 		$referenced = $this->assert_not_package_referenced( $plan->bingo_play_product_id );
-		if ( is_wp_error( $referenced ) ) {
+		if ( $referenced instanceof \WP_Error ) {
 			return $referenced;
 		}
 
@@ -1253,7 +1437,7 @@ final class CatalogTransactionTransport {
 			'sis',
 			[ $plan->now, $plan->bingo_play_product_id, 'digital' ]
 		);
-		if ( is_wp_error( $written ) ) {
+		if ( $written instanceof \WP_Error ) {
 			return $written;
 		}
 
@@ -1273,17 +1457,17 @@ final class CatalogTransactionTransport {
 	 */
 	private function restore_sequence( CatalogPlayProductPlan $plan ) {
 		$post = $this->lock_posts_row( $plan->wc_product_id );
-		if ( is_wp_error( $post ) ) {
+		if ( $post instanceof \WP_Error ) {
 			return $post;
 		}
 
 		$eligible = self::assert_woo_row_eligible( $post );
-		if ( is_wp_error( $eligible ) ) {
+		if ( $eligible instanceof \WP_Error ) {
 			return $eligible;
 		}
 
 		$row = $this->lock_play_product_row( $plan->bingo_play_product_id );
-		if ( is_wp_error( $row ) ) {
+		if ( $row instanceof \WP_Error ) {
 			return $row;
 		}
 		if ( [] === $row ) {
@@ -1302,7 +1486,7 @@ final class CatalogTransactionTransport {
 
 		if ( null !== $row['game_type_id'] ) {
 			$game_type = $this->lock_game_type_row( (int) $row['game_type_id'] );
-			if ( is_wp_error( $game_type ) ) {
+			if ( $game_type instanceof \WP_Error ) {
 				return $game_type;
 			}
 
@@ -1320,7 +1504,7 @@ final class CatalogTransactionTransport {
 			'si',
 			[ $plan->now, $plan->bingo_play_product_id ]
 		);
-		if ( is_wp_error( $written ) ) {
+		if ( $written instanceof \WP_Error ) {
 			return $written;
 		}
 
@@ -1372,7 +1556,7 @@ final class CatalogTransactionTransport {
 	/** @return array<string,mixed>|\WP_Error */
 	private function lock_active_game_type_row( int $game_type_id ) {
 		$row = $this->lock_game_type_row( $game_type_id );
-		if ( is_wp_error( $row ) ) {
+		if ( $row instanceof \WP_Error ) {
 			return $row;
 		}
 		if ( [] === $row ) {
@@ -1409,10 +1593,21 @@ final class CatalogTransactionTransport {
 			'i',
 			[ $bingo_play_product_id ]
 		);
-		if ( is_wp_error( $rows ) ) {
+		if ( $rows instanceof \WP_Error ) {
 			return $rows;
 		}
-		if ( [] === $rows ) {
+		$addons = $this->select_all(
+			"SELECT package_id, enabled FROM {$this->package_addons_table} WHERE bingo_play_product_id = ? ORDER BY package_id FOR UPDATE NOWAIT",
+			'i', [ $bingo_play_product_id ]
+		);
+		if ( $addons instanceof \WP_Error ) { return $addons; }
+		foreach ( $addons as $key => $addon ) {
+			if ( ! in_array( $addon['enabled'], [ 0, 1, '0', '1' ], true ) ) {
+				return self::error( 'package_addon_state_inconsistent', 'A Package add-on holds an invalid enabled state.' );
+			}
+			if ( 0 === (int) $addon['enabled'] ) { unset( $addons[ $key ] ); }
+		}
+		if ( [] === $rows && [] === $addons ) {
 			return true;
 		}
 
@@ -1420,14 +1615,21 @@ final class CatalogTransactionTransport {
 		foreach ( $rows as $row ) {
 			$package_ids[] = (int) $row['package_id'];
 		}
+		$addon_package_ids = [];
+		foreach ( $addons as $row ) {
+			$addon_package_ids[] = (int) $row['package_id'];
+		}
+		$causes = [];
+		if ( [] !== $rows ) { $causes[] = 'base component'; }
+		if ( [] !== $addons ) { $causes[] = 'enabled add-on'; }
 
 		// The referencing Package IDs travel in error data so the presentation
 		// layer can name them (BR-069). No translation happens inside the
 		// boundary; the message is a developer-facing string.
 		return self::error(
 			self::PACKAGE_REFERENCED,
-			'The medium cannot change while this Bingo Play Product is used by a Bingo Package.',
-			[ 'package_ids' => array_values( array_unique( $package_ids ) ) ]
+			'The medium cannot change while this Bingo Play Product is used as a Package ' . implode( ' and ', $causes ) . '.',
+			[ 'package_ids' => array_values( array_unique( array_merge( $package_ids, $addon_package_ids ) ) ), 'base_component_package_ids' => array_values( array_unique( $package_ids ) ), 'enabled_addon_package_ids' => array_values( array_unique( $addon_package_ids ) ), 'reference_causes' => $causes ]
 		);
 	}
 
@@ -1493,13 +1695,13 @@ final class CatalogTransactionTransport {
 
 		$placeholders = implode( ',', array_fill( 0, count( $ids ), '?' ) );
 		$rows         = $this->select_all(
-			'SELECT bingo_play_product_id, medium, status FROM ' . $this->play_products_table
+			'SELECT bingo_play_product_id, wc_product_id, medium, faces_per_unit, game_type_id, status FROM ' . $this->play_products_table
 			. " WHERE bingo_play_product_id IN ({$placeholders})"
 			. ' ORDER BY bingo_play_product_id FOR UPDATE NOWAIT',
 			str_repeat( 'i', count( $ids ) ),
 			$ids
 		);
-		if ( is_wp_error( $rows ) ) {
+		if ( $rows instanceof \WP_Error ) {
 			return $rows;
 		}
 
@@ -1562,6 +1764,7 @@ final class CatalogTransactionTransport {
 			'game_types_table'         => Migrations::game_types_table(),
 			'packages_table'           => Migrations::packages_table(),
 			'package_components_table' => Migrations::package_components_table(),
+			'package_addons_table'     => Migrations::package_addons_table(),
 		];
 
 		foreach ( $identifiers as $property => $identifier ) {
@@ -1607,7 +1810,7 @@ final class CatalogTransactionTransport {
 			. " COALESCE((SELECT state FROM performance_schema.events_transactions_current WHERE thread_id = PS_CURRENT_THREAD_ID() LIMIT 1), 'UNAVAILABLE') AS trx_state"
 		);
 
-		if ( is_wp_error( $state ) || [] === $state ) {
+		if ( $state instanceof \WP_Error || [] === $state ) {
 			return self::error( self::STATE_UNTRUSTED, 'The Catalog database session state could not be verified.' );
 		}
 
@@ -1691,7 +1894,7 @@ final class CatalogTransactionTransport {
 			}
 
 			$bound = self::bind( $statement, $types, $params );
-			if ( is_wp_error( $bound ) ) {
+			if ( $bound instanceof \WP_Error ) {
 				$statement->close();
 				return $bound;
 			}
@@ -1730,7 +1933,7 @@ final class CatalogTransactionTransport {
 			}
 
 			$bound = self::bind( $statement, $types, $params );
-			if ( is_wp_error( $bound ) ) {
+			if ( $bound instanceof \WP_Error ) {
 				$statement->close();
 				return $bound;
 			}
@@ -1776,7 +1979,7 @@ final class CatalogTransactionTransport {
 			}
 
 			$bound = self::bind( $statement, $types, $params );
-			if ( is_wp_error( $bound ) ) {
+			if ( $bound instanceof \WP_Error ) {
 				$statement->close();
 				return $bound;
 			}
@@ -1844,9 +2047,15 @@ final class CatalogTransactionTransport {
 	 * developer-facing string here. Localization is the presentation layer's job,
 	 * after the boundary has closed — see PlayProductAdmin::error_message().
 	 *
-	 * WP_Error's constructor performs no hook dispatch, so it is safe.
+	 * A populated WP_Error constructor calls add(), which dispatches
+	 * wp_error_added. Only the empty constructor is callback-free. Populate the
+	 * public structures directly; transport inspections likewise use instanceof
+	 * because is_wp_error() dispatches is_wp_error_instance.
 	 */
 	private static function error( string $code, string $message, array $data = [] ): \WP_Error {
-		return new \WP_Error( $code, $message, $data + [ 'status' => $code ] );
+		$error = new \WP_Error();
+		$error->errors[ $code ] = [ $message ];
+		$error->error_data[ $code ] = $data + [ 'status' => $code ];
+		return $error;
 	}
 }

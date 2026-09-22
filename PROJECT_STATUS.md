@@ -2406,10 +2406,49 @@
     add-on audit is implemented. These remain later slices, not authorized by
     this implementation. No real Hall migration, staging, commit, push,
     deployment or production-readiness claim.
+- **[2026-09-22] Package Add-ons Increment 1 — Slice 2 backend implemented and
+  isolated-tested.** Added `PackageAddonService`, `PackageAddonResult`, the
+  immutable `CatalogPackageAddonPlan`, and ADR-044's fixed callback-free profile
+  inside the existing `CatalogTransactionTransport`. The backend implements
+  list/create/update/remove, exact no-ops, canonical two-decimal price and native
+  integer quantity validation, lifecycle/medium compatibility, versioned stale
+  fingerprints, bounded conflict retries, ambiguous-COMMIT handling,
+  current-Hall authorization/isolation, post-confirmed-commit audit, WooCommerce
+  projection convergence and Bingo-Play-Product-ID targeted reconciliation.
+  Play Product medium changes and Package composition replacement now fail
+  closed on enabled add-on references, including corrupt stored enabled state.
+  The pre-existing transport error builder was made callback-free without
+  changing its public codes/data, locking, retries or commit semantics.
+  - The initial full-matrix checkpoint, before the later unresolved-configured-row
+    listing correction, passed the focused transport/add-on, schema, Package
+    Stage A/B, Play Products, Game Types, Sessions, Portal Game Type identity,
+    Portal Session-template persistence, Portal foundation, Portal snapshot
+    application and setup-readiness suites: **3,513 assertions passed, 0
+    failed** across thirteen suite runs. This is preserved as the immediately
+    preceding full-matrix checkpoint, not described as the final current-code
+    run. At that checkpoint, all nine changed/new PHP files passed syntax
+    checks, twelve database guard probes refused
+    missing/unallowlisted/reserved targets, and `git diff --check` passed.
+  - Final post-correction affected-suite verification passed: Package Add-ons
+    backend **582/582**, Package Stage A **320/320**, Package Stage B
+    **258/258**, and Play Products **472/472**, for **1,632 passed, 0 failed**.
+    PHP syntax passed **9/9**, `git diff --check` passed, persistent Hall
+    preservation passed, and disposable-Hall cleanup passed. The remaining
+    suites passed during the immediately preceding full-matrix checkpoint and
+    were not rerun after this narrow unresolved-listing correction.
+  - Persistent fixture Hall snapshots remained byte-identical and disposable
+    Hall cleanup/ownership checks passed. Existing disposable-Hall Action
+    Scheduler missing-table diagnostics predate Slice 2, affected no assertion
+    or persistent data, and remain visible in the saved test logs.
+  - The Package Admin Optional Add-ons UI, nonce/controller boundary,
+    checkbox/bulk orchestration, WooCommerce regular-price prefill and browser
+    Remove confirmation remain unimplemented for Slice 3. No real Hall was
+    migrated and no staging, commit, push, deployment or production-readiness
+    claim is made.
 - No Hall Staff Management work currently in progress.
 - Package Increment 1 and the legacy Session Increment 1 remain COMPLETE and
   are recorded under Done. Package Add-ons Increment 1 is approved by
-  ADR-044/BR-079; only Slice 1 migration/schema verification is implemented.
+  ADR-044/BR-079; schema Slice 1 and backend Slice 2 are implemented.
 
 ---
 
@@ -2473,9 +2512,10 @@ Everything below is tracked work that is NOT a blocker to that demo.
 3. Package add-ons: ADR-044/BR-079 approve `PackageAddonService`, Catalog v6's
    `bingo_package_addons`, the 1–99 quantity rule, lifecycle/medium integrity,
    fixed transaction profile, and BR-065 `bc_package_relation` projection.
-   Slice 1 migration/schema verification is implemented and isolated-tested.
-   Service, mutation profile, lifecycle/medium extensions, UI, projection and
-   add-on audit remain pending separate implementation approval.
+   Slice 1 migration/schema verification and Slice 2 backend service, mutation
+   profile, lifecycle/medium extensions, audit, projection and targeted
+   reconciliation are implemented and isolated-tested. Package administration
+   UI and request handling remain pending Slice 3 approval.
 4. Checkout electronic-limit enforcement (BR-042) and redemption accumulation
    (BR-045), including the effective-limit resolver (BR-038, BR-064).
 5. Entitlement snapshot (BR-043, ADR-029), QR issuance (BR-044) and Android
@@ -2738,7 +2778,8 @@ Everything below is tracked work that is NOT a blocker to that demo.
   Commerce-schedule definition and generated-occurrence fields under approved
   ADR-043. This is repository state, not a production-deployment claim.
 - **Current Catalog/Session inventory:** **eleven implemented tables** — five
-  Catalog v6 tables and six Session v3 tables. ADR-044 Slice 1 implements only
-  the add-on migration and schema verifier. `PackageAddonService`, mutation
-  profile, UI, projection and add-on audit remain absent from the implementation.
+  Catalog v6 tables and six Session v3 tables. ADR-044 Slice 1 implements the
+  add-on migration/schema verifier and Slice 2 implements its backend service,
+  fixed mutations, integrity extensions, post-commit audit/projection and
+  targeted reconciliation. Package administration UI remains absent.
 - **Rule for AI agents:** Read `AGENTS.md`, `docs/architecture/plugin-architecture.md`, and this file before coding. Do not re-scaffold Multisite, WooCommerce, or core bootstrap.

@@ -145,10 +145,11 @@ automatic Enable/Disable. See
   `bingo_sessions`, `bingo_session_packages`,
   `bingo_portal_session_templates`, `bingo_session_schedules`,
   `bingo_session_schedule_dates`, and `bingo_session_schedule_packages`, each appended to
-  `$wpdb->prefix`. ADR-044 Slice 1 implements only Catalog v6 migration and
-  schema verification. `PackageAddonService`, the fixed mutation profile, UI,
-  projection and add-on audit remain unimplemented; no real Hall migration,
-  deployment or production readiness is claimed.
+  `$wpdb->prefix`. ADR-044 Slice 1 implements Catalog v6 migration and schema
+  verification; Slice 2 implements `PackageAddonService`, its fixed mutation
+  profile, integrity extensions, post-commit audit/projection and targeted
+  reconciliation. Package administration UI and request handling remain
+  unimplemented; no real Hall migration, deployment or production readiness is claimed.
   Game Type, Bingo Play Product, Package, and Session use local
   surrogate domain IDs; Portal `game_types.id` is the trusted cross-
   system Game Type identity, and the local Game Type row becomes its hall-scoped
@@ -186,8 +187,8 @@ automatic Enable/Disable. See
 - BR-032 product metadata projection (BR-065/ADR-031): `bc_product_kind` and
   `bc_package_relation` are derived compatibility/cart-enforcement projections,
   not Catalog authorities. `PackageService` and `BingoPlayProductService` own
-  their implemented projection writes. ADR-044 assigns add-on projection writes
-  to the not-yet-implemented `PackageAddonService`; Package-specific eligibility
+  their implemented projection writes. ADR-044 add-on projection writes are
+  implemented by `PackageAddonService`; Package-specific eligibility
   comes only from `bingo_package_addons`. Final
   cart/checkout checks use Catalog state. Projection synchronization is deterministic,
   idempotent, verifiable, and reconcilable; no direct-SQL transaction spans

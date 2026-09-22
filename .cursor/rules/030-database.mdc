@@ -60,8 +60,9 @@ current model.
   baseline. The current repository implements all seven baseline tables
   plus the additive Portal-template and three Commerce-schedule tables: eleven
   tables total. ADR-044 Slice 1 implements Catalog v6's `bingo_package_addons`
-  migration and schema verification only. `PackageAddonService`, the fixed
-  mutation profile, UI, projection and add-on audit remain unimplemented.
+  migration and schema verification; Slice 2 implements its backend service,
+  fixed mutation profile, integrity extensions, post-commit audit/projection
+  and targeted reconciliation. Package administration UI remains unimplemented.
   Operational domains still explicitly deferred — including final entitlement,
   redemption accumulation, device, and offline persistence — MUST NOT have
   storage invented ahead of their dedicated designs. Where an existing ADR
@@ -124,8 +125,9 @@ ADR-031's seven approved conceptual baseline tables are:
 - `$wpdb->prefix . 'bingo_session_packages'`
 
 Of that baseline, the current Catalog v6 and Session v3 schemas implement every
-listed table. ADR-044 Slice 1 implements only the add-on migration/schema
-verifier; its service and other behavior remain pending. The current
+listed table. ADR-044 Slice 1 implements the add-on migration/schema verifier;
+Slice 2 implements its backend behavior. Package administration UI and request
+handling remain pending. The current
 repository's Session schema v3 also contains these hall-local tables under
 approved ADR-043:
 
@@ -151,7 +153,7 @@ binds values through native mysqli prepared statements. The approved transports
 are ADR-025 (Hall Staff mandatory audit), ADR-032 (Catalog critical
 serialization, including ADR-034's approved third use for Play Product
 medium-change integrity against Package-component references), ADR-033
-(Package composition atomicity), ADR-044 (the not-yet-implemented fixed
+(Package composition atomicity), ADR-044 (the implemented fixed
 Package-add-on mutation profile plus its narrow add-on integrity extensions to
 ADR-033/ADR-034), and ADR-040 (Portal snapshot application).
 ADR-033 additionally PROHIBITS `$wpdb->query()`
@@ -193,7 +195,7 @@ in `docs/architecture/catalog-session-persistence-design.md`.
 
 Under BR-065, BR-032's `bc_product_kind` and `bc_package_relation` are required
 derived WooCommerce compatibility/cart-enforcement projections. Catalog tables
-are authoritative. Under ADR-044/BR-079, the not-yet-implemented
+are authoritative. Under ADR-044/BR-079, the implemented
 `bingo_package_addons` table alone determines exact Package/add-on eligibility.
 Projection writes through WooCommerce CRUD are deterministic, idempotent,
 verifiable, and reconcilable. Do not create a direct-SQL transaction spanning
