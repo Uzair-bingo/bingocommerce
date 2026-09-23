@@ -2440,15 +2440,137 @@
     Hall cleanup/ownership checks passed. Existing disposable-Hall Action
     Scheduler missing-table diagnostics predate Slice 2, affected no assertion
     or persistent data, and remain visible in the saved test logs.
-  - The Package Admin Optional Add-ons UI, nonce/controller boundary,
+  - At this Slice 2 checkpoint, the Package Admin Optional Add-ons UI, nonce/controller boundary,
     checkbox/bulk orchestration, WooCommerce regular-price prefill and browser
-    Remove confirmation remain unimplemented for Slice 3. No real Hall was
+    Remove confirmation remained unimplemented for Slice 3. No real Hall was
     migrated and no staging, commit, push, deployment or production-readiness
     claim is made.
+- **[2026-09-22] Package Add-ons Increment 1 — Slice 3 administration implemented
+  and isolated-tested.** `PackageAdmin` now presents one Optional Add-ons form on
+  the existing Edit Package screen. Configured relationships remain first and
+  visible when disabled, archived, incompatible or unresolved. Eligible new
+  candidates receive string-only regular-price prefill through
+  `wc_get_product()` / `get_regular_price( 'edit' )`. Submitted prices remain
+  strict canonical two-decimal strings; validated HTTP maximums become native
+  integers. One service operation per row preserves partial success, exact
+  no-ops and submitted stale fingerprints. POST, current Hall, capability,
+  nonce, Package and relationship membership checks precede mutation.
+  - Add-on requests run on the existing screen's load hook before admin output.
+    Notices/failed values are request-local, reset on editor load, and rendered
+    only for the matching current Hall, actor and Package.
+    Committed warnings retain successful status; projection warnings offer only
+    a signed current-Hall Play-Product-ID targeted Retry action. Remove and
+    Retry ignore bulk Save fields. A small editor-only vanilla script filters
+    without changing submissions and uses browser confirmation for Remove;
+    without JavaScript, Save works and permanent Remove is unavailable.
+  - Initial full-matrix verification (before the save-notice correction below):
+    admin/controller **206/206**, add-on backend **582/582**,
+    schema **196/196**, transport **241/241**, Package Stage A **320/320**,
+    Stage B **258/258**, Play Products **471/471**, Game Types **164/164**,
+    Sessions **352/352**, Portal Game Type identity **142/142**, Portal
+    Session-template persistence **104/104**, Portal foundation **77/77**,
+    Portal snapshot application **424/424**, setup readiness **199/199**:
+    **3,736 passed, 0 failed** across fourteen final suite runs. Play Products'
+    existing create-versus-trash race returned `woo_product_trashed`; its
+    conditional created-row assertion did not apply (an earlier run was 472/472).
+  - Tests used `bingocommerce_state_recon`, except the existing restricted Portal
+    Session-template suite used its approved `bingocommerce_state_test` fixture.
+    Persistent-Hall preservation and ownership-proven disposable cleanup passed.
+    All three changed/new PHP files passed syntax checks; JavaScript passed
+    `node --check`; all twelve missing/unallowlisted/reserved-database probes
+    refused safely; `git diff --check` passed. Logs:
+    `/tmp/bc-slice3.020ACE`. Known disposable-Hall Action Scheduler/WooCommerce
+    missing-table and teardown diagnostics, injected failures and Staff writer
+    guard messages remain visible in the logs; no assertion or preservation
+    check failed in the final runs.
+  - Slice 1 schema and Slice 2 backend remain unchanged. Slice 3 automated
+    verification is complete; later manual browser checks remain required,
+    including actual Remove Cancel behavior. Storefront/cart/checkout enforcement
+    remains unimplemented. No real Hall migration, staging, commit, push,
+    deployment or production-readiness claim.
+  - **[2026-09-23] Save-notice correction:** WordPress's native My Sites toolbar
+    performs temporary `switch_blog` calls after `load_editor()` and before the
+    Package page renders. The unconditional clearing hook erased successful
+    results before `render_addons()`; it has been removed. Existing Hall/actor/
+    Package matching still prevents another Hall from displaying the response,
+    and the next editor load resets it. No persistent notice storage was added.
+    A same-request POST → native toolbar callback → full Package render
+    regression reproduced six failures before the fix, then passed for disable,
+    re-enable and exact no-op. The focused admin suite passed **234/234** on
+    `bingocommerce_state_recon`; both changed PHP files passed syntax checks and
+    `git diff --check` passed. Exact no-op row/timestamp/audit/projection
+    preservation, persistent Halls 2/3/4 and ownership-proven disposable cleanup
+    passed. Existing disposable-Hall WooCommerce/Action Scheduler diagnostics
+    remain recorded in `/tmp/bc-addon-notices.l3dvW2/after-fix.log`. The other
+    suites were not rerun after this narrow notice correction. Real-browser
+    message visibility still needs manual confirmation; Star Bingo Hall was
+    not mutated during this correction.
+  - **[2026-09-23] Save feedback summary:** Save Add-ons now renders one summary
+    from its existing per-row results, such as `1 add-on updated; 2 unchanged.`
+    or `Add-ons unchanged.` when every processed row is unchanged. Applicable
+    created/updated/unchanged counts replace individual success notices only for
+    Save. Row `WP_Error` results add a rows-needing-attention count and a review
+    instruction to that same summary: mixed outcomes use warning styling,
+    all-error outcomes use error styling, and all-unchanged saves use an
+    informational notice. Unknown COMMIT is not described as a definite failure
+    or automatically retried. Row errors and submitted values, committed warnings and targeted Retry,
+    and separate Remove/Retry feedback remain intact. Submission and service
+    mutation behavior are unchanged; no JavaScript or persistent notices added.
+    Initial summary verification passed **257/257**; final verification after
+    the row-attention correction passed **278/278** on `bingocommerce_state_recon`,
+    including POST → native toolbar → full page rendering, no-op byte
+    preservation, Hall isolation, persistent Halls 2/3/4 and ownership-proven
+    disposable cleanup. Post-commit model read failure preserves the confirmed
+    summary; detailed errors and submitted stale fingerprints remain visible.
+    Both changed PHP files passed syntax checks and
+    `git diff --check` passed. Logs, including existing non-failing disposable-
+    Hall WooCommerce/Action Scheduler diagnostics:
+    `/tmp/bc-addon-attention.IR9qW8/admin-final.log` (initial summary checkpoint:
+    `/tmp/bc-addon-summary.GulIp8/admin.log`). Other suites were not rerun for
+    this presentation-only change. Browser review remains pending; no real Hall
+    was mutated, migrated or deployed, and all work remains unstaged/uncommitted.
+  - **[2026-09-23] Package list base-price display:** Only the `Price
+    (WooCommerce)` cell now obtains the linked current-Hall product's native
+    `get_price_html()` and sanitizes it with `wp_kses_post()` at output. This
+    preserves sale `<del>`/`<ins>` markup and visually hidden screen-reader
+    explanations instead of escaping the service's already-stripped text.
+    `PackageService::wooBasePrice()` retains its plain-text `formatted` contract.
+    Currency, tax display, suffixes and effective sale behavior remain delegated
+    to WooCommerce; missing/empty prices show `Unavailable`. No composition,
+    Catalog authority, product data, add-on price or prefill behavior changed.
+    Focused admin **310/310**, Package Stage A **320/320**, and Stage B **258/258**
+    passed on `bingocommerce_state_recon`: **888 passed, 0 failed**. Both changed
+    PHP files passed syntax checks and `git diff --check` passed. Tests verify
+    safe markup, hidden accessibility text, unsafe-markup removal, same-number
+    current-Hall price isolation, read-only byte preservation and owned cleanup.
+    Logs: `/tmp/bc-package-price.p4xYUF`, including disposable-fixture WooCommerce
+    lookup/tax-table and Action Scheduler diagnostics during test-product setup
+    and existing teardown scenarios; no assertion/preservation check failed.
+    Real-browser visual confirmation remains pending. No real Hall was mutated,
+    migrated or deployed; existing work remains unstaged/uncommitted.
+  - **[2026-09-23] Add-on recovery after a failed list read:** A confirmed
+    projection warning now retains its targeted Retry synchronization control
+    even when the subsequent page-model read fails. The list stays unavailable:
+    the recovery-only form offers no bulk Save, Remove or unverified rows.
+    Existing Hall/actor/Package/nonce checks and authoritative reads remain
+    unchanged; Retry fails safely while the read is unavailable and rederives
+    current projection state once it recovers. Unknown COMMIT offers no Retry.
+    Summary and other row errors remain visible. Focused admin **350/350** and
+    backend **582/582** passed on `bingocommerce_state_recon`: **932 passed,
+    0 failed**, including POST → native toolbar → full-page recovery rendering,
+    submission of the rendered recovery form, tenant/actor/Package isolation,
+    persistent Hall byte preservation and ownership-proven disposable cleanup.
+    Both changed PHP files passed syntax checks; `git diff --check` passed.
+    Logs: `/tmp/bc-addon-recovery.vySzk8/admin-final.log` and `backend.log` in
+    that directory. The admin log retains existing non-failing disposable-Hall
+    WooCommerce lookup/tax-table and Action Scheduler diagnostics. Other suites
+    were not rerun for this correction. Browser confirmation remains pending.
+    No service, transaction or fixture behavior changed; no real Hall was
+    mutated, migrated or deployed. Work remains unstaged/uncommitted.
 - No Hall Staff Management work currently in progress.
 - Package Increment 1 and the legacy Session Increment 1 remain COMPLETE and
   are recorded under Done. Package Add-ons Increment 1 is approved by
-  ADR-044/BR-079; schema Slice 1 and backend Slice 2 are implemented.
+  ADR-044/BR-079; schema Slice 1, backend Slice 2 and administration Slice 3 are implemented.
 
 ---
 
@@ -2514,8 +2636,16 @@ Everything below is tracked work that is NOT a blocker to that demo.
    fixed transaction profile, and BR-065 `bc_package_relation` projection.
    Slice 1 migration/schema verification and Slice 2 backend service, mutation
    profile, lifecycle/medium extensions, audit, projection and targeted
-   reconciliation are implemented and isolated-tested. Package administration
-   UI and request handling remain pending Slice 3 approval.
+   reconciliation are implemented and isolated-tested. Slice 3 Package administration
+   UI and request handling are implemented and automated-verified. User-reported
+   browser observations: normal and sale prices display correctly; add-on Save
+   feedback and partial-error feedback appeared; Remove → refresh → re-create
+   worked; cancelling Remove left the relationship and values intact after
+   refresh; and Package archive, read-only view and restore were checked.
+   These observations do not establish that every browser scenario passed.
+   The injected post-commit list-read failure and its recovery-only Retry screen
+   are covered by automated tests but have not been browser-tested by the user.
+   Storefront/cart/checkout enforcement remains outstanding.
 4. Checkout electronic-limit enforcement (BR-042) and redemption accumulation
    (BR-045), including the effective-limit resolver (BR-038, BR-064).
 5. Entitlement snapshot (BR-043, ADR-029), QR issuance (BR-044) and Android
@@ -2781,5 +2911,7 @@ Everything below is tracked work that is NOT a blocker to that demo.
   Catalog v6 tables and six Session v3 tables. ADR-044 Slice 1 implements the
   add-on migration/schema verifier and Slice 2 implements its backend service,
   fixed mutations, integrity extensions, post-commit audit/projection and
-  targeted reconciliation. Package administration UI remains absent.
+  targeted reconciliation. Slice 3 implements Package administration UI and request
+  handling; storefront/cart/checkout enforcement remains unimplemented. No real Hall
+  migration or deployment is claimed.
 - **Rule for AI agents:** Read `AGENTS.md`, `docs/architecture/plugin-architecture.md`, and this file before coding. Do not re-scaffold Multisite, WooCommerce, or core bootstrap.

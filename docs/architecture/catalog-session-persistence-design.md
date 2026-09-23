@@ -6,8 +6,9 @@ tables at schema v3, for eleven implemented tables total. ADR-044 Slice 1
 implements the `bingo_package_addons` migration and schema verification; Slice 2
 implements `PackageAddonService`, its fixed transaction profile,
 lifecycle/medium integrity, post-commit audit/projection and targeted
-reconciliation. Package administration UI and request handling remain
-unimplemented. No real Hall migration or deployment is claimed. The
+reconciliation. Slice 3 implements Package administration UI and request handling;
+storefront/cart/checkout enforcement remains unimplemented. No real Hall
+migration or deployment is claimed. The
 additive Session schedule/occurrence model exists under approved ADR-043;
 production deployment is not claimed.
 
@@ -78,9 +79,12 @@ The eleven implemented tables are:
 
 ADR-044 Slice 1 implements `bingo_package_addons` persistence. Slice 2 implements
 the approved backend service, transaction profile, integrity extensions,
-post-commit audit/projection and targeted reconciliation. Package administration
-remains future implementation work. Catalog v6 has been exercised only in
-isolated fixtures, not migrated into a real Hall or deployed.
+post-commit audit/projection and targeted reconciliation. Slice 3 implements
+Package administration and per-row request orchestration. Automated Catalog v6
+schema and add-on service tests used isolated fixtures. The user reports testing
+Package add-on administration in the local Star Bingo Hall and seeing changes
+persist after refresh. These browser observations do not establish that every
+scenario passed. No production migration or deployment is claimed.
 
 Game Type, Bingo Play Product, Package, and Session use local surrogate
 BingoCommerce domain IDs. Portal `game_types.id` is the trusted cross-system
@@ -295,12 +299,13 @@ Base-composition rules from BR-061:
 - Hybrid: at least one Paper and at least one Digital base component.
 - Optional add-ons do not change stored `package_type`.
 
-### 2.5 `$wpdb->prefix . 'bingo_package_addons'` (ADR-044 Slices 1–2 backend implemented)
+### 2.5 `$wpdb->prefix . 'bingo_package_addons'` (ADR-044 Slices 1–3 implemented)
 
 Approved Hall-local authority for Package-specific add-on eligibility, price,
 quantity ceiling and enabled state. The Catalog v6 migration, schema verifier
-and backend `PackageAddonService` behavior are implemented; Package
-administration UI/request orchestration remains pending.
+and backend `PackageAddonService` behavior are implemented; Slice 3 implements
+Package administration UI/request orchestration. Storefront enforcement
+remains unimplemented.
 
 | Column | Nullability/default intent | Meaning |
 |---|---|---|
@@ -1047,13 +1052,15 @@ Because `PackageService` refuses to operate below Catalog v3, and because after
 Stage A no worker can still hold a stale "Package table absent" decision, no old
 Bingo Play Product request can overlap the first live Package writer.
 
-## 5c. Package Add-ons Increment 1 (ADR-044 / BR-079; backend Slices 1–2 implemented)
+## 5c. Package Add-ons Increment 1 (ADR-044 / BR-079; Slices 1–3 implemented)
 
 The v6 migration/schema verification and backend service, fixed mutation
 profile, lifecycle/medium extensions, audit, projection and targeted
-reconciliation are implemented and isolated-tested. The Package Admin UI,
-nonce/controller boundary, checkbox/bulk orchestration, regular-price prefill
-and browser Remove confirmation remain unimplemented for Slice 3.
+reconciliation are implemented and isolated-tested. Slice 3 implements the
+Package Admin UI, nonce/controller boundary, checkbox/bulk orchestration,
+regular-price prefill and browser Remove confirmation on the existing Edit
+Package screen. Storefront/cart/checkout enforcement remains unimplemented;
+no real Hall migration or deployment is claimed.
 
 The add-on slice extends, but does not replace, the existing Catalog boundaries.
 Eligibility requires an active Package, active Play Product, enabled relationship
@@ -1191,8 +1198,8 @@ Owns:
 - The five implemented Catalog v6 tables, including ADR-044's
   `bingo_package_addons` Slice 1 schema.
 - Hall-scoped Game Type replica/domain behavior plus Bingo Play Product,
-  Package, component, and Package add-on backend services. The Package Add-ons
-  administration UI remains unimplemented.
+  Package, component, and Package add-on backend services. Slice 3 implements
+  the Package Add-ons administration UI and per-row request handling.
 - WooCommerce product-link validation and BR-032/BR-065 projections.
 - Package composition plus implemented add-on price, quantity, lifecycle and
   compatibility validation.

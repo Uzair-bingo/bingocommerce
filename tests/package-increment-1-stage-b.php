@@ -779,10 +779,11 @@ final class PackageStageBTest {
 		$this->ok( false === strpos( $broken_edit, 'Save composition' ), '  and the ordinary composition-save workflow is withheld entirely' );
 		$this->ok( false === strpos( $broken_edit, 'name="bc_package_action" value="replace_components"' ), '  with no replace_components form to submit' );
 
-		// The list view withholds the edit link for the same reason.
+		// Composition editing remains withheld. Slice 3 retains a View Package
+		// link so configured add-ons can still be inspected on the same screen.
 		$list = $this->render_admin( $hall );
 		$this->ok( false !== strpos( $list, 'INTEGRITY FAULT' ), 'the list view flags the integrity fault' );
-		$this->ok( false === strpos( $list, "edit={$broken_id}" ), '  and offers no Edit composition link for that Package' );
+		$this->ok( false === strpos( $this->admin_row( $list, $broken_id ), 'Edit composition' ) && false !== strpos( $this->admin_row( $list, $broken_id ), 'View Package' ), '  only View Package is offered for inspecting configured add-ons' );
 		$this->ok( false !== strpos( $list, "edit={$mixed_id}" ), '  while the merely-archived-component Package remains editable' );
 
 		// And the domain agrees: ADR-033 fails closed on it.
@@ -815,7 +816,7 @@ final class PackageStageBTest {
 		$corrupt_list = $this->render_admin( $hall );
 		$corrupt_list_row = $this->admin_row( $corrupt_list, $corrupt_pkg );
 		$this->ok( false !== strpos( $corrupt_list_row, 'INTEGRITY FAULT' ), '  the list view flags it too' );
-		$this->ok( false === strpos( $corrupt_list_row, "edit={$corrupt_pkg}" ), '  and withholds its Edit composition link' );
+		$this->ok( false === strpos( $corrupt_list_row, 'Edit composition' ) && false !== strpos( $corrupt_list_row, 'View Package' ), '  composition edit stays withheld while configured add-ons remain inspectable' );
 
 		// d) never offered as a valid NEW component choice.
 		$this->ok(

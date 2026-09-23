@@ -7724,8 +7724,9 @@ delete_users.
 - ADR-044 Slice 1 implements Catalog v6's `bingo_package_addons` migration,
   schema verification and isolated-fixture tests. Slice 2 implements the backend
   `PackageAddonService`, fixed transaction profile, lifecycle/medium extensions,
-  post-commit audit/projection and targeted reconciliation. Package
-  administration UI and request handling remain unimplemented. ADR-044 and
+  post-commit audit/projection and targeted reconciliation. Slice 3 implements
+  Package administration UI and request handling; storefront/cart/checkout
+  enforcement remains unimplemented. ADR-044 and
   BR-079 business decisions are unchanged; no real Hall migration, deployment
   or production readiness is claimed.
 - Portal integration details still open after ADR-036 through ADR-042: webhook

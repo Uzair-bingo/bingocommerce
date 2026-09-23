@@ -31,18 +31,19 @@ BingoCommerce is a hosted multi-tenant e-commerce platform for bingo halls, chur
   ADR-044 Slice 1 implements the `bingo_package_addons` migration and schema
   verification; Slice 2 implements `PackageAddonService`, its fixed transaction
   profile, lifecycle/medium integrity, post-commit audit, projection, targeted
-  reconciliation and backend tests. The Package Admin UI, nonce/controller
-  boundary, bulk-form orchestration, regular-price prefill and browser Remove
-  confirmation remain unimplemented for Slice 3. No real Hall migration or
-  deployment is claimed. Add-on prices are canonical `DECIMAL(19,2)` values. A future new-row UI
+  reconciliation and backend tests. Slice 3 implements the Package Admin UI,
+  nonce/controller boundary, bulk-form orchestration, regular-price prefill and
+  browser Remove confirmation. Storefront/cart/checkout enforcement remains
+  unimplemented. No real Hall migration or deployment is claimed. Add-on prices
+  are canonical `DECIMAL(19,2)` values. The new-row UI
   prefill loads the linked product with `\wc_get_product( $wc_product_id )`,
   requires `\WC_Product`, and reads the unfiltered edit-context string with
   `$product->get_regular_price( 'edit' )`; it never uses a sale/effective price
   or floating-point conversion. UI form preparation may pad `5`/`5.5` without
   rounding to `5.00`/`5.50`, but Manager/service input must already be a
   canonical exactly-two-decimal string and is never normalized.
-  `PackageAddonService::create()` never reads WooCommerce pricing. The future
-  Slice 3 Package editor must show every configured
+  `PackageAddonService::create()` never reads WooCommerce pricing. The
+  Slice 3 Package editor shows every configured
   relationship, including disabled or currently ineligible rows, while new
   candidates are active, medium-compatible current-Hall Play Products only.
   Increment 1 projection retry is targeted by current-Hall
@@ -108,8 +109,9 @@ Custom code lives ONLY in:
    `bingo_session_packages` tables. Catalog v6 implements `bingo_package_addons`
    and schema verification under ADR-044 Slice 1; Slice 2 implements its backend
    service, fixed mutations, integrity extensions, post-commit audit/projection
-   and targeted reconciliation. Package administration UI and request handling
-   remain unimplemented for Slice 3. The
+   and targeted reconciliation. Slice 3 implements Package administration UI
+   and request handling; storefront/cart/checkout enforcement remains
+   unimplemented. The
    current additive Session schema also uses `bingo_portal_session_templates`,
    `bingo_session_schedules`,
    `bingo_session_schedule_dates`, and `bingo_session_schedule_packages` for

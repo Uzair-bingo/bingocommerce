@@ -6,7 +6,7 @@ independently activatable and testable.
 | Plugin | Responsibility | Depends on |
 |---|---|---|
 | `bingocommerce-core` | Roles & capabilities, tenant context helpers, audit log service, migration framework | WooCommerce (network) |
-| `bingocommerce-catalog` | Hall-scoped Game Type replica/domain behavior, Bingo Play Product domain metadata/mapping, Bingo Package definitions/components, ADR-044 Package add-on backend eligibility/configuration and targeted projection reconciliation, BR-032/BR-065 metadata projections, hall electronic-limit override/current-value resolver, starter-product domain logic when that deferred copy exists (ADR-026/ADR-031/ADR-035/ADR-044; add-on schema Slice 1 and backend Slice 2 implemented, admin UI pending; ADR-042 MVP runs no starter copy) | core |
+| `bingocommerce-catalog` | Hall-scoped Game Type replica/domain behavior, Bingo Play Product domain metadata/mapping, Bingo Package definitions/components, ADR-044 Package add-on eligibility/configuration, administration and targeted projection reconciliation, BR-032/BR-065 metadata projections, hall electronic-limit override/current-value resolver, starter-product domain logic when that deferred copy exists (ADR-026/ADR-031/ADR-035/ADR-044; add-on schema Slice 1, backend Slice 2 and admin UI Slice 3 implemented; ADR-042 MVP runs no starter copy) | core |
 | `bingocommerce-sessions` | Portal Session-template replica; Commerce schedules with immutable named timezone and structured time; dated occurrence generation/reconciliation; inclusive hall-local 30-day window; centralized current-definition membership; Available for Sale; Package assignment; and customer occurrence-before-Package selection (BR-050–BR-052/BR-063/BR-073/BR-077/BR-078; approved ADR-043) | core, catalog |
 | `bingocommerce-digital-tickets` | Purchase-time entitlement snapshot (activated on successful online payment confirmation — BR-053), QR issue/redeem, device binding, staff reactivation, Android REST API, redemption accumulation | core, catalog, sessions |
 | `bingocommerce-portal-integration` | Portal-facing machine endpoint; request authentication/validation; provisioning-operation persistence/sequencing; Portal Hall mapping coordination; HallCommerceState/managed-marker coordination; Portal snapshot synchronization; safe API responses and integration audit attribution (ADR-035–ADR-042) | core |
@@ -33,8 +33,9 @@ ADR-031 conceptually assigns five per-site Catalog tables to
 ADR-044 Slice 1's `bingo_package_addons` migration and schema verification;
 Slice 2 implements `PackageAddonService`, the fixed mutation profile,
 lifecycle/medium integrity, post-commit audit/projection and targeted
-reconciliation. Package administration UI and request handling remain
-unimplemented. No real Hall migration or deployment is claimed. Its two
+reconciliation. Slice 3 implements Package administration UI and request handling;
+storefront/cart/checkout enforcement remains unimplemented. No real Hall
+migration or deployment is claimed. Its two
 baseline Session tables belong to `bingocommerce-sessions`. Session schema v3
 adds the Portal-template replica and three schedule-definition tables in the
 same plugin without replacing those baseline tables. `bingocommerce-platform` owns Platform
@@ -244,8 +245,8 @@ boundaries in `bingocommerce-catalog`:
   exclusivity enforcement,
   and deterministic `bc_product_kind` projection maintenance.
 - The implemented ADR-044 `PackageAddonService` owns authoritative
-  Package/add-on one-relationship mutations and results used by the pending
-  Slice 3 per-row bulk orchestration,
+  Package/add-on one-relationship mutations and results used by the implemented
+  Slice 3 `PackageAdmin` per-row bulk orchestration,
   canonical two-decimal relationship pricing, enabled-relationship recount,
   targeted `bingo_play_product_id`-based retry, and deterministic
   `bc_package_relation` projection maintenance. It internally resolves the

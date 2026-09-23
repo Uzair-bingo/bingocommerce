@@ -37,7 +37,10 @@ alwaysApply: false
   price authority. ADR-044/BR-079 approve `bingo_package_addons` as the authority
   for Package-specific add-on price, 1–99 maximum quantity, enabled state and
   exact eligibility. Catalog v6 and the backend `PackageAddonService` are
-  implemented; the Package Admin UI remains pending. When preparing an eligible never-configured row after WooCommerce
+  implemented; Slice 3 implements Package Admin UI/request handling.
+  Storefront/cart/checkout enforcement remains unimplemented; no real Hall
+  migration or deployment is claimed.
+  When preparing an eligible never-configured row after WooCommerce
   initialization and outside the Catalog transaction, load
   `\wc_get_product( $wc_product_id )`, require `\WC_Product`, and treat
   `$product->get_regular_price( 'edit' )` as a string-only editable prefill. Do

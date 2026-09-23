@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace BingoCommerce\Catalog;
 
 use BingoCommerce\Core\HallContext;
@@ -29,12 +31,18 @@ final class PackageAdmin {
 
 	private const PAGE_SLUG = 'bingocommerce-packages';
 	private const NONCE_ACTION = 'bingocommerce_package_mutation';
+	private const ADDONS_NONCE = 'bingocommerce_package_addons';
+
+	/** One request-local response; render_addons() verifies Hall, actor and Package. Never persisted. */
+	private static ?array $addons_response = null;
 
 	/** Upper bound on the create form's product selector. */
 	private const PRODUCT_CHOICE_LIMIT = 200;
 
 	public static function register(): void {
 		add_action( 'admin_menu', [ self::class, 'add_menu' ] );
+		// The native My Sites toolbar temporarily switches blogs between load_editor()
+		// and render(). Reset on editor load, not switch_blog; scope at notice rendering.
 	}
 
 	public static function add_menu(): void {
@@ -42,7 +50,7 @@ final class PackageAdmin {
 			return;
 		}
 
-		add_submenu_page(
+		$hook = add_submenu_page(
 			'edit.php?post_type=product',
 			__( 'Bingo Packages', 'bingocommerce-catalog' ),
 			__( 'Bingo Packages', 'bingocommerce-catalog' ),
@@ -50,6 +58,31 @@ final class PackageAdmin {
 			self::PAGE_SLUG,
 			[ self::class, 'render' ]
 		);
+		if ( is_string( $hook ) ) {
+			add_action( 'load-' . $hook, [ self::class, 'load_editor' ] );
+		}
+	}
+
+	public static function clear_addons_response(): void {
+		self::$addons_response = null;
+	}
+
+	/** Runs before admin-header.php emits output. No redirect or retained notice store. */
+	public static function load_editor(): void {
+		self::clear_addons_response();
+		if ( isset( $_POST['bc_addons_form'] ) || isset( $_POST['bc_addons_action'] ) ) {
+			self::$addons_response = [
+				'blog' => get_current_blog_id(),
+				'actor' => get_current_user_id(),
+				'package' => self::addon_id( wp_unslash( $_GET['edit'] ?? '' ) ),
+				'action' => is_string( $_POST['bc_addons_action'] ?? null ) ? wp_unslash( $_POST['bc_addons_action'] ) : '',
+				'result' => self::handle_addons_request( wp_unslash( $_POST ) ),
+			];
+		}
+		if ( self::addon_id( wp_unslash( $_GET['edit'] ?? '' ) ) > 0 && HallContext::is_hall()
+			&& is_user_logged_in() && ( is_super_admin() || current_user_can( 'bc_manage_products' ) ) ) {
+			wp_enqueue_script( 'bingocommerce-package-addons-admin', plugins_url( '../assets/package-addons-admin.js', __FILE__ ), [], BINGOCOMMERCE_CATALOG_VERSION, true );
+		}
 	}
 
 	public static function render(): void {
@@ -61,7 +94,7 @@ final class PackageAdmin {
 		$play    = new BingoPlayProductService();
 		$result  = null;
 
-		if ( 'POST' === ( $_SERVER['REQUEST_METHOD'] ?? '' ) ) {
+		if ( 'POST' === ( $_SERVER['REQUEST_METHOD'] ?? '' ) && ! isset( $_POST['bc_addons_form'] ) && ! isset( $_POST['bc_addons_action'] ) ) {
 			check_admin_referer( self::NONCE_ACTION );
 			$result = self::handle_request( wp_unslash( $_POST ), $service );
 		}
@@ -102,6 +135,7 @@ final class PackageAdmin {
 
 			<?php if ( $editing > 0 ) : ?>
 				<?php self::render_edit_form( $service, $selectable, $editing ); ?>
+				<?php self::render_addons( $editing ); ?>
 			<?php else : ?>
 				<?php self::render_create_form( $service, $selectable ); ?>
 			<?php endif; ?>
@@ -143,9 +177,12 @@ final class PackageAdmin {
 								<?php endif; ?>
 							</td>
 							<td>
-								<?php echo $package['woo_price']['available']
-									? esc_html( $package['woo_price']['formatted'] )
-									: esc_html__( 'Unavailable', 'bingocommerce-catalog' ); ?>
+								<?php
+								// The service's formatted value is plain text; preserve native sale/a11y markup here only.
+								$product = $package['woo_price']['available'] ? wc_get_product( (int) $package['wc_product_id'] ) : false;
+								$price_html = $product instanceof \WC_Product ? (string) $product->get_price_html() : '';
+								echo '' !== $price_html ? wp_kses_post( $price_html ) : esc_html__( 'Unavailable', 'bingocommerce-catalog' );
+								?>
 							</td>
 							<td><strong><?php echo esc_html( self::type_label( (string) $package['package_type'] ) ); ?></strong></td>
 							<td>
@@ -179,6 +216,9 @@ final class PackageAdmin {
 									<a href="<?php echo esc_url( add_query_arg( [ 'post_type' => 'product', 'page' => self::PAGE_SLUG, 'status' => $status, 'edit' => (int) $package['package_id'] ], admin_url( 'edit.php' ) ) ); ?>"><?php echo esc_html__( 'Edit composition', 'bingocommerce-catalog' ); ?></a>
 									&nbsp;
 								<?php endif; ?>
+								<?php if ( $can_restore || ( $can_archive && ! $editable ) ) : ?>
+									<a href="<?php echo esc_url( add_query_arg( [ 'post_type' => 'product', 'page' => self::PAGE_SLUG, 'edit' => (int) $package['package_id'] ], admin_url( 'edit.php' ) ) ); ?>"><?php echo esc_html__( 'View Package', 'bingocommerce-catalog' ); ?></a>
+								<?php endif; ?>
 								<?php if ( $can_archive || $can_restore ) : ?>
 									<form method="post" style="display:inline">
 										<?php wp_nonce_field( self::NONCE_ACTION ); ?>
@@ -199,6 +239,354 @@ final class PackageAdmin {
 			</table>
 		</div>
 		<?php
+	}
+
+	/* ------------------------------------------------------------------ *
+	 * ADR-044 Optional Add-ons: current-Hall reads and per-row orchestration.
+	 * No business writes, price derivation or transaction boundaries live here.
+	 * ------------------------------------------------------------------ */
+
+	private static function addon_id( mixed $value ): int {
+		if ( ! is_string( $value ) || 1 !== preg_match( '/\A[1-9][0-9]*\z/', $value )
+			|| strlen( $value ) > strlen( (string) PHP_INT_MAX )
+			|| ( strlen( $value ) === strlen( (string) PHP_INT_MAX ) && strcmp( $value, (string) PHP_INT_MAX ) > 0 ) ) {
+			return 0;
+		}
+		return (int) $value;
+	}
+
+	private static function addons_nonce( int $package_id ): string {
+		return self::ADDONS_NONCE . ':' . get_current_blog_id() . ':' . $package_id;
+	}
+
+	private static function addon_error( string $code ): \WP_Error {
+		return new \WP_Error( $code, self::addon_message( $code ) );
+	}
+
+	/** @return array|\WP_Error All configured rows precede never-configured candidates. */
+	private static function addons_model( int $package_id, bool $prefill ): array|\WP_Error {
+		$package = ( new PackageService() )->getById( $package_id );
+		if ( $package instanceof \WP_Error ) { return $package; }
+		if ( ! CatalogPackageAddonPlan::validPackage( $package ) ) { return self::addon_error( 'package_addon_state_inconsistent' ); }
+		$configured = ( new PackageAddonService() )->listForPackage( $package_id );
+		if ( $configured instanceof \WP_Error ) { return $configured; }
+		if ( ! did_action( 'woocommerce_init' ) || ! function_exists( 'wc_get_product' ) ) { return self::addon_error( 'persistence_failed' ); }
+
+		$play = new BingoPlayProductService();
+		$rows = [];
+		$used = [];
+		foreach ( $configured as $row ) {
+			$id = $row['bingo_play_product_id'];
+			$used[ $id ] = true;
+			$product = $play->getById( $id );
+			if ( $product instanceof \WP_Error && 'play_product_not_found' !== $product->get_error_code() ) { return $product; }
+			$woo = $product instanceof \WP_Error ? false : self::addon_woo_product( $product['wc_product_id'] );
+			if ( $woo instanceof \WP_Error ) { return $woo; }
+			$row['unresolved'] = $product instanceof \WP_Error;
+			$row['woo_missing'] = ! $row['unresolved'] && ! $woo instanceof \WC_Product;
+			$row['label'] = $woo instanceof \WC_Product ? $woo->get_name( 'edit' ) : sprintf( __( 'Bingo Play Product #%d', 'bingocommerce-catalog' ), $id );
+			$row['configured'] = true;
+			$rows[ 'r' . $row['package_addon_id'] ] = $row;
+		}
+		if ( 'active' === $package['status'] ) {
+			// A narrow admin read; never add candidate discovery to the domain service.
+			global $wpdb;
+			$ids = $wpdb->get_col( $wpdb->prepare( 'SELECT bingo_play_product_id FROM %i WHERE status = %s ORDER BY bingo_play_product_id', Migrations::play_products_table(), 'active' ) );
+			if ( ! is_array( $ids ) || '' !== $wpdb->last_error ) { return self::addon_error( 'persistence_failed' ); }
+			foreach ( $ids as $id ) {
+				if ( isset( $used[ (int) $id ] ) ) { continue; }
+				$product = $play->getById( (int) $id );
+				if ( $product instanceof \WP_Error ) {
+					if ( 'play_product_not_found' === $product->get_error_code() ) { continue; }
+					return $product;
+				}
+				if ( ! CatalogPackageAddonPlan::validPlayProduct( $product ) ) { return self::addon_error( 'package_addon_state_inconsistent' ); }
+				if ( 'active' !== $product['status'] || ! CatalogPackageAddonPlan::compatible( $package['package_type'], $product['medium'] ) ) { continue; }
+				$woo = self::addon_woo_product( $product['wc_product_id'] );
+				if ( $woo instanceof \WP_Error ) { return $woo; }
+				if ( ! $woo instanceof \WC_Product ) { continue; }
+				$rows[ 'p' . $id ] = [
+					'configured' => false, 'bingo_play_product_id' => (int) $id,
+					'label' => $woo->get_name( 'edit' ), 'medium' => $product['medium'],
+					'play_product_status' => 'active', 'medium_compatible' => true,
+					'unresolved' => false, 'woo_missing' => false, 'enabled' => 0,
+					'unit_price' => $prefill ? self::addon_prefill( $woo->get_regular_price( 'edit' ) ) : '',
+					'max_quantity' => 1, 'fingerprint' => '',
+				];
+			}
+		}
+		return [ 'package' => $package, 'rows' => $rows ];
+	}
+
+	/** Normal current-Hall WooCommerce API; never called inside a Catalog transaction. */
+	private static function addon_woo_product( int $wc_product_id ): \WC_Product|false|\WP_Error {
+		global $wpdb;
+		try {
+			$product = \wc_get_product( $wc_product_id );
+			if ( '' !== $wpdb->last_error ) { return self::addon_error( 'persistence_failed' ); }
+			return $product instanceof \WC_Product ? $product : false;
+		} catch ( \Throwable $error ) {
+			return self::addon_error( 'persistence_failed' );
+		}
+	}
+
+	/** UI convenience only. Submitted values never pass through this padding. */
+	private static function addon_prefill( mixed $price ): string {
+		if ( ! is_string( $price ) || 1 !== preg_match( '/\A(?:0|[1-9][0-9]{0,16})(?:\.[0-9]{1,2})?\z/', $price ) ) { return ''; }
+		$parts = explode( '.', $price );
+		return $parts[0] . '.' . str_pad( $parts[1] ?? '', 2, '0' );
+	}
+
+	/** @return array|\WP_Error Global boundaries precede every independent row. */
+	private static function handle_addons_request( array $request ): array|\WP_Error {
+		if ( 'POST' !== ( $_SERVER['REQUEST_METHOD'] ?? '' ) ) { return self::addon_error( 'invalid_request' ); }
+		if ( ! HallContext::is_hall() ) { return self::addon_error( 'invalid_hall_context' ); }
+		if ( ! is_user_logged_in() || ( ! is_super_admin() && ! current_user_can( 'bc_manage_products' ) ) ) { return self::addon_error( 'package_addon_management_denied' ); }
+		$package_id = self::addon_id( wp_unslash( $_GET['edit'] ?? '' ) );
+		if ( ! is_string( $request['_wpnonce'] ?? null ) || ! wp_verify_nonce( $request['_wpnonce'], self::addons_nonce( $package_id ) ) ) { return self::addon_error( 'invalid_nonce' ); }
+		$package = ( new PackageService() )->getById( $package_id );
+		if ( $package instanceof \WP_Error ) { return $package; }
+		if ( self::addon_id( $request['package_id'] ?? null ) !== $package_id || '1' !== ( $request['bc_addons_form'] ?? null )
+			|| ! is_string( $request['bc_addons_action'] ?? null ) ) { return self::addon_error( 'invalid_request' ); }
+		$model = self::addons_model( $package_id, false );
+		if ( $model instanceof \WP_Error ) { return $model; }
+		$service = new PackageAddonService();
+		$action = $request['bc_addons_action'];
+		$results = [];
+		if ( str_starts_with( $action, 'retry:' ) ) {
+			$parts = explode( ':', $action );
+			$id = self::addon_id( $parts[1] ?? '' );
+			// Only rendered after a projection warning, scoped to this actor/Hall/Package/product.
+			if ( 3 !== count( $parts ) || ! $id || ! wp_verify_nonce( $parts[2], self::addons_nonce( $package_id ) . ':retry:' . $id ) ) { return self::addon_error( 'invalid_request' ); }
+			$result = ( new BingoPlayProductService() )->getById( $id );
+			if ( ! $result instanceof \WP_Error ) { $result = $service->reconcileProjection( $id ); }
+			return [ 'retry' => [ 'result' => $result, 'submitted' => [], 'product' => $id ] ];
+		}
+		if ( str_starts_with( $action, 'remove:' ) ) {
+			$key = substr( $action, 7 );
+			$row = $model['rows'][ $key ] ?? null;
+			$input = is_array( $request['addons'] ?? null ) ? ( $request['addons'][ $key ] ?? null ) : null;
+			if ( ! is_array( $row ) || ! $row['configured'] ) { $result = self::addon_error( 'package_addon_not_found' ); }
+			elseif ( ! is_array( $input ) || ! is_string( $input['fingerprint'] ?? null ) ) { $result = self::addon_error( 'package_addon_stale' ); }
+			else { $result = $service->remove( $row['package_addon_id'], $input['fingerprint'] ); }
+			return [ $key => [ 'result' => $result, 'submitted' => [], 'product' => $row['bingo_play_product_id'] ?? 0 ] ];
+		}
+		if ( 'save' !== $action || '1' !== ( $request['bc_addons_complete'] ?? null ) || ! is_array( $request['addons'] ?? [] ) ) { return self::addon_error( 'invalid_request' ); }
+		foreach ( $request['addons'] ?? [] as $key => $input ) {
+			$key = (string) $key;
+			// Unchecked never-configured rows are ignored BEFORE touching price or maximum.
+			if ( str_starts_with( $key, 'p' ) && is_array( $input ) && ! isset( $input['enabled'] ) ) { continue; }
+			$row = $model['rows'][ $key ] ?? null;
+			$result = null;
+			$id = self::addon_id( substr( $key, 1 ) );
+			if ( ! $id || ! in_array( $key[0] ?? '', [ 'r', 'p' ], true ) || ! is_array( $input ) ) { $result = self::addon_error( 'invalid_request' ); }
+			elseif ( 'r' === $key[0] && ( ! is_array( $row ) || ! $row['configured'] ) ) { $result = self::addon_error( 'package_addon_not_found' ); }
+			elseif ( 'p' === $key[0] && null === $row ) {
+				// Identical resubmission of a just-created candidate still uses create's safe no-op.
+				foreach ( $model['rows'] as $existing ) { if ( $id === $existing['bingo_play_product_id'] ) { $row = $existing; break; } }
+				if ( null === $row ) { $result = self::addon_error( 'play_product_not_found' ); }
+			}
+			if ( null === $result ) {
+				$price = $input['unit_price'] ?? null;
+				$maximum = $input['max_quantity'] ?? null;
+				$enabled = isset( $input['enabled'] );
+				if ( $enabled && '1' !== $input['enabled'] ) { $result = self::addon_error( 'invalid_request' ); }
+				elseif ( ! is_string( $price ) || 1 !== preg_match( CatalogPackageAddonPlan::PRICE_PATTERN, $price ) ) { $result = self::addon_error( 'package_addon_price_invalid' ); }
+				elseif ( ! is_string( $maximum ) || 1 !== preg_match( '/\A0*[1-9][0-9]?\z/', $maximum ) ) { $result = self::addon_error( 'package_addon_max_quantity_invalid' ); }
+				elseif ( 'r' === $key[0] && ! is_string( $input['fingerprint'] ?? null ) ) { $result = self::addon_error( 'package_addon_stale' ); }
+				else {
+					$maximum = (int) $maximum;
+					$result = $row['woo_missing'] && ( $price !== $row['unit_price'] || $maximum !== $row['max_quantity'] || ( $enabled && ! $row['enabled'] ) )
+						? self::addon_error( 'play_product_not_found' ) : ( 'r' === $key[0]
+						? $service->update( $id, $input['fingerprint'], $price, $maximum, $enabled )
+						: $service->create( $package_id, $id, $price, $maximum ) );
+				}
+			}
+			$results[ $key ] = [ 'result' => $result, 'submitted' => is_array( $input ) ? $input : [], 'product' => $row['bingo_play_product_id'] ?? 0 ];
+		}
+		return $results;
+	}
+
+	private static function render_addons( int $package_id ): void {
+		$response = self::$addons_response;
+		$result = is_array( $response ) && $response['blog'] === get_current_blog_id() && $response['actor'] === get_current_user_id() && $response['package'] === $package_id ? $response['result'] : [];
+		$model = self::addons_model( $package_id, true );
+		echo '<section id="bc-package-addons"><h2>' . esc_html__( 'Optional Add-ons', 'bingocommerce-catalog' ) . '</h2>';
+		if ( $result instanceof \WP_Error ) { self::addon_notice( $result ); }
+		$results = is_array( $result ) ? $result : [];
+		$is_save = 'save' === ( $response['action'] ?? '' );
+		if ( $is_save ) { self::addon_save_summary( $results ); }
+		// Even a confirming read failure must not erase a committed row's success.
+		foreach ( $results as $key => $outcome ) {
+			if ( $model instanceof \WP_Error || ! $outcome['result'] instanceof \WP_Error || 'retry' === $key ) { self::addon_notice( $outcome['result'], ! $is_save ); }
+		}
+		if ( $model instanceof \WP_Error ) {
+			echo '<p class="notice notice-error">' . esc_html__( 'Optional Add-ons could not be read safely. The list is unavailable, not empty. Contact Platform Admin.', 'bingocommerce-catalog' ) . '</p>';
+			self::addon_notice( $model );
+			// Retain only targeted recovery from this scoped response, never unverified rows.
+			self::render_addon_retries( $package_id, $results, true );
+			echo '</section>';
+			return;
+		}
+		$readonly = 'active' !== $model['package']['status'];
+		$rows = $model['rows'];
+		foreach ( $results as $key => $outcome ) {
+			if ( ! $outcome['result'] instanceof \WP_Error || 'retry' === $key ) { continue; }
+			if ( ! isset( $rows[ $key ] ) ) {
+				// No unverified product name/ID is resolved for a forged or no-longer-eligible row.
+				$rows[ $key ] = [ 'configured' => false, 'unresolved' => true, 'woo_missing' => false, 'label' => __( 'Submitted row — unavailable in this Package', 'bingocommerce-catalog' ), 'medium' => null, 'play_product_status' => null, 'medium_compatible' => false, 'unit_price' => '', 'max_quantity' => '', 'fingerprint' => '', 'enabled' => 0 ];
+			}
+			$rows[ $key ]['saved_enabled'] = $rows[ $key ]['enabled'];
+			foreach ( [ 'unit_price', 'max_quantity', 'fingerprint' ] as $field ) {
+				if ( is_string( $outcome['submitted'][ $field ] ?? null ) ) { $rows[ $key ][ $field ] = $outcome['submitted'][ $field ]; }
+			}
+			if ( [] !== $outcome['submitted'] ) { $rows[ $key ]['enabled'] = isset( $outcome['submitted']['enabled'] ) ? 1 : 0; }
+		}
+		?>
+		<p><?php echo esc_html__( 'Configured relationships first, including disabled relationships. Uncheck to disable and preserve configuration. Prices are specific to this Package.', 'bingocommerce-catalog' ); ?></p>
+		<?php if ( $readonly ) : ?><p><?php echo esc_html__( 'Archived Package — restore it before changing add-ons.', 'bingocommerce-catalog' ); ?></p><?php endif; ?>
+		<label for="bc-addon-search"><?php echo esc_html__( 'Filter add-ons', 'bingocommerce-catalog' ); ?></label>
+		<input type="search" id="bc-addon-search" autocomplete="off">
+		<form method="post" id="bc-addons-form">
+			<?php wp_nonce_field( self::addons_nonce( $package_id ) ); ?>
+			<input type="hidden" name="bc_addons_form" value="1">
+			<input type="hidden" name="package_id" value="<?php echo esc_attr( (string) $package_id ); ?>">
+			<?php if ( ! $readonly ) : ?><p><button type="submit" class="button button-primary" name="bc_addons_action" value="save"><?php echo esc_html__( 'Save Add-ons', 'bingocommerce-catalog' ); ?></button></p><?php endif; ?>
+			<table class="widefat striped"><thead><tr>
+				<th><?php echo esc_html__( 'Enabled', 'bingocommerce-catalog' ); ?></th><th><?php echo esc_html__( 'Bingo Play Product', 'bingocommerce-catalog' ); ?></th>
+				<th><?php echo esc_html__( 'Package-specific unit price', 'bingocommerce-catalog' ); ?></th><th><?php echo esc_html__( 'Maximum quantity', 'bingocommerce-catalog' ); ?></th><th><?php echo esc_html__( 'Action', 'bingocommerce-catalog' ); ?></th>
+			</tr></thead><tbody>
+			<?php foreach ( $rows as $key => $row ) :
+				$locked = $readonly || $row['unresolved'];
+				$restricted = 'archived' === $row['play_product_status'] || $row['woo_missing'];
+				$name = 'addons[' . $key . ']';
+				?>
+				<tr data-addon-row="<?php echo esc_attr( $key ); ?>" data-configured="<?php echo $row['configured'] ? '1' : '0'; ?>">
+					<td><input type="checkbox" <?php if ( ! $locked ) : ?>name="<?php echo esc_attr( $name . '[enabled]' ); ?>"<?php endif; ?> value="1" <?php checked( (bool) $row['enabled'] ); ?> <?php disabled( $locked || ( ( $restricted || ! $row['medium_compatible'] ) && ! $row['enabled'] ) ); ?> aria-label="<?php echo esc_attr( sprintf( __( 'Enable %s', 'bingocommerce-catalog' ), $row['label'] ) ); ?>"></td>
+					<td><strong><?php echo esc_html( $row['label'] ); ?></strong><br>
+						<?php echo esc_html( $row['configured'] ? ( ( $row['saved_enabled'] ?? $row['enabled'] ) ? __( 'Configured — enabled', 'bingocommerce-catalog' ) : __( 'Configured — disabled', 'bingocommerce-catalog' ) ) : __( 'Not configured', 'bingocommerce-catalog' ) ); ?>
+						<?php if ( null !== $row['medium'] ) : ?><br><?php echo esc_html( self::medium_label( $row['medium'] ) ); ?><?php endif; ?>
+						<?php if ( $row['unresolved'] ) : ?><br><?php echo esc_html__( 'Unresolved Catalog Play Product — read-only. Contact Platform Admin.', 'bingocommerce-catalog' ); ?><?php endif; ?>
+						<?php if ( $row['woo_missing'] ) : ?><br><?php echo esc_html__( 'Unresolved WooCommerce product — only disable or Remove is available.', 'bingocommerce-catalog' ); ?><?php endif; ?>
+						<?php if ( 'archived' === $row['play_product_status'] ) : ?><br><?php echo esc_html__( 'Archived Play Product — only disable or Remove is available.', 'bingocommerce-catalog' ); ?><?php endif; ?>
+						<?php if ( ! $row['medium_compatible'] && ! $row['unresolved'] ) : ?><br><?php echo esc_html__( 'Medium incompatible — disable or Remove; enabling is not permitted.', 'bingocommerce-catalog' ); ?><?php endif; ?>
+						<?php if ( isset( $results[ $key ] ) && $results[ $key ]['result'] instanceof \WP_Error ) : self::addon_notice( $results[ $key ]['result'] ); endif; ?>
+					</td>
+					<td><input type="text" inputmode="decimal" <?php if ( ! $locked ) : ?>name="<?php echo esc_attr( $name . '[unit_price]' ); ?>"<?php endif; ?> value="<?php echo esc_attr( (string) $row['unit_price'] ); ?>" <?php wp_readonly( $locked || $restricted ); ?> aria-label="<?php echo esc_attr__( 'Unit price, exactly two decimal digits', 'bingocommerce-catalog' ); ?>"></td>
+					<td><input type="text" inputmode="numeric" size="3" <?php if ( ! $locked ) : ?>name="<?php echo esc_attr( $name . '[max_quantity]' ); ?>"<?php endif; ?> value="<?php echo esc_attr( (string) $row['max_quantity'] ); ?>" <?php wp_readonly( $locked || $restricted ); ?> aria-label="<?php echo esc_attr__( 'Maximum quantity, 1–99', 'bingocommerce-catalog' ); ?>"></td>
+					<td><?php if ( ! $locked && $row['configured'] ) : ?>
+						<input type="hidden" name="<?php echo esc_attr( $name . '[fingerprint]' ); ?>" value="<?php echo esc_attr( $row['fingerprint'] ); ?>">
+						<button type="submit" class="button button-small" name="bc_addons_action" value="<?php echo esc_attr( 'remove:' . $key ); ?>" data-addon-remove="<?php echo esc_attr__( 'Permanently remove this add-on relationship? Unchecking instead preserves its configuration.', 'bingocommerce-catalog' ); ?>" disabled><?php echo esc_html__( 'Remove', 'bingocommerce-catalog' ); ?></button>
+					<?php endif; ?></td>
+				</tr>
+			<?php endforeach; ?>
+			<?php if ( [] === $rows ) : ?><tr><td colspan="5"><?php echo esc_html__( 'No configured add-ons or eligible Play Products.', 'bingocommerce-catalog' ); ?></td></tr><?php endif; ?>
+			</tbody></table>
+			<input type="hidden" name="bc_addons_complete" value="1">
+			<noscript><p><?php echo esc_html__( 'Saving works without JavaScript. Enable JavaScript to filter the list or confirm permanent Remove.', 'bingocommerce-catalog' ); ?></p></noscript>
+			<?php self::render_addon_retries( $package_id, $results ); ?>
+		</form></section>
+		<?php
+	}
+
+	/** Same targeted controls, with a recovery-only form when the list cannot be rendered. */
+	private static function render_addon_retries( int $package_id, array $results, bool $standalone = false ): void {
+		$retries = [];
+		foreach ( $results as $outcome ) {
+			$value = $outcome['result'];
+			$warning = $value instanceof PackageAddonResult && in_array( 'projection_reconciliation_required', array_column( $value->warnings, 'code' ), true );
+			if ( ( $warning || ( $value instanceof \WP_Error && 'projection_reconciliation_required' === $value->get_error_code() ) ) && $outcome['product'] > 0 ) { $retries[ $outcome['product'] ] = true; }
+		}
+		if ( [] === $retries ) { return; }
+		if ( $standalone ) : ?>
+			<form method="post">
+				<?php wp_nonce_field( self::addons_nonce( $package_id ) ); ?>
+				<input type="hidden" name="bc_addons_form" value="1">
+				<input type="hidden" name="package_id" value="<?php echo esc_attr( (string) $package_id ); ?>">
+		<?php endif; ?>
+		<?php foreach ( array_keys( $retries ) as $id ) : ?>
+			<p><button type="submit" class="button" name="bc_addons_action" value="<?php echo esc_attr( 'retry:' . $id . ':' . wp_create_nonce( self::addons_nonce( $package_id ) . ':retry:' . $id ) ); ?>"><?php echo esc_html( sprintf( __( 'Retry synchronization — Play Product #%d', 'bingocommerce-catalog' ), $id ) ); ?></button></p>
+		<?php endforeach; ?>
+		<?php if ( $standalone ) : ?></form><?php endif; ?>
+		<?php
+	}
+
+	/** Count confirmed Save outcomes and rows needing attention without claiming unknown commits failed. */
+	private static function addon_save_summary( array $results ): void {
+		$counts = [ 'package_addon_created' => 0, 'package_addon_updated' => 0, 'package_addon_unchanged' => 0 ];
+		$attention = 0;
+		foreach ( $results as $outcome ) {
+			$value = $outcome['result'];
+			if ( $value instanceof PackageAddonResult && isset( $counts[ $value->status ] ) ) { ++$counts[ $value->status ]; }
+			elseif ( $value instanceof \WP_Error ) { ++$attention; }
+		}
+		if ( 0 === array_sum( $counts ) + $attention ) { return; }
+		$notice = $attention > 0 ? ( $attention === count( $results ) ? 'error' : 'warning' ) : 'success';
+		if ( $counts['package_addon_unchanged'] === count( $results ) ) {
+			$message = __( 'Add-ons unchanged.', 'bingocommerce-catalog' );
+			$notice = 'info';
+		} else {
+			$parts = [];
+			if ( $counts['package_addon_created'] > 0 ) {
+				/* translators: %d: number of created add-ons. */
+				$parts[] = sprintf( _n( '%d add-on created', '%d add-ons created', $counts['package_addon_created'], 'bingocommerce-catalog' ), $counts['package_addon_created'] );
+			}
+			if ( $counts['package_addon_updated'] > 0 ) {
+				/* translators: %d: number of updated add-ons. */
+				$parts[] = sprintf( _n( '%d add-on updated', '%d add-ons updated', $counts['package_addon_updated'], 'bingocommerce-catalog' ), $counts['package_addon_updated'] );
+			}
+			if ( $counts['package_addon_unchanged'] > 0 ) {
+				/* translators: %d: number of unchanged add-ons in a partially changed or failed submission. */
+				$parts[] = sprintf( __( '%d unchanged', 'bingocommerce-catalog' ), $counts['package_addon_unchanged'] );
+			}
+			if ( $attention > 0 ) {
+				/* translators: %d: number of rows needing review, including unknown commit outcomes. */
+				$parts[] = sprintf( _n( '%d row needs attention', '%d rows need attention', $attention, 'bingocommerce-catalog' ), $attention );
+			}
+			$message = implode( '; ', $parts ) . '.';
+			if ( $attention > 0 ) {
+				$message .= ' ' . _n( 'Review the row below.', 'Review the rows below.', $attention, 'bingocommerce-catalog' );
+			}
+		}
+		echo '<p class="notice notice-' . esc_attr( $notice ) . '">' . esc_html( $message ) . '</p>';
+	}
+
+	private static function addon_notice( mixed $result, bool $show_success = true ): void {
+		if ( $result instanceof \WP_Error ) {
+			echo '<p class="notice notice-error">' . esc_html( self::addon_message( $result->get_error_code() ) ) . '</p>';
+		} elseif ( $result instanceof PackageAddonResult ) {
+			if ( $show_success ) { echo '<p class="notice notice-success">' . esc_html( self::addon_message( $result->status ) ) . '</p>'; }
+			foreach ( $result->warnings as $warning ) {
+				echo '<p class="notice notice-warning">' . esc_html( self::addon_message( $warning['code'] ?? '' ) ) . '</p>';
+			}
+		}
+	}
+
+	/** Fixed safe text only: never render service/database exception messages or details. */
+	private static function addon_message( string $code ): string {
+		return match ( $code ) {
+			'package_addon_created' => __( 'Add-on saved and enabled.', 'bingocommerce-catalog' ),
+			'package_addon_updated' => __( 'Add-on updated.', 'bingocommerce-catalog' ),
+			'package_addon_unchanged' => __( 'Add-on unchanged.', 'bingocommerce-catalog' ),
+			'package_addon_removed' => __( 'Add-on relationship removed.', 'bingocommerce-catalog' ),
+			'package_addon_projection_synchronized', 'package_addon_projection_unchanged' => __( 'Synchronization verified.', 'bingocommerce-catalog' ),
+			'package_addon_price_invalid' => __( 'Enter a non-negative price with exactly two decimal digits, such as 5.00, without signs or leading zeros.', 'bingocommerce-catalog' ),
+			'package_addon_max_quantity_invalid' => __( 'Enter a whole maximum quantity from 1 through 99.', 'bingocommerce-catalog' ),
+			'package_addon_stale' => __( 'This add-on changed after the form was loaded. Reload and review it before saving again.', 'bingocommerce-catalog' ),
+			'package_addon_not_found', 'play_product_not_found' => __( 'This row is unavailable in the current Package or Hall. Reload and review it; nothing was detached.', 'bingocommerce-catalog' ),
+			'package_addon_already_exists' => __( 'This Play Product is already configured differently. Reload to review its saved configuration.', 'bingocommerce-catalog' ),
+			'package_addon_medium_incompatible' => __( 'This Play Product medium is incompatible with the Package. Disable or remove the relationship.', 'bingocommerce-catalog' ),
+			'package_archived' => __( 'Restore the Package before changing its add-ons.', 'bingocommerce-catalog' ),
+			'play_product_not_active' => __( 'An archived Play Product permits only disable or Remove, without changing its configuration.', 'bingocommerce-catalog' ),
+			'catalog_commit_outcome_unknown' => __( 'The save outcome is unknown. No automatic retry was made. Reload and inspect Catalog state before deciding what to do next.', 'bingocommerce-catalog' ),
+			'state_read_failed' => __( 'The change committed, but its refreshed state could not be read. Reload before further changes.', 'bingocommerce-catalog' ),
+			'audit_write_failed' => __( 'The change committed, but its audit record could not be written. Contact Platform Admin.', 'bingocommerce-catalog' ),
+			'projection_reconciliation_required' => __( 'Catalog remains authoritative. WooCommerce synchronization needs attention; use the targeted Retry synchronization action.', 'bingocommerce-catalog' ),
+			'invalid_nonce' => __( 'The form expired or could not be verified. Reload before trying again.', 'bingocommerce-catalog' ),
+			'package_addon_management_denied', 'invalid_hall_context' => __( 'You are not authorized to manage add-ons in this Hall.', 'bingocommerce-catalog' ),
+			'package_addon_state_inconsistent', 'package_state_inconsistent' => __( 'Catalog state is inconsistent. Nothing was silently repaired. Contact Platform Admin.', 'bingocommerce-catalog' ),
+			default => __( 'This add-on request could not be completed safely. Reload and review the row; contact Platform Admin if the problem continues.', 'bingocommerce-catalog' ),
+		};
 	}
 
 	/* ------------------------------------------------------------------ *

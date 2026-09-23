@@ -62,7 +62,9 @@ current model.
   tables total. ADR-044 Slice 1 implements Catalog v6's `bingo_package_addons`
   migration and schema verification; Slice 2 implements its backend service,
   fixed mutation profile, integrity extensions, post-commit audit/projection
-  and targeted reconciliation. Package administration UI remains unimplemented.
+  and targeted reconciliation. Slice 3 implements Package administration UI/request
+  handling; storefront/cart/checkout enforcement remains unimplemented. No real
+  Hall migration or deployment is claimed.
   Operational domains still explicitly deferred — including final entitlement,
   redemption accumulation, device, and offline persistence — MUST NOT have
   storage invented ahead of their dedicated designs. Where an existing ADR
@@ -126,8 +128,8 @@ ADR-031's seven approved conceptual baseline tables are:
 
 Of that baseline, the current Catalog v6 and Session v3 schemas implement every
 listed table. ADR-044 Slice 1 implements the add-on migration/schema verifier;
-Slice 2 implements its backend behavior. Package administration UI and request
-handling remain pending. The current
+Slice 2 implements its backend behavior; Slice 3 implements Package administration
+UI and request handling. The current
 repository's Session schema v3 also contains these hall-local tables under
 approved ADR-043:
 

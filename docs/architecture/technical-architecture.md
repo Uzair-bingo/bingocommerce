@@ -148,8 +148,9 @@ automatic Enable/Disable. See
   `$wpdb->prefix`. ADR-044 Slice 1 implements Catalog v6 migration and schema
   verification; Slice 2 implements `PackageAddonService`, its fixed mutation
   profile, integrity extensions, post-commit audit/projection and targeted
-  reconciliation. Package administration UI and request handling remain
-  unimplemented; no real Hall migration, deployment or production readiness is claimed.
+  reconciliation. Slice 3 implements Package administration UI and request handling;
+  storefront/cart/checkout enforcement remains unimplemented. No real Hall migration,
+  deployment or production readiness is claimed.
   Game Type, Bingo Play Product, Package, and Session use local
   surrogate domain IDs; Portal `game_types.id` is the trusted cross-
   system Game Type identity, and the local Game Type row becomes its hall-scoped
