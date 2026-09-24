@@ -271,13 +271,57 @@ final class SessionScheduleAdminTest {
 		$this->same( 2, substr_count( $multi_html, 'Manage Dates' ), 'BOTH schedules for this Portal session get their own "Manage Dates" link' );
 		$this->ok( false !== strpos( $multi_html, 'edit=' . $first_id ), '  one pointing at the first schedule id' );
 		$this->ok( false !== strpos( $multi_html, 'edit=' . $second_id ), '  and one at the second' );
+		foreach ( [ $first_id => '18:00', $second_id => '20:00' ] as $id => $saved_time ) {
+			$this->ok( 1 === preg_match( '/Schedule #' . $id . ' \(saved time: ' . $saved_time . '\).*?<a href="[^"]*edit=' . $id . '"[^>]*>\s*Manage Dates/s', $multi_html ), 'each Manage Dates link is paired with its own schedule ID and saved time' );
+			$selected = $this->render_screen( [ SessionScheduleAdmin::class, 'render' ], [ 'page' => SessionScheduleAdmin::PAGE_SLUG, 'edit' => (string) $id ] );
+			$this->ok( false !== strpos( $selected, '<h2>Schedule #' . $id . '</h2>' ) && false !== strpos( $selected, 'Portal session:</strong> ' . self::PREFIX . ' Multi Eligible Bingo' ) && false !== strpos( $selected, 'Saved time:</strong> ' . $saved_time ), 'the edit page identifies the selected schedule, Portal name and saved time' );
+			$this->ok( false === strpos( $selected, 'Every session schedule in this hall' ), 'the edit page does not append the hall-wide table' );
+			$this->ok( false !== strpos( $selected, 'Back to all schedules' ), 'the selected schedule has a route back to the full list' );
+			preg_match_all( '/<form\b[^>]*>.*?<\/form>/s', $selected, $forms );
+			$update_forms = array_values( array_filter( $forms[0], static fn( $form ) => false !== strpos( $form, 'name="action" value="' . SessionScheduleAdmin::POST_ACTION . '"' ) ) );
+			$this->same( 1, count( $update_forms ), 'exactly one Update Sessions form is offered for the selected schedule' );
+			$update_form = $update_forms[0] ?? '';
+			$this->ok( false !== strpos( $update_form, 'method="post"' ) && false !== strpos( $update_form, 'name="schedule_id" value="' . $id . '"' ) && false !== strpos( $update_form, wp_create_nonce( self::NONCE_GENERATE ) ), 'the selected update action retains POST, the existing handler, its target and nonce' );
+			$this->ok( false === strpos( $update_form, 'name="bc_action"' ) && false !== strpos( $this->form_for_action( $selected, 'edit' ), 'name="schedule_id" value="' . $id . '"' ), 'Save and Update are separate forms targeting the same schedule' );
+		}
+		$list = $this->render_screen( [ SessionScheduleAdmin::class, 'render' ], [ 'page' => SessionScheduleAdmin::PAGE_SLUG ] );
+		$this->ok( false !== strpos( $list, 'Every session schedule in this hall' ) && false !== strpos( $list, '<strong>#' . $first_id . '</strong>' ) && false !== strpos( $list, '<strong>#' . $second_id . '</strong>' ), 'the main list still shows both schedules for the same Portal session' );
+
+		$second_before = $service->get( $second_id );
+		$saved_args = $this->query_args_of( $this->save( [
+			'bc_action' => 'edit', 'schedule_id' => (string) $first_id,
+			'mode' => ScheduleExpansion::MODE_DATES, 'start_time' => '19:00',
+			'future_dates' => [ $this->us_date( '+2 days' ) ], 'package_ids' => [ (string) $pkg_a ],
+		] ) );
+		$this->same( 'updated', $saved_args['bc_saved'] ?? '', 'selected schedule Save succeeds' );
+		$this->same( (string) $first_id, $saved_args['edit'] ?? '', 'Save redirects to the same selected schedule' );
+		$this->same( 303, $this->last_redirect_status, 'Save preserves the POST-to-GET redirect' );
+		$this->same( 0, $this->occurrence_count( $first_id ), 'Save does not implicitly run Update Sessions' );
+		$saved_page = $this->render_screen( [ SessionScheduleAdmin::class, 'render' ], $saved_args );
+		$this->ok( false !== strpos( $saved_page, 'Saved time:</strong> 19:00' ) && false !== strpos( $saved_page, 'Schedule saved.' ), 'Save landing page shows the committed time and save notice' );
+		$refused_args = $this->query_args_of( $this->save( [
+			'bc_action' => 'edit', 'schedule_id' => (string) $first_id,
+			'mode' => ScheduleExpansion::MODE_DATES, 'start_time' => '21:00',
+			'future_dates' => [ 'not a date' ], 'package_ids' => [ (string) $pkg_a ],
+		] ) );
+		$this->same( (string) $first_id, $refused_args['edit'] ?? '', 'refused Save also retains the selected schedule' );
+		$refused_page = $this->render_screen( [ SessionScheduleAdmin::class, 'render' ], $refused_args );
+		$this->ok( false !== strpos( $refused_page, 'Saved time:</strong> 19:00' ) && false !== strpos( $refused_page, 'value="21:00"' ), 'saved context remains distinct from the retained unsaved form time' );
+		$updated_args = $this->query_args_of( $this->run_generate( $first_id, true ) );
+		$this->same( SessionScheduleResult::STATUS_OK, $updated_args['bc_generated'] ?? '', 'the selected Update Sessions action succeeds' );
+		$this->same( (string) $first_id, $updated_args['edit'] ?? '', 'Update redirects to the same selected schedule' );
+		$this->same( 303, $this->last_redirect_status, 'Update preserves the POST-to-GET redirect' );
+		$updated_page = $this->render_screen( [ SessionScheduleAdmin::class, 'render' ], $updated_args );
+		$this->ok( false !== strpos( $updated_page, '<h2>Schedule #' . $first_id . '</h2>' ) && false !== strpos( $updated_page, 'Bingo Sessions updated.' ), 'Update landing page keeps selected identity and its result together' );
+		$this->same( 1, $this->occurrence_count( $first_id ), 'Update generates only the selected schedule' );
+		$this->same( 0, $this->occurrence_count( $second_id ), 'the other schedule has no generated occurrence' );
+		$this->same( $second_before, $service->get( $second_id ), 'saving and updating the selected schedule leaves the other header unchanged' );
 		// "Add to Store" survives having existing schedules — a Manager may
 		// legitimately add a THIRD schedule for the same Portal session.
 		$this->ok( false !== strpos( $multi_html, 'portal_session_id=' . $multi_eligible ), '  and Add to Store is still offered, so a third schedule remains possible' );
 
-		/* An INERT schedule (failed CAS) for this Portal session additionally
-		 * surfaces "Retry Creating Sessions" right here, ahead of the click
-		 * into Manage Dates. */
+		/* An INERT schedule (failed CAS) needs its definition saved before any
+		 * session update; Manage Dates remains the only route from this list. */
 		global $wpdb;
 		$wpdb->update(
 			Migrations::schedules_table(),
@@ -285,7 +329,11 @@ final class SessionScheduleAdminTest {
 			[ 'schedule_id' => $second_id ]
 		);
 		$inert_html = $this->render_screen( [ SessionTemplateAdmin::class, 'render' ], [ 'page' => SessionTemplateAdmin::PAGE_SLUG ] );
-		$this->same( 1, substr_count( $inert_html, 'Retry Creating Sessions' ), 'an INERT schedule for this Portal session surfaces Retry Creating Sessions once' );
+		$this->ok( false !== strpos( $inert_html, 'Incomplete — open and save this schedule first.' ), 'an INERT schedule shows a save-first reminder' );
+		$this->same( 0, substr_count( $inert_html, 'Update Sessions' ), 'the Portal list does not mislabel an edit link as an update action' );
+		$this->ok( false !== strpos( $inert_html, 'edit=' . $second_id ) && false !== strpos( $inert_html, 'Manage Dates' ), 'the existing Manage Dates edit route remains available' );
+		$inert_edit = $this->render_screen( [ SessionScheduleAdmin::class, 'render' ], [ 'page' => SessionScheduleAdmin::PAGE_SLUG, 'edit' => (string) $second_id ] );
+		$this->ok( '' !== $this->form_for_action( $inert_edit, 'edit' ) && false === strpos( $inert_edit, 'name="action" value="' . SessionScheduleAdmin::POST_ACTION . '"' ), 'an incomplete schedule offers Save before it can offer Update' );
 
 		restore_current_blog();
 	}
@@ -308,6 +356,7 @@ final class SessionScheduleAdminTest {
 		);
 
 		$this->ok( false !== strpos( $html, 'Create Sessions' ), 'the create form renders for an eligible template' );
+		$this->ok( false === strpos( $html, 'Every session schedule in this hall' ) && false !== strpos( $html, 'Back to all schedules' ), 'the create form has a list link instead of the hall-wide table' );
 		$this->ok( false !== strpos( $html, self::ZONE ), 'the form states the captured time zone' );
 		$this->ok(
 			false !== strpos( $html, 'FIXED for the schedule' ) || false !== strpos( $html, 'archive the schedule and create a replacement' ),
@@ -387,7 +436,7 @@ final class SessionScheduleAdminTest {
 		$this->same( 1, is_array( $after ) ? count( $after ) : -1, '  and no second schedule was created' );
 
 		/* --- Edit: change the time. --- */
-		$this->post_to_screen(
+		$edited_page = $this->post_to_screen(
 			[
 				'bc_action'   => 'edit',
 				'schedule_id' => (string) $schedule_id,
@@ -400,6 +449,7 @@ final class SessionScheduleAdminTest {
 		$edited = $service->get( $schedule_id );
 		$this->same( '19:45:00', is_array( $edited ) ? (string) $edited['start_time_local'] : '', 'the posted edit changed the time through the service' );
 		$this->same( self::ZONE, is_array( $edited ) ? (string) $edited['timezone_name'] : '', '  and the timezone is UNCHANGED — it is fixed for the schedule\'s life' );
+		$this->ok( false !== strpos( $edited_page, 'value="19:45"' ) && false === strpos( $edited_page, 'value="18:00:30"' ), 'successful Save renders the committed time, not retained input from an earlier refused form' );
 
 		/* --- Archive, then restore. --- */
 		$this->post_to_screen( [ 'bc_action' => 'archive', 'schedule_id' => (string) $schedule_id ] );
@@ -540,7 +590,7 @@ final class SessionScheduleAdminTest {
 			false === strpos( $html, '<textarea id="bc-dates" name="dates" rows="6" class="large-text" placeholder="2026-01-31">' . $past ),
 			'  and the past date is NOT dumped into the future-dates textarea'
 		);
-		$this->ok( false !== strpos( $html, $this->local_date( '+2 days' ) ), '  while the FUTURE date is still offered for editing' );
+		$this->ok( 1 === preg_match( '/name="future_dates\[\]"\s+value="' . preg_quote( $this->us_date( '+2 days' ), '/' ) . '"/', $html ), '  while the FUTURE date is still offered in the approved MM/DD/YYYY format' );
 
 		/*
 		 * KEEP it first, because keep and drop are not independent: §8.3 exempts
@@ -657,13 +707,12 @@ final class SessionScheduleAdminTest {
 		$this->ok( $schedule_id > 0, 'correction fixture: a schedule exists' );
 
 		/* ---------------------------------------------------------------- *
-		 * (2) A FAILED DEFINITION READ OFFERS NO WAY TO SAVE.
+		 * (2) A FAILED DEFINITION READ OFFERS NO WAY TO SAVE OR UPDATE.
 		 *
 		 * An edit commits the WHOLE definition, so a form built on a read that
 		 * failed would let one Save discard the dates and Packages that could
-		 * not be loaded. The read is broken by renaming the child table for the
-		 * duration — the same table the service reads — so the failure is a
-		 * genuine database failure, not a stubbed return value.
+		 * not be loaded. Divert only the definition SELECT to a nonexistent
+		 * table, yielding a genuine database error without changing any schema.
 		 * ---------------------------------------------------------------- */
 		// ONLY the definition-dates SELECT is diverted; every other statement in
 		// the render runs normally, so what is being tested is that one read
@@ -679,16 +728,31 @@ final class SessionScheduleAdminTest {
 
 		$edit_form = $this->form_for_action( $broken, 'edit' );
 		$this->same( '', $edit_form, 'failed read: NO edit form is rendered at all' );
-		$this->ok( false === strpos( $broken, 'Save schedule' ), '  and no Save action is offered' );
+		$this->ok( false === strpos( $broken, 'Save Schedule' ), '  and no Save action is offered' );
+		$this->ok( false === strpos( $broken, 'name="action" value="' . SessionScheduleAdmin::POST_ACTION . '"' ), '  and no Update action is offered' );
 		$this->ok( false === strpos( $broken, 'name="future_dates"' ), '  no editable date control is rendered' );
 		$this->ok( false === strpos( $broken, 'name="package_ids[]"' ), '  and no editable Package control' );
 		$this->ok( false !== strpos( $broken, 'could not be read' ), '  the failure is stated' );
-		$this->ok( false !== strpos( $broken, 'Nothing has been changed' ), '  and so is the fact that nothing changed' );
-		$this->ok( false !== strpos( $broken, 'Back to schedules' ), '  with a safe way back' );
+		$this->ok( false !== strpos( $broken, 'Opening this page made no changes' ), '  the render does not imply that a previous save was rolled back' );
+		$this->ok( false !== strpos( $broken, 'Back to all schedules' ), '  with a safe way back' );
+		$this->ok( false === strpos( $broken, 'Every session schedule in this hall' ), 'the failed-read screen does not append the hall-wide table' );
 
 		/* The schedule is still archivable from the list — a display failure
 		 * must not take the lifecycle control away. */
-		$this->ok( false !== strpos( $broken, 'value="archive"' ), '  and the schedule can still be ARCHIVED from the list' );
+		$list = $this->render_screen( [ SessionScheduleAdmin::class, 'render' ], [ 'page' => SessionScheduleAdmin::PAGE_SLUG ] );
+		preg_match( '/<tr>\s*<td>\s*<strong>#' . $schedule_id . '<\/strong>.*?<\/tr>/s', $list, $list_row );
+		$this->ok( false !== strpos( $list_row[0] ?? '', 'value="archive"' ) && false !== strpos( $list_row[0] ?? '', 'name="schedule_id" value="' . $schedule_id . '"' ), 'the existing Archive action remains accessible on the main list for this schedule' );
+
+		$this->intercept( '/SELECT package_id\s+FROM \S+bingo_session_schedule_packages/' );
+		$broken_packages = $this->render_screen( [ SessionScheduleAdmin::class, 'render' ], [
+			'page' => SessionScheduleAdmin::PAGE_SLUG, 'edit' => (string) $schedule_id,
+			'bc_saved' => 'created_partial', 'bc_schedule' => (string) $schedule_id,
+		] );
+		$this->ok( $this->stop_intercepting() > 0, 'definition Package read failure was injected' );
+		$this->same( '', $this->form_for_action( $broken_packages, 'edit' ), 'failed Package definition read also suppresses Save' );
+		$this->ok( false === strpos( $broken_packages, 'name="action" value="' . SessionScheduleAdmin::POST_ACTION . '"' ), 'a partial-generation notice cannot bypass failed-read Update suppression' );
+		$this->ok( false !== strpos( $broken_packages, 'sessions were not fully created' ) && false !== strpos( $broken_packages, 'could not be read' ), 'both the prior result and current read error stay visible' );
+		$this->ok( false !== strpos( $broken_packages, 'reload this page once the read succeeds; Update Sessions is unavailable until then' ), 'the partial-generation notice explains recovery without offering an action on the failed-read screen' );
 
 		/* Nothing was written by rendering the broken state. */
 		$still = $service->get( $schedule_id );
@@ -855,6 +919,7 @@ final class SessionScheduleAdminTest {
 		$this->ok( '' !== $location, 'create REDIRECTS rather than rendering its own result' );
 		$args = $this->query_args_of( $location );
 		$this->same( 'created', $args['bc_saved'] ?? '', '  reporting the allowlisted outcome `created`' );
+		$this->same( $args['bc_schedule'] ?? 'missing', $args['edit'] ?? '', 'successful Create lands on its newly saved schedule' );
 		$this->same( SessionScheduleAdmin::PAGE_SLUG, $args['page'] ?? '', '  back to the schedules screen' );
 
 		$after_create = count( (array) $service->list_for_administration( 'all' ) );
@@ -916,6 +981,8 @@ final class SessionScheduleAdminTest {
 		);
 		$this->same( 'error', $refused['bc_saved'] ?? '', 'a refused save redirects with bc_saved=error' );
 		$this->same( 'invalid_time', $refused['bc_error'] ?? '', '  carrying THIS SCREEN\'S fixed code, not the service\'s `invalid_start_time`' );
+		$validation_notice = $this->render_screen( [ SessionScheduleAdmin::class, 'render' ], $refused );
+		$this->ok( false !== strpos( $validation_notice, 'The schedule definition was not saved.' ) && false === strpos( $validation_notice, 'check the schedule and sales state' ), 'definite validation refusal remains explicit' );
 
 		/*
 		 * This create was refused at VALIDATION, before any header was
@@ -968,6 +1035,40 @@ final class SessionScheduleAdminTest {
 		);
 		$this->ok( false === strpos( $unknown, 'zzz_unknown_code' ), 'an unknown error code is never echoed either' );
 		$this->ok( false !== strpos( $unknown, 'was not saved' ), '  but the refusal is still reported' );
+
+		/* A removed future date can commit before its captured sales-OFF write
+		 * fails. Inject failure in that post-commit UPDATE, not the definition
+		 * CAS, and assert the resulting notice does not deny the saved definition. */
+		$removed_date  = $this->local_date( '+6 days' );
+		$retained_date = $this->local_date( '+7 days' );
+		$committed     = $service->create( $template, ScheduleExpansion::MODE_DATES, '18:00', [ $removed_date, $retained_date ], [ $package ] );
+		$commit_id     = $committed instanceof SessionScheduleResult ? (int) $committed->schedule['schedule_id'] : 0;
+		$this->ok( $commit_id > 0, 'post-commit fixture: two-date schedule exists' );
+		$generated = $service->generate( $commit_id );
+		$this->same( SessionScheduleResult::STATUS_OK, $generated instanceof SessionScheduleResult ? $generated->status : '', 'post-commit fixture: Bingo Sessions generated' );
+		$removed_session = (int) $wpdb->get_var( $wpdb->prepare( 'SELECT session_id FROM %i WHERE schedule_id = %d AND session_date = %s', Migrations::sessions_table(), $commit_id, $removed_date ) );
+		$this->ok( $removed_session > 0, 'post-commit fixture: removed-date occurrence exists' );
+		$sales_on = ( new \BingoCommerce\Sessions\SessionService() )->setAvailableForSale( $removed_session, true );
+		$this->ok( ! is_wp_error( $sales_on ), 'post-commit fixture: removed-date occurrence was offered for sale' );
+		$before_commit = $service->get( $commit_id );
+		$this->intercept( '/UPDATE \S+bingo_sessions\s+SET available_for_sale = 0/' );
+		$commit_args = $this->query_args_of( $this->save( [
+			'bc_action'    => 'edit',
+			'schedule_id'  => (string) $commit_id,
+			'mode'         => ScheduleExpansion::MODE_DATES,
+			'start_time'   => '18:00',
+			'future_dates' => $retained_date,
+			'package_ids'  => [ (string) $package ],
+		] ) );
+		$this->same( 1, $this->stop_intercepting(), 'post-commit sales-OFF write failed after the definition CAS' );
+		$this->same( 'error', $commit_args['bc_saved'] ?? '', 'post-commit error is not reported as a completed save' );
+		$this->same( 'write_failed', $commit_args['bc_error'] ?? '', 'post-commit persistence error maps to the fixed UI code' );
+		$after_commit = $service->get( $commit_id );
+		$this->ok( is_array( $before_commit ) && is_array( $after_commit ) && $before_commit['active_definition_token'] !== $after_commit['active_definition_token'], 'definition actually committed before the error' );
+		$this->same( '1', (string) $wpdb->get_var( $wpdb->prepare( 'SELECT available_for_sale FROM %i WHERE session_id = %d', Migrations::sessions_table(), $removed_session ) ), 'injected sales-OFF failure leaves the stored sales flag needing review' );
+		$commit_notice = $this->render_screen( [ SessionScheduleAdmin::class, 'render' ], $commit_args );
+		$this->ok( false !== strpos( $commit_notice, 'Reload and check the schedule and sales state before trying again.' ), 'post-commit notice directs a state check before retry' );
+		$this->ok( false === strpos( $commit_notice, 'The schedule definition was not saved.' ), 'post-commit notice does not deny the saved definition' );
 
 		/* ---------------------------------------------------------------- *
 		 * (4) The Portal template name, read-only, in both places.
@@ -1756,6 +1857,8 @@ JS;
 	 * ================================================================== */
 
 	private function generate_handler_group(): void {
+		global $wpdb;
+
 		$this->group( 'Generate handler' );
 		switch_to_blog( $this->hall );
 		wp_set_current_user( $this->super_admin_id );
@@ -1767,6 +1870,18 @@ JS;
 		$created     = $service->create( $template, ScheduleExpansion::MODE_DATES, '18:00', [ $this->local_date( '+2 days' ) ], [ $package ] );
 		$schedule_id = $created instanceof SessionScheduleResult ? (int) $created->schedule['schedule_id'] : 0;
 		$this->ok( $schedule_id > 0, 'generate fixture: a schedule exists' );
+		$edit = $this->render_screen( [ SessionScheduleAdmin::class, 'render' ], [ 'page' => SessionScheduleAdmin::PAGE_SLUG, 'edit' => (string) $schedule_id ] );
+		$this->ok( false !== strpos( $edit, 'previously offered for sale keeps its original time and Package assignments' ), 'edit form explains protected time and Packages' );
+		$this->ok( false !== strpos( $edit, 'Removing one of its future dates stops purchases for that occurrence but keeps its record' ) && false !== strpos( $edit, 'create a separate schedule' ), 'edit form explains future-date removal and a separate time' );
+		$list = $this->render_screen( [ SessionScheduleAdmin::class, 'render' ], [ 'page' => SessionScheduleAdmin::PAGE_SLUG ] );
+		preg_match( '/<tr>\s*<td>\s*<strong>#' . $schedule_id . '<\/strong>.*?<\/tr>/s', $list, $row_match );
+		$row_html = $row_match[0] ?? '';
+		$this->ok( false !== strpos( $row_html, 'class="bc-schedule-actions" style="display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;"' ), 'each action is a separate spaced control' );
+		$this->ok( false !== strpos( $row_html, 'Edit schedule' ) && false === strpos( $row_html, 'Edit dates' ) && false !== strpos( $row_html, 'Update Sessions' ), 'action labels describe the schedule and session update' );
+		$this->same( 2, substr_count( $row_html, '<form method="post"' ), 'Archive and Update Sessions retain separate POST forms' );
+		$this->same( 2, substr_count( $row_html, 'name="_wpnonce"' ), 'both action forms retain their own nonces' );
+		$save_notice = $this->render_screen( [ SessionScheduleAdmin::class, 'render' ], [ 'page' => SessionScheduleAdmin::PAGE_SLUG, 'bc_saved' => 'updated' ] );
+		$this->ok( false !== strpos( $save_notice, 'Schedule saved. Updating Bingo Sessions is a separate step' ) && false !== strpos( $save_notice, 'Removed future dates stop sales' ), 'save notice distinguishes committed schedule from session update and sales stop' );
 
 		$location = $this->run_generate( $schedule_id, true );
 
@@ -1788,7 +1903,7 @@ JS;
 				'bc_counts'    => 'created:1,completed:1,not_a_real_count:9',
 			]
 		);
-		$this->ok( false !== strpos( $notice, 'Sessions created' ), 'the success notice renders after the redirect' );
+		$this->ok( false !== strpos( $notice, 'Bingo Sessions updated.' ), 'the session update success notice renders after the redirect' );
 		$this->ok( false !== strpos( $notice, 'created: 1' ), '  showing a recognised count' );
 		$this->ok( false === strpos( $notice, 'not_a_real_count' ), '  and DROPPING a count name outside the §8.6 vocabulary rather than echoing it' );
 
@@ -1801,8 +1916,33 @@ JS;
 				'bc_code'      => 'template_renamed',
 			]
 		);
-		$this->ok( false !== strpos( $failed, 'were not fully created' ), 'a failed run is never described as finished' );
+		$this->ok( false !== strpos( $failed, 'were not fully updated' ), 'a failed run is never described as finished' );
 		$this->ok( false !== strpos( $failed, 'renamed' ), '  and names the category in the Manager\'s terms' );
+		$general = $this->render_screen( [ SessionScheduleAdmin::class, 'render' ], [
+			'page' => SessionScheduleAdmin::PAGE_SLUG, 'bc_generated' => SessionScheduleResult::STATUS_FAILED,
+			'bc_code' => 'preflight_conflict',
+		] );
+		$this->ok( false !== strpos( $general, 'Repeating it without a change will not resolve the conflict' ), 'general conflict tells the Manager to resolve it before updating' );
+		$this->ok( false === strpos( $general, 'its time and Package assignments are protected' ), 'general conflict does not claim a protected-time cause' );
+		$this->ok( false !== strpos( $general, 'Bingo Sessions were not fully updated.' ) && false === strpos( $general, 'reported below' ), 'failed update without counts makes no promise of reported results' );
+
+		$session_id = (int) $wpdb->get_var( $wpdb->prepare( 'SELECT session_id FROM %i WHERE schedule_id = %d', Migrations::sessions_table(), $schedule_id ) );
+		$this->ok( $session_id > 0, 'protected-time fixture has a generated Bingo Session' );
+		$on = ( new \BingoCommerce\Sessions\SessionService() )->setAvailableForSale( $session_id, true );
+		$this->ok( ! is_wp_error( $on ), 'generated Bingo Session was offered for sale' );
+		$edited = $service->edit( $schedule_id, ScheduleExpansion::MODE_DATES, '15:00', [ $this->local_date( '+2 days' ) ], [ $package ] );
+		$this->same( SessionScheduleResult::STATUS_OK, $edited instanceof SessionScheduleResult ? $edited->status : '', 'schedule saves a different time before session update' );
+		$before = $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM %i WHERE session_id = %d', Migrations::sessions_table(), $session_id ), ARRAY_A );
+		$protected_args = $this->query_args_of( $this->run_generate( $schedule_id, true ) );
+		$this->same( 'protected_time_conflict', $protected_args['bc_code'] ?? '', 'only a confirmed protected-time blocker is named in the redirect' );
+		$this->same( (string) $schedule_id, $protected_args['edit'] ?? '', 'a failed Update retains the selected schedule context' );
+		$protected_notice = $this->render_screen( [ SessionScheduleAdmin::class, 'render' ], $protected_args );
+		$this->ok( false !== strpos( $protected_notice, 'It did not move' ) && false !== strpos( $protected_notice, 'create a separate schedule at the new time' ), 'protected-time notice explains why and what to change' );
+		$this->same( $before, $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM %i WHERE session_id = %d', Migrations::sessions_table(), $session_id ), ARRAY_A ), 'protected-time update leaves the Bingo Session unchanged' );
+		$wpdb->update( Migrations::sessions_table(), [ 'generation_completed_at' => null ], [ 'session_id' => $session_id ] );
+		$other_conflict = $this->query_args_of( $this->run_generate( $schedule_id, true ) );
+		$this->same( 'preflight_conflict', $other_conflict['bc_code'] ?? '', 'other confirmed preflight blocker remains a general conflict' );
+		$this->ok( false === strpos( $this->render_screen( [ SessionScheduleAdmin::class, 'render' ], $other_conflict ), 'It did not move' ), 'non-time conflict is not mislabeled protected-time' );
 
 		restore_current_blog();
 	}
@@ -2165,7 +2305,7 @@ JS;
 		 * suite that hall carries many leftover schedules from earlier
 		 * groups (CAS races, handler-order, boundary cases), and this
 		 * group's assertions below rely on EXACT statement and row counts
-		 * — e.g. "exactly one Retry Creating Sessions action" — which only
+		 * — e.g. an exact action count — which only
 		 * a clean hall can guarantee.
 		 */
 		$orch_hall = $this->create_disposable_site();
@@ -2316,18 +2456,16 @@ JS;
 			[ SessionScheduleAdmin::class, 'render' ],
 			$partial_args
 		);
-		/*
-		 * The notice's OWN retry button is `class="button"`; the list table
-		 * below it also offers a per-row `class="button-link"` retry action
-		 * on every active schedule (the same idempotent control, available
-		 * generally, not only on failure) — so this checks for the notice's
-		 * specific button, not a page-wide uniqueness that the list rows
-		 * would legitimately break.
-		 */
+		$this->ok( false !== strpos( $partial_notice, 'use Update Sessions for this schedule to finish creating Bingo Sessions' ), 'a readable partial-generation page directs the Manager to the selected schedule action' );
+		preg_match( '/<div class="notice notice-warning">(.*?)<\/div>/s', $partial_notice, $partial_warning );
+		$this->ok( false === strpos( $partial_warning[1] ?? '', '<form' ), 'the partial-generation notice does not introduce a retry form' );
+		// The result leads to the selected editor, whose read-verified action
+		// replaces the notice's independent action and the old table below it.
 		$this->ok(
-			1 === preg_match( '/class="button">\s*Retry Creating Sessions/', $partial_notice ),
-			'  and the notice itself offers a safe Retry Creating Sessions action'
+			1 === preg_match_all( '/class="button">\s*Update Sessions/', $partial_notice ),
+			'  and the selected editor offers exactly one Update Sessions action'
 		);
+		$this->same( (string) $partial_id, $partial_args['edit'] ?? '', 'partial generation retains its selected schedule context' );
 		$this->ok( false !== strpos( $partial_notice, (string) $partial_id ), '  targeting the preserved schedule\'s own id' );
 
 		/* Retry uses the SAME idempotent generation path — no second implementation. */

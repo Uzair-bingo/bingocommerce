@@ -177,9 +177,7 @@ final class SessionTemplateAdmin {
 									</a>
 									<?php if ( self::needs_retry( $schedule ) ) : ?>
 										&mdash;
-										<a href="<?php echo esc_url( self::manage_dates_url( (int) $schedule['schedule_id'] ) ); ?>">
-											<?php echo esc_html__( 'Retry Creating Sessions', 'bingocommerce-sessions' ); ?>
-										</a>
+										<span><?php echo esc_html__( 'Incomplete — open and save this schedule first.', 'bingocommerce-sessions' ); ?></span>
 									<?php endif; ?>
 								<?php endforeach; ?>
 							<?php endif; ?>
@@ -230,30 +228,30 @@ final class SessionTemplateAdmin {
 
 	/** @param array<string,mixed> $schedule */
 	private static function schedule_summary( array $schedule ): string {
+		$schedule_id = (int) $schedule['schedule_id'];
 		$time = ScheduleTimezone::display_time( (string) ( $schedule['start_time_local'] ?? '' ) );
 		$archived = SessionScheduleService::STATUS_ARCHIVED === (string) ( $schedule['status'] ?? '' );
 
 		if ( $archived ) {
-			/* translators: %s: the schedule's start time. */
-			return sprintf( __( 'Archived schedule (%s) —', 'bingocommerce-sessions' ), $time );
+			/* translators: 1: schedule ID, 2: saved start time. */
+			return sprintf( __( 'Archived schedule #%1$d (saved time: %2$s) —', 'bingocommerce-sessions' ), $schedule_id, $time );
 		}
 
-		/* translators: %s: the schedule's start time. */
-		return sprintf( __( 'Schedule (%s) —', 'bingocommerce-sessions' ), $time );
+		/* translators: 1: schedule ID, 2: saved start time. */
+		return sprintf( __( 'Schedule #%1$d (saved time: %2$s) —', 'bingocommerce-sessions' ), $schedule_id, $time );
 	}
 
 	/**
-	 * Whether "Retry Creating Sessions" is worth surfacing for this schedule.
+	 * Whether this schedule needs a save reminder on Sessions from Portal.
 	 *
 	 * READS ONLY WHAT THE LIST ROW ALREADY CARRIES. An inert schedule — no
 	 * committed definition, because its create CAS affected zero rows (§3.8
-	 * step 5) — plainly needs a retry, and `active_definition_token` being
+	 * step 5) — plainly needs a save, and `active_definition_token` being
 	 * empty is exactly that fact, already present on the row this method is
 	 * handed. This does NOT re-derive reconciliation state, count occurrences,
 	 * or ask whether a fully-converged schedule has "changed since" — that
-	 * would duplicate OccurrenceReconciler's own job. A schedule that is not
-	 * inert still offers Retry from Manage Dates itself; this is only about
-	 * whether to call it out here, on this list, ahead of that click.
+	 * would duplicate OccurrenceReconciler's own job. The existing Manage Dates
+	 * link opens the edit form; this reminder does not trigger generation.
 	 *
 	 * @param array<string,mixed> $schedule
 	 */

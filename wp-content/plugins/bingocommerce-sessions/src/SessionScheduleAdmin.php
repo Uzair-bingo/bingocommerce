@@ -308,6 +308,9 @@ final class SessionScheduleAdmin {
 		$result = ( new SessionScheduleService() )->generate( $schedule_id );
 
 		$args = [ 'page' => self::PAGE_SLUG ];
+		if ( $schedule_id > 0 ) {
+			$args['edit'] = $schedule_id;
+		}
 		if ( is_wp_error( $result ) ) {
 			$args['bc_generated'] = 'error';
 			$args['bc_code']      = $result->get_error_code();
@@ -315,6 +318,9 @@ final class SessionScheduleAdmin {
 			$args['bc_generated'] = $result->status;
 			if ( null !== $result->failure_category ) {
 				$args['bc_code'] = $result->failure_category;
+				if ( 'preflight_conflict' === $result->failure_category && in_array( 'protected_time_conflict', array_column( $result->blockers, 'kind' ), true ) ) {
+					$args['bc_code'] = 'protected_time_conflict';
+				}
 			}
 			$args['bc_counts'] = self::encode_counts( $result->reported_counts() );
 		}
@@ -370,6 +376,11 @@ final class SessionScheduleAdmin {
 				$args += self::create_and_generate( $result );
 			} else {
 				$args['bc_saved'] = self::outcome_for( $action );
+			}
+			if ( in_array( $action, [ 'create', 'edit' ], true ) && ! empty( $result->schedule['schedule_id'] ) ) {
+				// The success landing must show committed values, not an older rejected draft.
+				delete_transient( self::input_key() );
+				$args['edit'] = (int) $result->schedule['schedule_id'];
 			}
 		} else {
 			$args['bc_saved'] = 'error';
@@ -428,8 +439,8 @@ final class SessionScheduleAdmin {
 		}
 
 		// Partial or failed generation. The schedule stands; only the notice
-		// changes, and it carries safe counts plus the schedule id so the
-		// notice can offer a one-click Retry against THIS schedule.
+		// changes, and it carries safe counts plus the schedule id. The editor
+		// offers Update Sessions after successfully reading this definition.
 		$counts = $generated instanceof SessionScheduleResult ? $generated->reported_counts() : [];
 
 		return [
@@ -568,13 +579,9 @@ final class SessionScheduleAdmin {
 			$status = 'all';
 		}
 
-		// A FAILED READ IS NOT AN EMPTY HALL.
-		$schedules       = $service->list_for_administration( $status );
-		$schedules_error = is_wp_error( $schedules ) ? $schedules : null;
-		$schedules       = is_wp_error( $schedules ) ? [] : $schedules;
-
 		$action  = sanitize_key( wp_unslash( $_GET['action'] ?? '' ) );
 		$editing = SessionAdmin::request_int( wp_unslash( $_GET['edit'] ?? null ) );
+		$is_form = $editing > 0 || 'new' === $action;
 		?>
 		<div class="wrap">
 			<h1><?php echo esc_html__( 'Manage Session Dates', 'bingocommerce-sessions' ); ?></h1>
@@ -586,25 +593,33 @@ final class SessionScheduleAdmin {
 					<?php echo esc_html__( '&laquo; Back to Sessions from Portal', 'bingocommerce-sessions' ); ?>
 				</a>
 			</p>
+			<?php if ( $is_form ) : ?>
+				<p>
+					<a href="<?php echo esc_url( add_query_arg( [ 'page' => self::PAGE_SLUG ], admin_url( 'admin.php' ) ) ); ?>">
+						<?php echo esc_html__( 'Back to all schedules', 'bingocommerce-sessions' ); ?>
+					</a>
+				</p>
+			<?php endif; ?>
 
 			<?php self::render_generation_notice(); ?>
 			<?php self::render_save_notice(); ?>
-
-			<?php if ( null !== $schedules_error ) : ?>
-				<div class="notice notice-error">
-					<p><?php echo esc_html__( 'This hall\'s commerce schedules could not be read, so the list below is incomplete. Do not assume it is empty.', 'bingocommerce-sessions' ); ?></p>
-					<p><?php echo esc_html( SessionAdmin::error_message( $schedules_error ) ); ?></p>
-				</div>
-			<?php endif; ?>
 
 			<?php if ( $editing > 0 ) : ?>
 				<?php self::render_edit_form( $service, $editing ); ?>
 			<?php elseif ( 'new' === $action ) : ?>
 				<?php self::render_create_form( SessionAdmin::request_int( wp_unslash( $_GET['portal_session_id'] ?? null ) ) ); ?>
+			<?php else : ?>
+				<?php $schedules = $service->list_for_administration( $status ); ?>
+				<h2><?php echo esc_html__( 'Every session schedule in this hall', 'bingocommerce-sessions' ); ?></h2>
+				<?php if ( is_wp_error( $schedules ) ) : ?>
+					<div class="notice notice-error">
+						<p><?php echo esc_html__( 'This hall\'s commerce schedules could not be read. Do not assume it is empty.', 'bingocommerce-sessions' ); ?></p>
+						<p><?php echo esc_html( SessionAdmin::error_message( $schedules ) ); ?></p>
+					</div>
+				<?php else : ?>
+					<?php self::render_table( $schedules ); ?>
+				<?php endif; ?>
 			<?php endif; ?>
-
-			<h2><?php echo esc_html__( 'Every session schedule in this hall', 'bingocommerce-sessions' ); ?></h2>
-			<?php self::render_table( $schedules ); ?>
 		</div>
 		<?php
 	}
@@ -1110,6 +1125,14 @@ final class SessionScheduleAdmin {
 			return;
 		}
 
+		$template_name = self::template_name( (int) ( $schedule['portal_session_id'] ?? 0 ) );
+		?>
+		<h2><?php /* translators: %d: selected schedule ID. */ echo esc_html( sprintf( __( 'Schedule #%d', 'bingocommerce-sessions' ), $schedule_id ) ); ?></h2>
+		<p class="bc-selected-schedule">
+			<strong><?php echo esc_html__( 'Portal session:', 'bingocommerce-sessions' ); ?></strong> <?php echo esc_html( $template_name ); ?>
+			&mdash; <strong><?php echo esc_html__( 'Saved time:', 'bingocommerce-sessions' ); ?></strong> <?php echo esc_html( ScheduleTimezone::display_time( (string) $schedule['start_time_local'] ) ); ?>
+		</p>
+		<?php
 		$token = (string) ( $schedule['active_definition_token'] ?? '' );
 
 		$dates    = '' === $token ? [] : $service->definition_dates( $schedule_id, $token );
@@ -1140,17 +1163,11 @@ final class SessionScheduleAdmin {
 		 */
 		if ( null !== $read_error ) {
 			?>
-			<h2><?php echo esc_html__( 'Schedule This Session', 'bingocommerce-sessions' ); ?></h2>
 			<div class="notice notice-error">
 				<p><?php echo esc_html__( 'This schedule\'s current definition could not be read, so it cannot be edited right now. Editing commits the whole definition, and saving from a partial read would discard the dates and Packages that could not be loaded.', 'bingocommerce-sessions' ); ?></p>
 				<p><?php echo esc_html( SessionAdmin::error_message( $read_error ) ); ?></p>
-				<p><?php echo esc_html__( 'Nothing has been changed. Try again once the read succeeds; the schedule can still be archived from the list below.', 'bingocommerce-sessions' ); ?></p>
+				<p><?php echo esc_html__( 'Opening this page made no changes. Use Back to all schedules to access Archive, or try editing again once the read succeeds.', 'bingocommerce-sessions' ); ?></p>
 			</div>
-			<p>
-				<a class="button" href="<?php echo esc_url( add_query_arg( [ 'page' => self::PAGE_SLUG ], admin_url( 'admin.php' ) ) ); ?>">
-					<?php echo esc_html__( 'Back to schedules', 'bingocommerce-sessions' ); ?>
-				</a>
-			</p>
 			<?php
 			return;
 		}
@@ -1175,8 +1192,8 @@ final class SessionScheduleAdmin {
 			? array_map( 'strval', (array) $held['future_dates'] )
 			: array_map( [ self::class, 'display_date' ], $future );
 		?>
-		<h2><?php echo esc_html__( 'Schedule This Session', 'bingocommerce-sessions' ); ?></h2>
 		<p><?php echo esc_html__( 'Choose when this session will run and which Packages customers can purchase.', 'bingocommerce-sessions' ); ?></p>
+		<p class="description"><?php echo esc_html__( 'A Bingo Session previously offered for sale keeps its original time and Package assignments. Removing one of its future dates stops purchases for that occurrence but keeps its record. To offer that date at a different time, create a separate schedule.', 'bingocommerce-sessions' ); ?></p>
 
 		<?php if ( '' === $token ) : ?>
 			<div class="notice notice-warning">
@@ -1194,7 +1211,7 @@ final class SessionScheduleAdmin {
 				<tr>
 					<th scope="row"><?php echo esc_html__( 'Portal session', 'bingocommerce-sessions' ); ?></th>
 					<td>
-						<strong><?php echo esc_html( self::template_name( (int) ( $schedule['portal_session_id'] ?? 0 ) ) ); ?></strong>
+						<strong><?php echo esc_html( $template_name ); ?></strong>
 						<p class="description">
 							<?php echo esc_html__( 'Read-only. A schedule stays with the Portal session it was created from; to schedule a different one, add it from Sessions from Portal.', 'bingocommerce-sessions' ); ?>
 						</p>
@@ -1238,6 +1255,15 @@ final class SessionScheduleAdmin {
 				</a>
 			</p>
 		</form>
+		<?php if ( '' !== $token && SessionScheduleService::STATUS_ACTIVE === $schedule['status'] ) : ?>
+			<p><?php echo esc_html__( 'Save schedule changes first. Update Sessions applies the saved schedule to Bingo Sessions.', 'bingocommerce-sessions' ); ?></p>
+			<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
+				<?php wp_nonce_field( self::NONCE_ACTION_GENERATE ); ?>
+				<input type="hidden" name="action" value="<?php echo esc_attr( self::POST_ACTION ); ?>" />
+				<input type="hidden" name="schedule_id" value="<?php echo esc_attr( (string) $schedule_id ); ?>" />
+				<button type="submit" class="button"><?php echo esc_html__( 'Update Sessions', 'bingocommerce-sessions' ); ?></button>
+			</form>
+		<?php endif; ?>
 		<?php self::render_mode_script(); ?>
 		<?php
 	}
@@ -1764,9 +1790,10 @@ final class SessionScheduleAdmin {
 						<?php endif; ?>
 					</td>
 					<td>
+						<div class="bc-schedule-actions" style="display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;">
 						<?php if ( ! $archived ) : ?>
 							<a href="<?php echo esc_url( add_query_arg( [ 'page' => self::PAGE_SLUG, 'edit' => $schedule_id ], admin_url( 'admin.php' ) ) ); ?>">
-								<?php echo esc_html__( 'Edit dates', 'bingocommerce-sessions' ); ?>
+								<?php echo esc_html__( 'Edit schedule', 'bingocommerce-sessions' ); ?>
 							</a>
 
 							<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="display:inline">
@@ -1781,7 +1808,7 @@ final class SessionScheduleAdmin {
 								<?php wp_nonce_field( self::NONCE_ACTION_GENERATE ); ?>
 								<input type="hidden" name="action" value="<?php echo esc_attr( self::POST_ACTION ); ?>" />
 								<input type="hidden" name="schedule_id" value="<?php echo esc_attr( (string) $schedule_id ); ?>" />
-								<button type="submit" class="button-link"><?php echo esc_html__( 'Retry Creating Sessions', 'bingocommerce-sessions' ); ?></button>
+								<button type="submit" class="button-link"><?php echo esc_html__( 'Update Sessions', 'bingocommerce-sessions' ); ?></button>
 							</form>
 						<?php else : ?>
 							<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="display:inline">
@@ -1792,6 +1819,7 @@ final class SessionScheduleAdmin {
 								<button type="submit" class="button-link"><?php echo esc_html__( 'Restore', 'bingocommerce-sessions' ); ?></button>
 							</form>
 						<?php endif; ?>
+						</div>
 					</td>
 				</tr>
 			<?php endforeach; ?>
@@ -1838,25 +1866,17 @@ final class SessionScheduleAdmin {
 			 * CREATION SUCCEEDED; GENERATION DID NOT FULLY COMPLETE. The
 			 * schedule is real and stays exactly as saved — this notice is
 			 * DELIBERATELY not styled as an error for that reason. §16 M105/M106
-			 * ownership and isolation are untouched by this branch: Retry posts
-			 * to the SAME admin_post_bc_session_schedule_generate handler every
-			 * other Retry/Generate action already uses, with its own nonce.
+			 * ownership and isolation are untouched by this branch. The selected
+			 * editor offers Update Sessions only after its definition reads succeed;
+			 * this notice must not bypass that safeguard with another action form.
 			 */
-			$schedule_id = SessionAdmin::request_int( wp_unslash( $_GET['bc_schedule'] ?? null ) );
 			?>
-			<div class="notice notice-warning">
-				<p><strong><?php echo esc_html__( 'The schedule was saved, but sessions were not fully created.', 'bingocommerce-sessions' ); ?></strong></p>
-				<?php $summary = self::decode_counts(); ?>
+		<div class="notice notice-warning">
+			<p><strong><?php echo esc_html__( 'The schedule was saved, but sessions were not fully created.', 'bingocommerce-sessions' ); ?></strong></p>
+			<p><?php echo esc_html__( 'When this schedule\'s definition is readable, use Update Sessions for this schedule to finish creating Bingo Sessions. If the definition cannot be read, reload this page once the read succeeds; Update Sessions is unavailable until then.', 'bingocommerce-sessions' ); ?></p>
+			<?php $summary = self::decode_counts(); ?>
 				<?php if ( '' !== $summary ) : ?>
 					<p><?php echo esc_html( $summary ); ?></p>
-				<?php endif; ?>
-				<?php if ( $schedule_id > 0 ) : ?>
-					<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
-						<?php wp_nonce_field( self::NONCE_ACTION_GENERATE ); ?>
-						<input type="hidden" name="action" value="<?php echo esc_attr( self::POST_ACTION ); ?>" />
-						<input type="hidden" name="schedule_id" value="<?php echo esc_attr( (string) $schedule_id ); ?>" />
-						<button type="submit" class="button"><?php echo esc_html__( 'Retry Creating Sessions', 'bingocommerce-sessions' ); ?></button>
-					</form>
 				<?php endif; ?>
 			</div>
 			<?php
@@ -1868,20 +1888,19 @@ final class SessionScheduleAdmin {
 			return;
 		}
 		/*
-		 * NO BLANKET "nothing was changed" CLAIM.
-		 *
-		 * It was not true. A create whose CAS affects zero rows LEAVES A
-		 * PROVISIONAL HEADER BEHIND — inert, generating nothing, but real and
-		 * listed — so telling the Manager nothing changed sent them looking for
-		 * a schedule the screen had just denied making, and a retry from the
-		 * create form would have added another one. The heading now says only
-		 * what is certainly true, that the definition was not saved, and the
-		 * mapped message below says what to do next.
+		 * A database error may occur AFTER an edit committed its definition,
+		 * while turning excluded occurrences OFF. Do not claim that definition
+		 * was not saved when the mapped result cannot prove it. Definite
+		 * validation refusals can still say so.
 		 */
+		$code      = sanitize_key( wp_unslash( $_GET['bc_error'] ?? '' ) );
+		$uncertain = 'write_failed' === $code;
 		?>
 		<div class="notice notice-error">
-			<p><?php echo esc_html__( 'The schedule definition was not saved.', 'bingocommerce-sessions' ); ?></p>
-			<p><?php echo esc_html( self::save_error_message( sanitize_key( wp_unslash( $_GET['bc_error'] ?? '' ) ) ) ); ?></p>
+			<p><?php echo esc_html( $uncertain
+				? __( 'The schedule save did not finish cleanly. Reload and check the schedule and sales state before trying again.', 'bingocommerce-sessions' )
+				: __( 'The schedule definition was not saved.', 'bingocommerce-sessions' ) ); ?></p>
+			<p><?php echo esc_html( self::save_error_message( $code ) ); ?></p>
 		</div>
 		<?php
 	}
@@ -1891,7 +1910,7 @@ final class SessionScheduleAdmin {
 			case 'created':
 				return __( 'Sessions created. New Bingo Sessions are OFF until you turn each one on.', 'bingocommerce-sessions' );
 			case 'updated':
-				return __( 'Schedule saved. Use Retry Creating Sessions in the list below to apply the change to Bingo Sessions.', 'bingocommerce-sessions' );
+				return __( 'Schedule saved. Updating Bingo Sessions is a separate step; choose Update Sessions below. Removed future dates stop sales as soon as the schedule is saved.', 'bingocommerce-sessions' );
 			case 'archived':
 				return __( 'Schedule archived. Existing Bingo Sessions are untouched.', 'bingocommerce-sessions' );
 			case 'restored':
@@ -1923,7 +1942,7 @@ final class SessionScheduleAdmin {
 			case 'unknown_action':
 				return __( 'That action was not recognised, so nothing was attempted.', 'bingocommerce-sessions' );
 			case 'write_failed':
-				return __( 'The change could not be written. Try again.', 'bingocommerce-sessions' );
+				return __( 'A database operation failed. Check the current state before saving again.', 'bingocommerce-sessions' );
 			case 'invalid_date':
 				/* translators: %s: an example date in MM/DD/YYYY form. */
 				return sprintf( __( 'Enter the date as MM/DD/YYYY — for example %s.', 'bingocommerce-sessions' ), self::US_DATE_EXAMPLE );
@@ -1965,7 +1984,7 @@ final class SessionScheduleAdmin {
 		if ( SessionScheduleResult::STATUS_OK === $generated ) {
 			?>
 			<div class="notice notice-success">
-				<p><?php echo esc_html__( 'Sessions created.', 'bingocommerce-sessions' ); ?></p>
+				<p><?php echo esc_html__( 'Bingo Sessions updated.', 'bingocommerce-sessions' ); ?></p>
 				<?php $summary = self::decode_counts(); ?>
 				<?php if ( '' !== $summary ) : ?>
 					<p><?php echo esc_html( $summary ); ?></p>
@@ -1976,7 +1995,7 @@ final class SessionScheduleAdmin {
 		}
 		?>
 		<div class="notice notice-error">
-			<p><?php echo esc_html__( 'Sessions were not fully created. Nothing was left half-applied: whatever was already created stands and is reported below, and it is safe to retry.', 'bingocommerce-sessions' ); ?></p>
+			<p><?php echo esc_html__( 'Bingo Sessions were not fully updated. Changes already applied remain. Review the cause before using Update Sessions again.', 'bingocommerce-sessions' ); ?></p>
 			<p><?php echo esc_html( self::generation_message( $generated, $code ) ); ?></p>
 			<?php $summary = self::decode_counts(); ?>
 			<?php if ( '' !== $summary ) : ?>
@@ -1988,25 +2007,27 @@ final class SessionScheduleAdmin {
 
 	private static function generation_message( string $status, string $code ): string {
 		if ( SessionScheduleResult::STATUS_SCHEDULE_STATE_CHANGED === $status ) {
-			return __( 'Someone else changed this schedule at the same time. Retry Creating Sessions.', 'bingocommerce-sessions' );
+			return __( 'Someone else changed this schedule at the same time. Reload it before using Update Sessions.', 'bingocommerce-sessions' );
 		}
 
 		switch ( $code ) {
+			case 'protected_time_conflict':
+				return __( 'An existing Bingo Session was offered for sale, so its time and Package assignments are protected. It did not move. Keep this schedule at its original time, or remove that future date and create a separate schedule at the new time. Then use Update Sessions.', 'bingocommerce-sessions' );
 			case 'preflight_conflict':
-				return __( 'A conflict was found before anything was created — for example a session whose time is protected, or a clashing name on the same date. Resolve it and retry.', 'bingocommerce-sessions' );
+				return __( 'A conflict prevented this update. Review the schedule and existing Bingo Sessions, resolve the cause, then use Update Sessions. Repeating it without a change will not resolve the conflict.', 'bingocommerce-sessions' );
 			case 'eligibility_failed':
-				return __( 'The Portal session is no longer ready to sell, or a selected Bingo Package is not assignable. Fix that, then retry.', 'bingocommerce-sessions' );
+				return __( 'The Portal session is no longer ready to sell, or a selected Bingo Package is not assignable. Fix that, then use Update Sessions.', 'bingocommerce-sessions' );
 			case 'template_renamed':
-				return __( 'The Portal session was renamed while this was running. Retry Creating Sessions to pick up the new name.', 'bingocommerce-sessions' );
+				return __( 'The Portal session was renamed while this was running. Use Update Sessions to pick up the new name.', 'bingocommerce-sessions' );
 			case 'database_contention':
-				return __( 'The database was busy. Retry Creating Sessions.', 'bingocommerce-sessions' );
+				return __( 'The database was busy. Use Update Sessions again.', 'bingocommerce-sessions' );
 			case 'duplicate_conflict':
-				return __( 'Another session already uses one of these dates and names. Resolve the clash and retry.', 'bingocommerce-sessions' );
+				return __( 'Another session already uses one of these dates and names. Resolve the clash, then use Update Sessions.', 'bingocommerce-sessions' );
 			case 'final_verification_failed':
-				return __( 'The final check found a problem, so nothing is reported as finished. Retry Creating Sessions.', 'bingocommerce-sessions' );
+				return __( 'The final check found a problem, so nothing is reported as finished. Review the schedule before using Update Sessions again.', 'bingocommerce-sessions' );
 		}
 
-		return __( 'A change could not be written. Retry Creating Sessions.', 'bingocommerce-sessions' );
+		return __( 'A change could not be written. Review the schedule before using Update Sessions again.', 'bingocommerce-sessions' );
 	}
 
 	/**

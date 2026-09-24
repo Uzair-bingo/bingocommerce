@@ -2567,6 +2567,25 @@
     were not rerun for this correction. Browser confirmation remains pending.
     No service, transaction or fixture behavior changed; no real Hall was
     mutated, migrated or deployed. Work remains unstaged/uncommitted.
+- **Manage Session Dates selected-schedule UX:** Portal links identify each
+  schedule by ID and saved time; the editor identifies its selected schedule,
+  Portal session and saved time separately from form inputs. The Hall-wide table
+  appears only on the main list. Save and the selected schedule's separate
+  Update Sessions action return to that editor; a confirmed Save clears obsolete
+  rejected form input. Failed definition reads offer neither Save nor Update,
+  retaining a route to the list and its existing Archive action. Focused admin
+  **444/444** and reconciliation **271/271** passed on the approved isolated
+  `bingocommerce_state_recon` fixture, including persistent Hall preservation
+  and disposable cleanup. All three changed PHP files passed syntax checks;
+  `git diff --check` passed. Browser layout confirmation remains pending.
+  Scheduling rules, services and schema are unchanged; no live Hall was changed,
+  migrated or deployed. Existing work remains unstaged and uncommitted.
+- **Manage Session Dates partial-create notice follow-up:** The warning now
+  directs the Manager to the selected schedule's Update Sessions action once
+  its definition is readable, and instructs a reload after a failed definition
+  read. It adds no action form to the notice. The focused admin suite passed
+  **447/447** on `bingocommerce_state_recon`, including both readable and
+  failed-read notice states; browser confirmation remains pending.
 - No Hall Staff Management work currently in progress.
 - Package Increment 1 and the legacy Session Increment 1 remain COMPLETE and
   are recorded under Done. Package Add-ons Increment 1 is approved by
