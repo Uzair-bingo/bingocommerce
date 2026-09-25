@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace BingoCommerce\Sessions;
 
 use BingoCommerce\Catalog\CustomerCartCatalog;
+use BingoCommerce\Catalog\ElectronicLimit;
 use BingoCommerce\Core\HallContext;
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -45,6 +46,8 @@ final class CartSelection {
 			$addon['quantity'] = $quantity;
 			$selected[ $id ] = $addon;
 		}
+		$faces = self::electronic_faces( $package_id, array_column( $selected, 'quantity', 'package_addon_id' ) );
+		if ( is_wp_error( $faces ) ) { return $faces; }
 		return [ 'session_id' => $session_id, 'package_id' => $package_id, 'wc_product_id' => (int) $package['wc_product_id'], 'addons' => $selected ];
 	}
 
@@ -95,6 +98,8 @@ final class CartSelection {
 		$addons = [];
 		$expected = [];
 		$children = [];
+		$package_id = 0;
+		$selected_addons = [];
 		foreach ( $contents as $key => $item ) {
 			$line = self::line( $item );
 			if ( is_wp_error( $line ) ) {
@@ -105,6 +110,7 @@ final class CartSelection {
 				$meta = $item[ self::META ];
 				if ( 'package' === $line['kind'] ) {
 					++$packages;
+					$package_id = $meta['package_id'];
 					$expected[ $key ] = $meta['addon_ids'];
 				} else {
 					$parent = $contents[ $meta['parent_key'] ] ?? [];
@@ -117,6 +123,7 @@ final class CartSelection {
 						if ( $meta[ $field ] !== $parent_meta[ $field ] ) { $errors->add( 'bc_cart_invalid', self::error()->get_error_message() ); }
 					}
 					$addons[ $meta['addon_id'] ] = true;
+					$selected_addons[ $meta['addon_id'] ] = (int) $item['quantity'];
 					$children[ $meta['parent_key'] ][] = $meta['addon_id'];
 				}
 				$product = wc_get_product( $line['product_id'] );
@@ -139,7 +146,15 @@ final class CartSelection {
 			sort( $ids ); sort( $actual );
 			if ( $ids !== $actual ) { $errors->add( 'bc_cart_incomplete', self::error()->get_error_message() ); }
 		}
+		if ( ! $errors->has_errors() && 1 === $packages ) {
+			$faces = self::electronic_faces( $package_id, $selected_addons );
+			if ( is_wp_error( $faces ) ) { $errors->merge_from( $faces ); }
+		}
 		return [ 'errors' => $errors, 'lines' => $lines ];
+	}
+
+	private static function electronic_faces( int $package_id, array $addons ) {
+		return class_exists( ElectronicLimit::class ) ? ElectronicLimit::validate_selection( $package_id, $addons ) : self::error();
 	}
 
 	private static function valid_meta( mixed $meta ): bool {

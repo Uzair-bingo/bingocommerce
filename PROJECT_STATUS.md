@@ -2679,6 +2679,57 @@
   full checkout, electronic limits, order facts, refunds or entitlement was
   implemented. No real Hall was changed or migrated. Nothing staged, committed,
   pushed or deployed; this is not a customer-launch readiness claim.
+- **[2026-09-25] BR-082 electronic-face purchase validation — implemented, unstaged:**
+  Verified clean `feature/portal-sync` at
+  `8c4c9edeb44adde77ea094f268c4dfa53a140551` before editing. Appended BR-082
+  without rewriting older decisions. Catalog now owns a read-only current-value
+  resolver for `bc_platform_electronic_maximum` (the Hall's network) and optional
+  `bc_electronic_limit_override` (that Hall's site). Missing/malformed/unreadable
+  settings block digital selections only. Both configured limits must be positive
+  whole numbers (`>= 1`); stored `0` or `'0'` is invalid configuration and returns
+  `bc_electronic_limit_unavailable` for digital selections. An absent Hall override
+  remains valid; Paper-only Packages and ordinary merchandise are unaffected. No
+  settings UI/writer, implicit default, automatic 300 initialization or migration
+  was added. Fresh parameterized reads avoid stale option caches and distinguish
+  an absent override from a failed read.
+  Current Package base and eligible selected add-on faces are multiplied by their
+  quantities and summed independently by authoritative Hall-local Game Type;
+  Paper contributes zero. Missing digital dependencies and integer overflow fail
+  closed. BR-080/BR-081 checks remain in place, with electronic validation added
+  before cart insertion and during cart revalidation. Installed WooCommerce
+  11.0.1 classic final checkout validation and Store API POST checkout's native
+  cart-validation path both recheck current data before order creation.
+  Initial isolated `bingocommerce_state_recon` results before the zero-setting
+  correction: electronic limits
+  **351/351**, cart **140/140**, availability **564/564**, legacy Session
+  **352/352**, schedules **159/159**, reconciliation **271/271**, Package Stage B
+  **258/258**, add-on backend **582/582**, add-on administration **350/350**:
+  **3,027 passed, 0 failed**, all suites exit 0. New signed-out tests use real
+  classic checkout processing and Store API dispatch; fixture-only sentinels
+  stop valid cases after validation, before orders/payment. Coverage includes
+  independent Game Types, base/add-on multiplication, shared base/add-on products,
+  Paper exclusions, configuration failures, Hall overrides/colliding IDs, lower
+  current platform values despite stale cache, restored carts, current changed
+  faces, missing dependencies and overflow. New-suite fixture Halls/tables were
+  cleaned up, the original fixture network option restored, and persistent
+  fixture Hall snapshots preserved. Existing regression logs include deliberate
+  fault injection/Hall Staff diagnostics and disposable-table Action Scheduler
+  and post-cleanup Woo shutdown database diagnostics; zero failed assertions is
+  not a claim of warning-free logs. Hall-access was not rerun or modified.
+  Zero-setting correction: both configured limits now require `>= 1` and return
+  `bc_electronic_limit_unavailable` for integer `0` and string `'0'`. The focused
+  test first reproduced 16 zero-specific failures, then passed **437/437** after
+  the two resolver checks were corrected. The cart regression passed **140/140**:
+  **577 passed, 0 failed** in this serial follow-up on the isolated fixture.
+  Classic and Store API checkout report configuration failure; Paper/merchandise,
+  absent overrides and the valid minimum of 1 remain covered. Fixture restoration
+  and cleanup, both changed PHP files' syntax checks, and `git diff --check`
+  passed. Other regression counts above are from the initial run, not rerun for
+  this correction. Face aggregation, checkout adapters and writers are unchanged.
+  This slice creates no Session/customer/order capacity counter or reservation.
+  Order facts, existing-order payment/retry validation, refunds, entitlement/QR
+  and theme remain separate. Nothing staged, committed, pushed or deployed;
+  no real Hall was changed or migrated.
 - No Hall Staff Management work currently in progress.
 - Package Increment 1 and the legacy Session Increment 1 remain COMPLETE and
   are recorded under Done. Package Add-ons Increment 1 is approved by
@@ -2760,8 +2811,10 @@ Everything below is tracked work that is NOT a blocker to that demo.
    are covered by automated tests but have not been browser-tested by the user.
    BR-081 customer cart enforcement is implemented. Customer selection screens
    and full checkout enforcement remain outstanding.
-4. Checkout electronic-limit enforcement (BR-042) and redemption accumulation
-   (BR-045), including the effective-limit resolver (BR-038, BR-064).
+4. Redemption accumulation (BR-045) and authorized configuration writers/UI
+   (BR-064). BR-082 implements the read-only effective-limit resolver and
+   electronic validation at cart addition and final classic/Store API checkout;
+   existing-order payment/retry remains dependent on future exact order facts.
 5. Entitlement snapshot (BR-043, ADR-029), QR issuance (BR-044) and Android
    redemption (ADR-030).
 6. Exact WooCommerce successful-payment hook/status mapping for BR-053

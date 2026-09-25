@@ -252,6 +252,17 @@ deferred.
   participates. Enforcement is authoritative server-side — UI-side calculation alone
   is never sufficient. Checkout no longer consumes a Session capacity/order slot.
   (BR-042)
+- The read-only resolver uses network `bc_platform_electronic_maximum` and
+  optional Hall-site `bc_electronic_limit_override`. Both configured values must
+  be canonical positive whole numbers (`>= 1`). Stored `0` or `'0'` is invalid
+  configuration and returns `bc_electronic_limit_unavailable` for digital
+  selections, rather than disabling digital purchases. Missing platform
+  configuration, malformed values or unreadable settings block digital
+  selections only. An absent Hall override means no override. Paper-only
+  selections and ordinary merchandise remain unaffected. No automatic 300
+  initialization or configuration writer/UI is included. Validate current
+  digital totals both when adding a selection and at final classic and Store
+  API checkout; no earlier cart approval is authoritative. (BR-082)
 
 ## Session Domain
 - Within the single authoritative Bingo Innovation Portal environment, Portal

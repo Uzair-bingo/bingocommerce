@@ -8,7 +8,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-/** WooCommerce 11 cart adapters only; no order, payment or entitlement hooks. */
+/** WooCommerce 11 cart and checkout validation; no order facts or entitlement. */
 final class CustomerCart {
 	private static bool $registered = false;
 	private static bool $adding = false;
@@ -27,6 +27,8 @@ final class CustomerCart {
 		add_action( 'woocommerce_cart_loaded_from_session', [ self::class, 'refresh' ], 100 );
 		add_action( 'woocommerce_before_calculate_totals', [ self::class, 'refresh' ], 100 );
 		add_action( 'woocommerce_check_cart_items', [ self::class, 'classic_errors' ], 100 );
+		add_action( 'woocommerce_after_checkout_validation', [ self::class, 'checkout_errors' ], 100, 2 );
+		// Store API POST /checkout calls CartController::validate_cart before the draft order.
 		add_action( 'woocommerce_store_api_cart_errors', [ self::class, 'store_errors' ], 100, 2 );
 		add_filter( 'woocommerce_update_cart_validation', [ self::class, 'validate_update' ], 100, 4 );
 		add_action( 'woocommerce_after_cart_item_quantity_update', [ self::class, 'quantity_updated' ], 100, 4 );
@@ -221,6 +223,12 @@ final class CustomerCart {
 	public static function store_errors( \WP_Error $errors, \WC_Cart $cart ): void {
 		$found = CartSelection::inspect( $cart->get_cart() )['errors'];
 		if ( $found->has_errors() ) { $errors->add( 'bc_cart_invalid', $found->get_error_message() ); }
+	}
+
+	/** Classic final posted-checkout validation, before customer/order processing. */
+	public static function checkout_errors( array $data, \WP_Error $errors ): void {
+		if ( ! WC()->cart instanceof \WC_Cart ) { $errors->merge_from( CartSelection::error() ); return; }
+		$errors->merge_from( CartSelection::inspect( WC()->cart->get_cart() )['errors'] );
 	}
 
 	public static function validate_update( $passed, $key, $values, $quantity ): bool {

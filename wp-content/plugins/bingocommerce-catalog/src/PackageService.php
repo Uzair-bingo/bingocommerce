@@ -816,7 +816,7 @@ final class PackageService {
 		$rows = $wpdb->get_results(
 			$wpdb->prepare(
 				"SELECT c.package_component_id, c.bingo_play_product_id, c.quantity, c.sort_order,"
-				. ' pp.medium, pp.faces_per_unit, pp.status AS play_product_status, pp.wc_product_id AS play_product_wc_id'
+				. ' pp.medium, pp.faces_per_unit, pp.game_type_id, pp.status AS play_product_status, pp.wc_product_id AS play_product_wc_id'
 				. " FROM {$components} c"
 				. " LEFT JOIN {$products} pp ON pp.bingo_play_product_id = c.bingo_play_product_id"
 				. ' WHERE c.package_id = %d ORDER BY c.bingo_play_product_id',
@@ -837,6 +837,7 @@ final class PackageService {
 				'sort_order'            => (int) $row['sort_order'],
 				'medium'                => null === $row['medium'] ? null : (string) $row['medium'],
 				'faces_per_unit'        => null === $row['faces_per_unit'] ? null : (int) $row['faces_per_unit'],
+				'game_type_id'          => null === $row['game_type_id'] ? null : (int) $row['game_type_id'],
 				'play_product_status'   => null === $row['play_product_status'] ? null : (string) $row['play_product_status'],
 				'play_product_wc_id'    => null === $row['play_product_wc_id'] ? null : (int) $row['play_product_wc_id'],
 			];

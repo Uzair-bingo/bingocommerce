@@ -7785,6 +7785,34 @@ delete_users.
 
 ---
 
+- **BR-082 — [2026-09-25] — Electronic-Limit Configuration Failure and Purchase Validation (Reviewed):**
+
+  Use network option `bc_platform_electronic_maximum` and optional Hall-site
+  option `bc_electronic_limit_override` for the read-only current-value resolver
+  owned by Catalog. Both configured values must be canonical positive whole
+  numbers (`>= 1`) within the runtime integer range. A stored `0` or `'0'` is
+  invalid configuration and returns `bc_electronic_limit_unavailable` for a
+  selection containing digital faces; zero is not a disable switch. An absent Hall
+  override means use the platform maximum; a missing platform maximum,
+  malformed configured value, or unreadable configuration fails closed for
+  selections containing digital faces. Paper-only selections and ordinary
+  merchandise do not depend on electronic-limit configuration. No implicit 300
+  fallback, initialization, settings UI or configuration writer is added here;
+  BR-064's configuration authority is unchanged.
+
+  Recalculate `faces_per_unit × quantity` for the selected Package's required
+  base components and eligible selected add-ons, grouped independently by
+  authoritative Hall-local Game Type identity. Paper contributes zero. Compare
+  each total with the current BR-038 effective limit on add-to-cart and again
+  during final classic and Store API checkout validation, reusing BR-080/BR-081
+  eligibility and cart integrity checks. Invalid or unreadable digital
+  dependencies fail closed; no totals, effective limits or approvals are saved
+  in the cart as authority. This adds no customer/order/Session capacity counter,
+  reservation, order facts, refunds, entitlement or QR behavior.
+
+  This clarification is additive to BR-038, BR-042 and BR-064 and leaves their
+  historical entries intact.
+
 ## Still Open / TBD Items (Unresolved)
 
 - ADR-044 Slice 1 implements Catalog v6's `bingo_package_addons` migration,

@@ -1,6 +1,7 @@
 # BR-081 customer cart backend — Increment 1
 
-This is a cart-only implementation of reviewed BR-081. BR-032, BR-065,
+This records the cart implementation of reviewed BR-081 and the subsequent
+BR-082 electronic-limit cart/checkout validation slice. BR-032, BR-065,
 BR-079 and BR-080 remain authoritative. The older BR-066 entry is retained;
 BR-081 resolves its mechanism deferral. No bundle/add-on plugin, new domain
 table, migration, direct-mysqli boundary or product lifecycle mutation is added.
@@ -95,7 +96,42 @@ Inspected installed WooCommerce **11.0.1**, not assumed hook parity:
   including REST batch calls. Original Woo route/nonce callbacks are retained.
 - `woocommerce_remove_cart_item` supplies parent cascade; Undo is revalidated
   at `woocommerce_cart_item_restored`. Native Store API cart-extension update
-  callbacks return the normal cart response. No checkout/order hook is added.
+  callbacks return the normal cart response. BR-081 added no checkout/order hook.
+
+## Electronic-face validation follow-up (BR-082)
+
+Catalog's `ElectronicLimit` reads current base composition and eligible selected
+add-ons and sums `faces_per_unit × quantity` independently by Hall-local
+`game_type_id`. Digital references must resolve in that Hall's Game Type table;
+no name, Woo classification projection or device-group identity is used. Paper
+contributes zero, including a Paper add-on on a Digital/Hybrid Package. A Play
+Product used in both base and add-on contributes each selected quantity.
+Arithmetic overflow and unreadable digital dependencies fail closed.
+
+The resolver follows persistence-design §6 and BR-082. It performs parameterized
+current reads of the Hall's network maximum and optional Hall override, with no
+option-cache reuse, settings mutation or automatic 300 fallback. Only selections
+with digital faces require valid configuration. Both configured limits must be
+positive whole numbers (`>= 1`); stored `0` or `'0'` returns
+`bc_electronic_limit_unavailable`. An absent Hall override remains valid.
+
+`CartSelection::resolve()` checks before adding any lines. `inspect()` repeats
+the calculation after BR-080/BR-081 integrity checks, covering stale/restored
+carts, quantity changes and checkout. No calculated total/limit is persisted.
+The installed WooCommerce 11.0.1 checkout boundaries were inspected separately:
+
+- Classic `WC_Checkout::process_checkout()` runs `validate_checkout()` before
+  customer/order processing. The new `woocommerce_after_checkout_validation`
+  callback reuses `inspect()` and adds errors to Woo's final validation result.
+- Store API `Routes/V1/Checkout::process_order()` runs
+  `CartController::validate_cart()` on POST before creating/updating the draft
+  order. Its existing `woocommerce_store_api_cart_errors` callback now includes
+  the electronic validation and causes a 409 on failure. It does not depend on
+  the classic-only checkout hook.
+
+This is purchase validation, not a reservation or Session/order/customer counter.
+Retry/payment of an existing order is a separate future boundary requiring
+immutable order facts; this slice does not infer order facts from a later cart.
 
 ## Verification and next boundary
 
@@ -107,9 +143,16 @@ batch/alias handling and colliding IDs. Existing eligibility, Session, schedule,
 reconciliation, Package and add-on regressions must also pass. No real-Hall data
 or migration is involved.
 
-Not a complete purchase/launch implementation: final checkout/payment-boundary
-revalidation, per-Game-Type electronic limits, exact immutable order facts,
-order-item linkage, BR-046 whole-Package refunds, payment/entitlement snapshots
-and QR activation are separate work. Cart keys must not become historical order
-identity. The existing cart hooks may be consumed by checkout, but they do not
-claim those deferred checkout/order guarantees.
+Run `BC_TEST_DB=bingocommerce_state_recon php tests/customer-electronic-limits.php`
+serially on the same isolated fixture. It calls the real classic checkout
+processor and dispatches real Store API POST checkout requests as a guest.
+Fixture-only sentinels stop successful validation before order creation/payment;
+validators themselves are not mocked. Failed digital cases must report an
+electronic validation error. It restores the fixture's original network option
+and checks persistent-fixture Hall preservation and disposable-Hall cleanup.
+
+Not a complete purchase/launch implementation: exact immutable order facts,
+order-item linkage, existing-order payment/retry validation, BR-046 whole-Package
+refunds, payment/entitlement snapshots and QR activation remain separate work.
+Cart keys must not become historical order identity. Configuration writers/UI
+also remain unimplemented; configuration authority stays with BR-064.

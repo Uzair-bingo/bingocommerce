@@ -1174,14 +1174,14 @@ technical reconciliation control.
 ## 6. Electronic-Limit Configuration
 
 The platform electronic maximum is stored as a network option controlled by
-Platform Admin. Proposed option key:
+Platform Admin. Option key confirmed by BR-082:
 
 ```text
 bc_platform_electronic_maximum
 ```
 
 The optional hall override is stored as a per-site option configurable by an
-authorized Hall Manager for that hall. Proposed option key:
+authorized Hall Manager for that hall. Option key confirmed by BR-082:
 
 ```text
 bc_electronic_limit_override
@@ -1200,6 +1200,19 @@ else:
 The current network value is evaluated at runtime; no stale effective value is
 persisted. The configuration is per Game Type enforcement policy, not Session
 capacity.
+
+BR-082 implements only the read-only resolver, with no initialization or writer.
+Both configured limits must be canonical positive integer strings (`>= 1`)
+within `PHP_INT_MAX`. Stored `0` or `'0'` returns
+`bc_electronic_limit_unavailable`, not a valid zero limit. A missing network
+maximum or malformed/unreadable setting fails closed only when the selection
+contains digital faces. An absent
+Hall override is distinct from an unreadable one. Catalog reads the current
+Hall's network `sitemeta` row and per-site `options` row through parameterized
+`$wpdb` SELECTs, checking errors and duplicate network rows. This avoids both
+stale option-cache values and option APIs treating a failed read as absence.
+It neither repairs settings nor persists an effective limit. BR-064 continues
+to govern any future configuration writer.
 
 ## 7. Plugin and Migration Ownership
 

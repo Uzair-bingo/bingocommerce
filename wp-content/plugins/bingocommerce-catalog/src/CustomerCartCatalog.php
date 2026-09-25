@@ -53,6 +53,9 @@ final class CustomerCartCatalog {
 			'wc_product_id' => (int) $product['wc_product_id'],
 			'unit_price' => $row['unit_price'],
 			'max_quantity' => (int) $row['max_quantity'],
+			'medium' => $product['medium'],
+			'faces_per_unit' => (int) $product['faces_per_unit'],
+			'game_type_id' => null === $product['game_type_id'] ? null : (int) $product['game_type_id'],
 		];
 	}
 
