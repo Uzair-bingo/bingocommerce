@@ -2730,6 +2730,46 @@
   Order facts, existing-order payment/retry validation, refunds, entitlement/QR
   and theme remain separate. Nothing staged, committed, pushed or deployed;
   no real Hall was changed or migrated.
+- **[2026-09-25] BR-083 customer order recording — implemented and verified:**
+  Verified clean `feature/portal-sync` at
+  `b40eea226f14a609fde36e191de3ed893940f3f1` before editing. The narrow Sessions
+  `CustomerOrder` service records exact Hall-local occurrence and Package facts
+  through WooCommerce order/item CRUD after BR-080/BR-081/BR-082 revalidation.
+  Separate Package/add-on lines retain a persistent selection UUID, role,
+  authoritative add-on relationship ID and purchased quantity; ordinary
+  merchandise remains independent. Cart keys are not historical linkage.
+  Native charged amounts, discounts and taxes are unchanged. Saved Session
+  and parent-Package item labels appear in normal Woo order/receipt information.
+  No theme or template override is required. Legacy structured timing remains
+  nullable; no time is inferred from display names.
+  Inspected WooCommerce 11.0.1's shared line-creation hook and separate classic
+  pre-save/Store API draft-update boundaries. Unplaced drafts refresh facts even
+  when line hashes are unchanged, and Package removal/replacement removes stale
+  facts. Existing non-draft recorded selections preserve their saved facts;
+  this defensive behavior does not implement existing-order payment/retry policy.
+  Appended BR-083 without rewriting historical decisions; documented the
+  metadata contract in `docs/architecture/customer-cart-increment-1.md`.
+  Serial isolated `bingocommerce_state_recon` results: actual order recording
+  **170/170**, cart **140/140**, electronic limits **437/437**, availability and
+  BR-080 eligibility **564/564**, legacy Session **352/352**: **1,663 passed,
+  0 failed**, all suites exit 0. An independent final rerun of the order suite
+  also passed **170/170** (not double-counted). It exercises signed-out actual
+  HPOS order creation through classic checkout and Store API REST POST with
+  offline BACS, two distinct add-ons, merchandise, real coupon discounts and
+  nonzero taxes. Mail is suppressed and outbound HTTP blocked in the harness;
+  no real payment method is charged. Saved facts, names, finances and normal
+  receipt metadata survive later Catalog/Session edits. Native draft updates,
+  legacy timing, two Halls with colliding IDs, missing/altered Bingo lines and
+  unreadable occurrence facts are covered. Token-owned disposable Halls/tables
+  were cleaned, and persistent fixture Hall snapshots were preserved.
+  The order suite's only diagnostics were existing Hall Staff writer guards;
+  no PHP/database warnings occurred in its final runs. Existing Session suites
+  retain deliberate fault-injection SQL diagnostics and legacy Session's
+  post-cleanup Woo shutdown reads of dropped disposable tables. Hall-access
+  was not changed or rerun. All four touched PHP files passed syntax checks;
+  `git diff --check` passed. Payment retries, refunds, entitlement snapshots/QR,
+  configuration UI and storefront remain separate work. No real Hall changes,
+  real-Hall migration, deployment or production-readiness claim is made.
 - No Hall Staff Management work currently in progress.
 - Package Increment 1 and the legacy Session Increment 1 remain COMPLETE and
   are recorded under Done. Package Add-ons Increment 1 is approved by
@@ -2791,10 +2831,12 @@ Everything below is tracked work that is NOT a blocker to that demo.
    webhooks and SSO remain later integration phases.
    Commerce scheduling and occurrence reconciliation exist under approved
    ADR-043; production deployment is not claimed.
-2. Complete checkout-boundary revalidation and exact order facts/linkage.
+2. Complete existing-order payment/retry validation and remaining purchase
+   guarantees. BR-083 records exact checkout order facts and Package/add-on
+   linkage through both classic and Store API checkout.
    BR-081 now resolves BR-066's mechanism deferral: server-side cart enforcement
    is implemented without global Play Product purchasability/lifecycle changes.
-   Cart validation alone does not complete checkout/payment/order guarantees.
+   Order recording alone does not complete payment/refund/entitlement guarantees.
 3. Package add-ons: ADR-044/BR-079 approve `PackageAddonService`, Catalog v6's
    `bingo_package_addons`, the 1–99 quantity rule, lifecycle/medium integrity,
    fixed transaction profile, and BR-065 `bc_package_relation` projection.
@@ -2809,12 +2851,13 @@ Everything below is tracked work that is NOT a blocker to that demo.
    These observations do not establish that every browser scenario passed.
    The injected post-commit list-read failure and its recovery-only Retry screen
    are covered by automated tests but have not been browser-tested by the user.
-   BR-081 customer cart enforcement is implemented. Customer selection screens
-   and full checkout enforcement remain outstanding.
+   BR-081 customer cart enforcement, BR-082 electronic checkout validation and
+   BR-083 order recording are implemented. Customer selection screens and
+   existing-order payment/retry enforcement remain outstanding.
 4. Redemption accumulation (BR-045) and authorized configuration writers/UI
    (BR-064). BR-082 implements the read-only effective-limit resolver and
    electronic validation at cart addition and final classic/Store API checkout;
-   existing-order payment/retry remains dependent on future exact order facts.
+   BR-083 adds exact order facts; existing-order payment/retry remains separate.
 5. Entitlement snapshot (BR-043, ADR-029), QR issuance (BR-044) and Android
    redemption (ADR-030).
 6. Exact WooCommerce successful-payment hook/status mapping for BR-053

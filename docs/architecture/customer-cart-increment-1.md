@@ -133,6 +133,65 @@ This is purchase validation, not a reservation or Session/order/customer counter
 Retry/payment of an existing order is a separate future boundary requiring
 immutable order facts; this slice does not infer order facts from a later cart.
 
+## Order recording follow-up (BR-083)
+
+Sessions' `CustomerOrder` records purchases through WooCommerce order/item CRUD
+metadata, compatible with the existing HPOS configuration. There is no domain
+schema change or direct order SQL. `bc_purchase` on the order stores version,
+Hall site ID, selection UUID, exact occurrence ID/date/name/schedule and nullable
+structured timing, Package ID/type/Woo product/name/quantity, and selected
+add-on relationship IDs, Play Product/Woo IDs and quantities. This records the
+purchase selection, not a base-composition or digital-entitlement snapshot.
+
+Each Package/add-on order item has its own `bc_purchase` binding with the Hall,
+Session, Package, selection UUID, role, relationship ID (zero for the parent),
+and quantity. Within one order, the UUID identifies the one Package and its
+children; cart keys are never retained as historical linkage. Ordinary
+merchandise has no Bingo metadata. Native Woo product names, quantities, line
+subtotals/totals, coupon discounts and taxes remain financial authority; the
+recorder never sets prices, amounts, discounts or tax properties.
+
+Inspected WooCommerce 11.0.1's actual order creation/update paths:
+
+- Both classic and `StoreApi/Utilities/OrderController` use
+  `WC_Checkout::create_order_line_items()`. Its
+  `woocommerce_checkout_create_order_line_item` action binds Bingo line identity.
+- Classic `woocommerce_checkout_create_order` runs after Woo has created all
+  items and populated financial values, immediately before saving the order.
+- Store API POST validates the cart before creating/updating its draft. The
+  native `woocommerce_store_api_checkout_update_order_meta` action runs even
+  when the line-item hash is unchanged, so the recorder revalidates the complete
+  selection and current occurrence facts there as well. The existing persisted
+  draft and changed item metadata are saved through order CRUD. New GET/PATCH
+  interactions do not create a draft in this installed version; existing draft
+  updates follow the same native metadata boundary.
+
+The recorder reuses `CartSelection::inspect()` (BR-080/081/082), checks all bound
+Woo items against the validated cart's identities/products/quantities and full
+selection, and fails closed on missing, duplicate, altered or unreadable Bingo
+facts. Unplaced drafts refresh current occurrence labels even when their lines
+are unchanged; removing the Package clears draft facts, and replacing the
+selection rebuilds them. Existing non-draft orders with recorded facts retain
+those saved facts; a different selection cannot overwrite them. This defensive
+preservation is not implementation or approval of an existing-order retry or
+payment policy. No read/render/save hook recalculates historical facts.
+
+Saved scalar item metadata `bc_bingo_session` and `bc_package` renders as
+“Bingo Session” and “Add-on for” in normal WooCommerce order details, admin item
+views, and HTML/plain receipts. User-facing dates are `MM/DD/YYYY`; structured
+time is shown only when recorded on the occurrence. Woo omits structured array
+metadata from this normal item display. There are no template/theme overrides.
+
+Run `BC_TEST_DB=bingocommerce_state_recon php tests/customer-order-recording.php`
+serially. It creates and reads actual HPOS orders through signed-out classic
+checkout and Store API REST POST, with offline BACS, suppressed mail and blocked
+outbound HTTP. Classic interception happens only after offline gateway success
+to avoid terminating the CLI on redirect. Additional Store API fixture
+sentinels preserve unplaced drafts for repeat native-update tests. Two distinct
+add-ons, merchandise, coupon discounts/nonzero taxes, persisted receipt output,
+Catalog/Session edits, legacy timing, colliding local IDs in two Halls and
+recording failures are covered. All fixture Halls are token-owned and disposable.
+
 ## Verification and next boundary
 
 Run `BC_TEST_DB=bingocommerce_state_recon php tests/customer-cart-increment-1.php`.
@@ -151,8 +210,7 @@ validators themselves are not mocked. Failed digital cases must report an
 electronic validation error. It restores the fixture's original network option
 and checks persistent-fixture Hall preservation and disposable-Hall cleanup.
 
-Not a complete purchase/launch implementation: exact immutable order facts,
-order-item linkage, existing-order payment/retry validation, BR-046 whole-Package
-refunds, payment/entitlement snapshots and QR activation remain separate work.
-Cart keys must not become historical order identity. Configuration writers/UI
-also remain unimplemented; configuration authority stays with BR-064.
+Not a complete purchase/launch implementation: existing-order payment/retry
+validation, BR-046 whole-Package refunds, payment/entitlement snapshots and QR
+activation remain separate work. Configuration writers/UI also remain
+unimplemented; configuration authority stays with BR-064.

@@ -7813,6 +7813,28 @@ delete_users.
   This clarification is additive to BR-038, BR-042 and BR-064 and leaves their
   historical entries intact.
 
+- **BR-083 — [2026-09-25] — Exact Customer Order Selection Recording (Reviewed):**
+
+  Classic and Store API checkout record the current Hall-local dated Session
+  and validated Package selection on the WooCommerce order, retaining separate
+  Package and add-on lines. Within that order, a persistent selection UUID links
+  each add-on to the one Package; each child records its authoritative Package
+  add-on relationship ID and purchased quantity. Ordinary merchandise remains
+  independent. Record the exact occurrence date/name and its structured timing
+  fields without parsing display names; legacy nullable timing remains nullable.
+  Use BR-080/BR-081/BR-082 validation and WooCommerce CRUD metadata, without a
+  new domain table or treating cart keys as historical order identity.
+
+  Unplaced Store API drafts follow the current validated selection, including
+  unchanged-line drafts and Package removal/replacement. Once placed, purchase
+  facts are retained rather than rebuilt from later Catalog/Session changes.
+  WooCommerce's native charged amounts, discounts and taxes remain the financial
+  record. Normal WooCommerce order/receipt item metadata displays the saved
+  Session and each add-on's Package. Recording an order does not confirm payment
+  or create an entitlement. Existing-order payment/retry policy, whole-Package
+  refund enforcement, entitlement snapshots, QR, configuration UI and storefront
+  work remain separate. This adds to BR-052 and BR-073 without rewriting them.
+
 ## Still Open / TBD Items (Unresolved)
 
 - ADR-044 Slice 1 implements Catalog v6's `bingo_package_addons` migration,

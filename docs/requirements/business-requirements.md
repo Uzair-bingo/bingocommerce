@@ -326,6 +326,15 @@ deferred.
   for sale. Selection must clearly identify the exact date and Session name. The
   customer selects the Session before selecting the Bingo Package. The order remains
   associated with that exact dated occurrence. (BR-052, BR-073)
+- **Order purchase facts:** Classic and Store API checkout retain the validated
+  Hall-local occurrence identity, date/name and nullable structured timing,
+  Package identity, and selected add-on relationship IDs/quantities through
+  WooCommerce order metadata. Separate Package/add-on lines share a persistent
+  selection identity within that order; merchandise remains independent.
+  Unplaced drafts follow the current selection. Placed facts and normal receipt
+  labels do not read later mutable Catalog/Session data. Native WooCommerce
+  line amounts, discounts and taxes are the financial record. Order recording
+  does not imply payment confirmation or entitlement creation. (BR-083)
 
 ## Digital Entitlement & Redemption
 - **Online activation:** For online purchases, the Bingo entitlement becomes active
