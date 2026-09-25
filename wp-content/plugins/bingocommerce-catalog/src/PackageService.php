@@ -235,6 +235,51 @@ final class PackageService {
 		return $this->read_by_id( $package_id );
 	}
 
+	/**
+	 * Current-hall read used only by Sessions' existing storefront-eligibility
+	 * predicate (ADR-043 §6.4).
+	 *
+	 * This is intentionally narrower than a customer purchase validator. It
+	 * returns the same Package shape the existing assignability check already
+	 * consumes, makes no sale-policy decision of its own, and never writes,
+	 * audits or synchronizes a projection. Signed-out callers are expected here;
+	 * every existing management read and writer remains authorization-gated.
+	 *
+	 * Hall isolation is the current site's verified per-site schema and `$wpdb`
+	 * prefix. An absent Hall context or unavailable schema fails closed.
+	 *
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public function getForSessionEligibility( int $package_id ) {
+		return $this->read_for_anonymous_eligibility( $package_id );
+	}
+
+	/**
+	 * Current-hall read used only by the exact-occurrence customer Package
+	 * eligibility boundary (BR-080).
+	 *
+	 * This deliberately exposes the same read shape as Session eligibility, but
+	 * through a separately named contract. It makes no purchase-policy decision;
+	 * Sessions owns the occurrence assignment and composes the customer predicate.
+	 *
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public function getForCustomerPackageEligibility( int $package_id ) {
+		return $this->read_for_anonymous_eligibility( $package_id );
+	}
+
+	/** @return array<string,mixed>|\WP_Error */
+	private function read_for_anonymous_eligibility( int $package_id ) {
+		if ( ! HallContext::is_hall() ) {
+			return $this->error( 'invalid_hall_context', 'Bingo Packages may be read for customer eligibility only from a hall site.' );
+		}
+		if ( ! Migrations::is_current() ) {
+			return $this->error( 'catalog_schema_unavailable', 'The Catalog schema is not ready for this hall.' );
+		}
+
+		return $this->read_by_id( $package_id );
+	}
+
 	/** @return array<string,mixed>|\WP_Error */
 	public function getByWooProductId( int $wc_product_id ) {
 		$context = $this->authorize();

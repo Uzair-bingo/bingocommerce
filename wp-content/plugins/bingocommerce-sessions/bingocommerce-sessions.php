@@ -37,6 +37,7 @@ require_once BINGOCOMMERCE_SESSIONS_PATH . 'src/SessionScheduleService.php';
  */
 require_once BINGOCOMMERCE_SESSIONS_PATH . 'src/OccurrenceAvailability.php';
 require_once BINGOCOMMERCE_SESSIONS_PATH . 'src/SessionEligibility.php';
+require_once BINGOCOMMERCE_SESSIONS_PATH . 'src/CustomerPackageEligibility.php';
 
 /*
  * ADR-043 §7 reconciliation. DatabaseContention and OccurrenceGenerationWriter

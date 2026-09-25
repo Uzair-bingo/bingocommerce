@@ -7716,6 +7716,46 @@ delete_users.
   authorize storefront, cart, checkout, entitlement, QR, Android, hard-delete
   or Portal behavior.
 
+- **BR-080 — [2026-09-24] — Archived Required Base Component Blocks New Package Purchase:**
+
+  Customer eligibility is evaluated for one Bingo Package on one exact dated
+  Commerce occurrence. The occurrence must pass the existing ADR-043
+  `SessionEligibility::is_sellable()` predicate, the exact
+  `(session_id, package_id)` assignment must exist in that Hall's
+  `bingo_session_packages` table, and the Package must satisfy the existing
+  active/integrity/WooCommerce-shell condition. In addition, every required
+  base Bingo Play Product in the Package composition must be active. If any
+  required base component is archived, that Package is unavailable for a new
+  customer purchase until the Hall Manager restores that Play Product or
+  deliberately corrects the Package composition through the existing Catalog
+  management rules.
+
+  This is a read-only availability consequence, not a lifecycle mutation.
+  Archiving a required component preserves the Package row, the component
+  relationship, stored Package type, dated-occurrence assignments, the
+  occurrence's Available for Sale setting, and historical orders. It does not
+  automatically archive the Package, detach or replace a component, or turn
+  occurrence sales OFF. Eligibility is per Package: another valid Package
+  assigned to the same occurrence remains available.
+
+  Every read is Hall-local and an unreadable occurrence, assignment, Catalog
+  row, component set, or other dependency fails closed. The customer boundary
+  is callable while signed out; existing Catalog management reads and writers
+  remain authorization-gated.
+
+  This decision does not change ADR-043 schedule/occurrence assignability.
+  `PackageGateway::assert_assignable()` continues to permit a preserved archived
+  component, and `SessionEligibility::is_sellable()` remains the occurrence-
+  level predicate rather than becoming a complete selected-Package purchase
+  validator. This slice does not decide or implement cart representation,
+  checkout revalidation, add-on selection, BR-066 storefront protection,
+  electronic limits, order metadata, entitlement, theme, or frontend behavior.
+
+  Relationship to prior rules: resolves the sale-eligibility deferral stated in
+  BR-067 item 4 and BR-070's scope limit without rewriting those historical
+  decisions; additive to BR-052, BR-061, BR-067, BR-070, BR-073 and approved
+  ADR-043.
+
 
 ---
 

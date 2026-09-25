@@ -110,6 +110,18 @@ deferred.
   add-ons. The same Play Product may be a base component and add-on in one
   Package, with separate base and selected-add-on quantities. (BR-040, BR-061,
   BR-079; BR-040 amends BR-021)
+- **Required base-component purchase eligibility:** For one exact dated
+  occurrence, a customer may select only a Package assigned to that occurrence
+  whose Package and required base composition satisfy the existing active and
+  integrity conditions and whose every required base Bingo Play Product is
+  active. Any archived required base component makes only that Package
+  unavailable for new customer purchase until restored or deliberately
+  corrected. Package identity, composition, occurrence assignments, the
+  occurrence sales setting and historical orders remain unchanged; other valid
+  Packages on the occurrence remain available. Hall-local dependency reads fail
+  closed. This is separate from ADR-043 occurrence-level assignability and does
+  not turn `SessionEligibility::is_sellable()` into a complete selected-Package
+  validator. (BR-080; resolves BR-067 item 4's sale-enforcement deferral)
 - **Bingo Package pricing** is separate from Package composition: every Package has
   its own Hall-Manager-set fixed base price, never auto-summed from included
   component product prices, and never automatically recalculated when components or

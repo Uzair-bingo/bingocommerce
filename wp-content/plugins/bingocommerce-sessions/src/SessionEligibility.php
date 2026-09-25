@@ -233,7 +233,7 @@ final class SessionEligibility {
 		$gateway = new PackageGateway();
 
 		foreach ( $ids as $package_id ) {
-			$package = $gateway->get( (int) $package_id );
+			$package = $gateway->getForSessionEligibility( (int) $package_id );
 			if ( is_wp_error( $package ) ) {
 				return self::unreadable( 'a Bingo Package could not be read', $package->get_error_code() );
 			}

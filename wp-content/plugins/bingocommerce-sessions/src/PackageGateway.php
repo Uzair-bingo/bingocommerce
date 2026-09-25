@@ -87,6 +87,50 @@ final class PackageGateway {
 		return $service->getById( $package_id );
 	}
 
+	/**
+	 * The anonymous-safe Catalog read for ADR-043 §6.4 only.
+	 *
+	 * `get()` and `map()` remain administrative reads. Keeping this separate
+	 * prevents the storefront predicate from weakening any management boundary.
+	 *
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public function getForSessionEligibility( int $package_id ) {
+		$service = $this->service();
+		if ( is_wp_error( $service ) ) {
+			return $service;
+		}
+		if ( ! method_exists( $service, 'getForSessionEligibility' ) ) {
+			return new \WP_Error(
+				'catalog_unavailable',
+				__( 'The BingoCommerce Catalog eligibility read is not available, so Bingo Packages cannot be checked.', 'bingocommerce-sessions' )
+			);
+		}
+
+		return $service->getForSessionEligibility( $package_id );
+	}
+
+	/**
+	 * Anonymous-safe Catalog read for one exact-occurrence customer Package
+	 * eligibility decision (BR-080). Administrative reads remain separate.
+	 *
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public function getForCustomerPackageEligibility( int $package_id ) {
+		$service = $this->service();
+		if ( is_wp_error( $service ) ) {
+			return $service;
+		}
+		if ( ! method_exists( $service, 'getForCustomerPackageEligibility' ) ) {
+			return new \WP_Error(
+				'catalog_unavailable',
+				__( 'The BingoCommerce customer Package eligibility read is not available, so the Package cannot be checked.', 'bingocommerce-sessions' )
+			);
+		}
+
+		return $service->getForCustomerPackageEligibility( $package_id );
+	}
+
 	/** The only values a Bingo Package type may hold (BR-061). */
 	private const PACKAGE_TYPES = [ 'paper', 'digital', 'hybrid' ];
 

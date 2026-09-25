@@ -2586,6 +2586,56 @@
   read. It adds no action form to the notice. The focused admin suite passed
   **447/447** on `bingocommerce_state_recon`, including both readable and
   failed-read notice states; browser confirmation remains pending.
+- **[2026-09-24] Signed-out generated-occurrence eligibility correction:** An
+  isolated regression proved the same eligible generated occurrence returned
+  `true` for a Hall Manager but `sellability_unknown` for a signed-out customer,
+  with nested cause `authentication_required`, because
+  `SessionEligibility` reached management-only `PackageService::getById()`.
+  Catalog now exposes one current-Hall, schema-checked, read-only
+  `getForSessionEligibility()` boundary, Sessions consumes it through a distinct
+  `PackageGateway` method, and all existing management reads/writers remain
+  authorization-gated. No Package rule changed: this still applies the existing
+  ADR-043 assignability condition, including its existing archived-component
+  behavior, and legacy Sessions retain their no-further-test path. Focused tests
+  run genuinely signed out and cover Manager/guest parity, an ineligible Package,
+  an unreadable Catalog dependency, legacy behavior, and colliding local Package/
+  Session IDs in two disposable Halls. Availability **544/544**, legacy Session
+  **352/352**, schedules **159/159**, reconciliation **271/271**, and Package
+  Stage B **258/258** passed on `bingocommerce_state_recon`: **1,584 passed, 0
+  failed**. Expected injected-read, duplicate-key, contention, disposable-Hall
+  WooCommerce/Action Scheduler, and Hall Staff writer-guard diagnostics remained
+  visible; final preservation checks passed. No schema, migration, cart,
+  checkout, add-on, electronic-limit, order, BR-066, theme or frontend behavior
+  changed. No real Hall was mutated or migrated. This work is committed on
+  `feature/portal-sync`; it has not been pushed or deployed.
+- **[2026-09-24] BR-080 exact-occurrence customer Package eligibility:** The
+  approved rule now resolves BR-067 item 4's sale-enforcement deferral without
+  rewriting BR-067 or ADR-043: a Package with any archived required base Bingo
+  Play Product is unavailable for new customer purchase until restored or
+  deliberately corrected. The Package, composition, occurrence assignments,
+  Available for Sale setting and historical orders are preserved; no automatic
+  Package archive, detach or Session sales change occurs, and another valid
+  Package on the same occurrence remains available. The new read-only
+  `CustomerPackageEligibility` boundary runs signed out, composes the existing
+  occurrence predicate, proves the exact Hall-local occurrence assignment,
+  consumes a separately named anonymous-safe Catalog read, retains existing
+  Package integrity/assignability checks and then applies the archived-required-
+  component rejection. Unreadable dependencies return fail-closed
+  `package_eligibility_unknown`; ordinary management reads and all writers stay
+  authorization-gated. `SessionEligibility::is_sellable()` and
+  `PackageGateway::assert_assignable()` are unchanged by this rule. Focused
+  signed-out coverage includes active, archived and restored components, an
+  unassigned Package, another valid Package on the same occurrence, preservation
+  and injected assignment/Catalog read failures. Availability **564/564**,
+  legacy Session **352/352**, schedules **159/159**, reconciliation **271/271**
+  and Package Stage B **258/258** passed on `bingocommerce_state_recon`:
+  **1,604 passed, 0 failed**. Expected injected-read, duplicate-key, contention,
+  disposable-Hall WooCommerce/Action Scheduler and Hall Staff writer-guard
+  diagnostics remained visible; preservation and cleanup checks passed. No
+  schema, migration, cart, checkout, add-on selection, BR-066, electronic-limit,
+  order-metadata, theme or frontend behavior changed. No real Hall was mutated
+  or migrated. This work is committed on `feature/portal-sync`; it has not
+  been pushed or deployed.
 - No Hall Staff Management work currently in progress.
 - Package Increment 1 and the legacy Session Increment 1 remain COMPLETE and
   are recorded under Done. Package Add-ons Increment 1 is approved by

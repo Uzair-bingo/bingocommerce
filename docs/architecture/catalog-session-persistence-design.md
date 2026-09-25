@@ -460,9 +460,21 @@ Constraints and indexes:
 - One Package may be assigned to multiple dated commerce occurrences; no one-
   Package-to-one-occurrence restriction is introduced.
 
-A Package is selectable only when the Session is storefront-eligible, this
-assignment exists, the Package and required base components are active/valid,
-and the linked WooCommerce Package product is valid and purchasable.
+A Package is selectable only when the exact dated occurrence is storefront-
+eligible, this exact `(session_id, package_id)` assignment exists, the Package
+passes its existing active/integrity/WooCommerce-shell condition, and every
+required base component is active (BR-080). An archived required component
+blocks only that Package from new customer purchase until restored or
+deliberately corrected. The read does not archive the Package, detach a
+component, remove an assignment, turn occurrence sales OFF, or alter historical
+orders; another valid assigned Package remains selectable. An unreadable
+occurrence, assignment, Package, or component dependency fails closed.
+
+This selected-Package predicate is intentionally separate from ADR-043's
+occurrence-level `SessionEligibility::is_sellable()` and schedule/occurrence
+assignability. The latter continues to allow a preserved archived component and
+answers whether the occurrence has at least one assignable Package; it is not a
+complete Package purchase validator.
 
 ### 2.8 Implemented Additive Portal/Schedule Model (approved ADR-043)
 

@@ -85,6 +85,7 @@ if ( false === has_action( 'wp_initialize_site', [ \BingoCommerce\Sessions\Migra
 
 use BingoCommerce\Catalog\BingoPlayProductService;
 use BingoCommerce\Catalog\PackageService;
+use BingoCommerce\Sessions\CustomerPackageEligibility;
 use BingoCommerce\Sessions\Migrations;
 use BingoCommerce\Sessions\OccurrenceAvailability;
 use BingoCommerce\Sessions\PackageGateway;
@@ -157,6 +158,8 @@ final class SessionAvailabilityIncrementOneTest {
 			$this->ownership_group( $hall );
 			$this->process_death_group( $hall );
 			$this->sellability_group( $hall );
+			$this->guest_sellability_regression_group( $hall );
+			$this->customer_package_eligibility_group( $hall );
 			$this->mutation_ownership_group( $hall );
 			$this->session_admin_group( $hall );
 			$this->enable_disable_sales_group();
@@ -1238,6 +1241,197 @@ final class SessionAvailabilityIncrementOneTest {
 
 		$service->setAvailableForSale( $session_id, false );
 		$service->setAvailableForSale( $far, false );
+		restore_current_blog();
+	}
+
+	/**
+	 * Regression proof for the storefront predicate's no-authorization contract.
+	 *
+	 * Fixtures are created while the harness is the fixture Super Admin. Every
+	 * storefront assertion then runs with user ID zero, apart from the one explicit
+	 * same-occurrence Manager comparison that proves the original regression.
+	 */
+	private function guest_sellability_regression_group( int $hall ): void {
+		$this->group( '6.4 signed-out storefront regression' );
+		switch_to_blog( $hall );
+
+		[ $schedule_id, $package_id ] = $this->make_schedule( $hall, 'Guest Regression' );
+		$session_id = $this->plant_occurrence(
+			$hall,
+			$schedule_id,
+			$this->local_date( '+2 days' ),
+			'Guest Regression Occurrence',
+			true,
+			$package_id
+		);
+		$service = new SessionService( [ $this, 'swallow_audit' ] );
+		$result  = $service->setAvailableForSale( $session_id, true );
+		$this->ok( $result instanceof SessionResult, 'fixture occurrence is Available for Sale' );
+
+		$legacy = $service->create(
+			$this->local_date( '+3 days' ),
+			self::PREFIX . ' Guest Legacy ' . wp_generate_password( 5, false ),
+			false
+		);
+		$legacy_id = $legacy instanceof SessionResult ? (int) $legacy->session['session_id'] : 0;
+		$this->ok( $legacy instanceof SessionResult && $legacy_id > 0, 'legacy comparison fixture exists' );
+		$this->ok( $service->setAvailableForSale( $legacy_id, true ) instanceof SessionResult, 'legacy comparison fixture is Available for Sale' );
+
+		$manager = $this->make_manager_user( $hall );
+		$this->ok( $manager > 0, 'an authorized Hall Manager fixture exists' );
+
+		wp_set_current_user( $manager );
+		$this->same( true, SessionEligibility::is_sellable( $session_id ), 'the eligible generated occurrence is sellable to an authorized Hall Manager' );
+
+		wp_set_current_user( 0 );
+		$this->same( 0, get_current_user_id(), 'the customer comparison runs genuinely signed out' );
+		$this->same( true, SessionEligibility::is_sellable( $session_id ), 'the same eligible generated occurrence is sellable while signed out' );
+		$this->same( true, SessionEligibility::is_sellable( $legacy_id ), 'a signed-out legacy occurrence keeps its no-further-test behavior' );
+		$this->same(
+			'authentication_required',
+			$this->error_code( ( new PackageService() )->getById( $package_id ) ),
+			'the ordinary Catalog Package read remains manager-only'
+		);
+
+		$this->break_reads( '/FROM \\S+bingo_packages WHERE package_id =/' );
+		$unreadable = SessionEligibility::is_sellable( $session_id );
+		$this->restore_reads();
+		$this->same( 'sellability_unknown', $this->error_code( $unreadable ), 'a signed-out unreadable Catalog dependency still fails closed' );
+		$this->same(
+			'persistence_failed',
+			is_wp_error( $unreadable ) ? (string) ( $unreadable->get_error_data()['cause'] ?? '' ) : '',
+			'the fail-closed result retains the Catalog read failure as its cause'
+		);
+
+		wp_set_current_user( $this->super_admin_id );
+		restore_current_blog();
+
+		/* Two new Hall schemas begin from the same local IDs. Making Hall B's
+		 * Package ineligible must not affect Hall A's same-number Package or
+		 * Session, and every final read below is genuinely signed out. */
+		$hall_a = $this->create_disposable_site();
+		$hall_b = $this->create_disposable_site();
+		$this->ok( $hall_a > 0 && $hall_b > 0 && $hall_a !== $hall_b, 'two disposable Halls exist for colliding-local-ID coverage' );
+
+		switch_to_blog( $hall_a );
+		[ $schedule_a, $package_a ] = $this->make_schedule( $hall_a, 'Guest Collision A' );
+		$session_a = $this->plant_occurrence( $hall_a, $schedule_a, $this->local_date( '+2 days' ), 'Guest Collision A', true, $package_a );
+		$this->ok( ( new SessionService( [ $this, 'swallow_audit' ] ) )->setAvailableForSale( $session_a, true ) instanceof SessionResult, 'Hall A collision occurrence is Available for Sale' );
+		restore_current_blog();
+
+		switch_to_blog( $hall_b );
+		[ $schedule_b, $package_b ] = $this->make_schedule( $hall_b, 'Guest Collision B' );
+		$session_b = $this->plant_occurrence( $hall_b, $schedule_b, $this->local_date( '+2 days' ), 'Guest Collision B', true, $package_b );
+		$this->ok( ( new SessionService( [ $this, 'swallow_audit' ] ) )->setAvailableForSale( $session_b, true ) instanceof SessionResult, 'Hall B collision occurrence is Available for Sale before its Package changes' );
+		$this->ok( ! is_wp_error( ( new PackageService() )->archive( $package_b ) ), 'Hall B same-number Package is made ineligible' );
+		restore_current_blog();
+
+		$this->same( $package_a, $package_b, 'the two Halls have colliding local Package IDs' );
+		$this->same( $session_a, $session_b, 'the two Halls have colliding local Session IDs' );
+
+		wp_set_current_user( 0 );
+		switch_to_blog( $hall_a );
+		$this->same( true, SessionEligibility::is_sellable( $session_a ), 'signed-out Hall A resolves its own eligible same-number Package' );
+		restore_current_blog();
+
+		switch_to_blog( $hall_b );
+		$this->same( false, SessionEligibility::is_sellable( $session_b ), 'signed-out Hall B resolves its own ineligible same-number Package' );
+		restore_current_blog();
+		wp_set_current_user( $this->super_admin_id );
+	}
+
+	/** BR-080: signed-out eligibility for one Package on one exact occurrence. */
+	private function customer_package_eligibility_group( int $hall ): void {
+		global $wpdb;
+
+		$this->group( 'BR-080 signed-out exact-occurrence Package eligibility' );
+		switch_to_blog( $hall );
+		wp_set_current_user( $this->super_admin_id );
+
+		$date = $this->local_date( '+2 days' );
+		[ $package_id, $play_product_id ] = $this->make_package_with_component( 'Customer Package Primary' );
+		[ $other_package_id ]             = $this->make_package_with_component( 'Customer Package Other' );
+		[ $unassigned_package_id ]        = $this->make_package_with_component( 'Customer Package Unassigned' );
+		$template_id                      = $this->plant_template( 'Customer Package Eligibility' );
+		$schedule = ( new SessionScheduleService( [ $this, 'swallow_audit' ] ) )->create(
+			$template_id,
+			'dates',
+			'18:00',
+			[ $date ],
+			[ $package_id, $other_package_id ]
+		);
+		$this->ok( $schedule instanceof SessionScheduleResult, 'BR-080 fixture schedule exists with two valid Packages' );
+		$schedule_id = $schedule instanceof SessionScheduleResult ? (int) $schedule->schedule['schedule_id'] : 0;
+		$session_id  = $this->plant_occurrence( $hall, $schedule_id, $date, 'Customer Package Eligibility', true, $package_id );
+		$now         = current_time( 'mysql', true );
+		$wpdb->insert(
+			Migrations::session_packages_table(),
+			[ 'session_id' => $session_id, 'package_id' => $other_package_id, 'created_at' => $now ],
+			[ '%d', '%d', '%s' ]
+		);
+		$this->same( 1, (int) $wpdb->rows_affected, 'the same occurrence carries the second Package assignment' );
+
+		$sessions = new SessionService( [ $this, 'swallow_audit' ] );
+		$this->ok( $sessions->setAvailableForSale( $session_id, true ) instanceof SessionResult, 'BR-080 fixture occurrence is Available for Sale' );
+
+		$preserved_before = [
+			'package'     => $wpdb->get_row( $wpdb->prepare( 'SELECT package_id, wc_product_id, package_type, status, archived_at FROM ' . \BingoCommerce\Catalog\Migrations::packages_table() . ' WHERE package_id = %d', $package_id ), ARRAY_A ),
+			'components'  => $wpdb->get_results( $wpdb->prepare( 'SELECT package_component_id, package_id, bingo_play_product_id, quantity, sort_order FROM ' . \BingoCommerce\Catalog\Migrations::package_components_table() . ' WHERE package_id = %d ORDER BY package_component_id', $package_id ), ARRAY_A ),
+			'assignments' => $wpdb->get_results( $wpdb->prepare( 'SELECT session_id, package_id FROM ' . Migrations::session_packages_table() . ' WHERE session_id = %d ORDER BY package_id', $session_id ), ARRAY_A ),
+			'session'     => $wpdb->get_row( $wpdb->prepare( 'SELECT session_id, available_for_sale, status FROM ' . Migrations::sessions_table() . ' WHERE session_id = %d', $session_id ), ARRAY_A ),
+		];
+
+		wp_set_current_user( 0 );
+		$this->same( 0, get_current_user_id(), 'BR-080 customer assertions run genuinely signed out' );
+		$this->same( true, CustomerPackageEligibility::is_available( $session_id, $package_id ), 'an active assigned Package with active required components is available' );
+		$this->same( true, CustomerPackageEligibility::is_available( $session_id, $other_package_id ), 'the other active Package assigned to the same occurrence is available' );
+		$this->same( false, CustomerPackageEligibility::is_available( $session_id, $unassigned_package_id ), 'an active Package not assigned to the exact occurrence is unavailable' );
+		$this->same(
+			'authentication_required',
+			$this->error_code( ( new PackageService() )->getById( $package_id ) ),
+			'the ordinary Catalog management read remains authorization-gated'
+		);
+
+		wp_set_current_user( $this->super_admin_id );
+		$this->ok( ! is_wp_error( ( new BingoPlayProductService() )->archive( $play_product_id ) ), 'the required base Play Product is archived through its management service' );
+
+		wp_set_current_user( 0 );
+		$this->same( true, SessionEligibility::is_sellable( $session_id ), 'the occurrence-level ADR-043 predicate remains sellable and is not repurposed for BR-080' );
+		$this->same( false, CustomerPackageEligibility::is_available( $session_id, $package_id ), 'the Package with an archived required base component is unavailable for new customer purchase' );
+		$this->same( true, CustomerPackageEligibility::is_available( $session_id, $other_package_id ), 'another valid Package on the same occurrence remains available' );
+
+		$preserved_archived = [
+			'package'     => $wpdb->get_row( $wpdb->prepare( 'SELECT package_id, wc_product_id, package_type, status, archived_at FROM ' . \BingoCommerce\Catalog\Migrations::packages_table() . ' WHERE package_id = %d', $package_id ), ARRAY_A ),
+			'components'  => $wpdb->get_results( $wpdb->prepare( 'SELECT package_component_id, package_id, bingo_play_product_id, quantity, sort_order FROM ' . \BingoCommerce\Catalog\Migrations::package_components_table() . ' WHERE package_id = %d ORDER BY package_component_id', $package_id ), ARRAY_A ),
+			'assignments' => $wpdb->get_results( $wpdb->prepare( 'SELECT session_id, package_id FROM ' . Migrations::session_packages_table() . ' WHERE session_id = %d ORDER BY package_id', $session_id ), ARRAY_A ),
+			'session'     => $wpdb->get_row( $wpdb->prepare( 'SELECT session_id, available_for_sale, status FROM ' . Migrations::sessions_table() . ' WHERE session_id = %d', $session_id ), ARRAY_A ),
+		];
+		$this->same( $preserved_before, $preserved_archived, 'archiving the component preserves Package, composition, occurrence assignments, and ON sales state' );
+
+		wp_set_current_user( $this->super_admin_id );
+		$this->ok( ! is_wp_error( ( new BingoPlayProductService() )->restore( $play_product_id ) ), 'the Hall Manager correction restores the required base Play Product' );
+
+		wp_set_current_user( 0 );
+		$this->same( true, CustomerPackageEligibility::is_available( $session_id, $package_id ), 'the preserved Package becomes available again after the component is restored' );
+		$this->same( true, CustomerPackageEligibility::is_available( $session_id, $other_package_id ), 'the other Package remains available after the correction' );
+
+		$this->break_reads( '/SELECT 1 FROM \S+bingo_session_packages/' );
+		$assignment_unknown = CustomerPackageEligibility::is_available( $session_id, $package_id );
+		$this->restore_reads();
+		$this->same( 'package_eligibility_unknown', $this->error_code( $assignment_unknown ), 'an unreadable exact assignment fails closed' );
+
+		$this->break_reads( '/FROM \S+bingo_package_components c.*WHERE c\.package_id = ' . $other_package_id . '/' );
+		$catalog_unknown = CustomerPackageEligibility::is_available( $session_id, $other_package_id );
+		$this->restore_reads();
+		$this->same( 'package_eligibility_unknown', $this->error_code( $catalog_unknown ), 'an unreadable selected-Package dependency fails closed' );
+		$this->same(
+			'persistence_failed',
+			is_wp_error( $catalog_unknown ) ? (string) ( $catalog_unknown->get_error_data()['cause'] ?? '' ) : '',
+			'the fail-closed Package result retains the Catalog read failure as its cause'
+		);
+
+		wp_set_current_user( $this->super_admin_id );
+		$sessions->setAvailableForSale( $session_id, false );
 		restore_current_blog();
 	}
 
@@ -2666,24 +2860,32 @@ final class SessionAvailabilityIncrementOneTest {
 	}
 
 	private function make_package( string $label ): int {
+		[ $package_id ] = $this->make_package_with_component( $label );
+
+		return $package_id;
+	}
+
+	/** @return array{0:int,1:int} package_id, bingo_play_product_id */
+	private function make_package_with_component( string $label ): array {
 		$play = ( new BingoPlayProductService() )->create( $this->make_product( $label . ' pp' ), 'paper', 2, null );
 		if ( is_wp_error( $play ) ) {
 			$this->ok( false, "fixture Play Product failed for {$label}: " . $play->get_error_code() );
 
-			return 0;
+			return [ 0, 0 ];
 		}
+		$play_product_id = (int) $play->play_product['bingo_play_product_id'];
 
 		$package = ( new PackageService() )->create(
 			$this->make_product( 'pkg ' . $label ),
-			[ [ 'bingo_play_product_id' => (int) $play->play_product['bingo_play_product_id'], 'quantity' => 1 ] ]
+			[ [ 'bingo_play_product_id' => $play_product_id, 'quantity' => 1 ] ]
 		);
 		if ( is_wp_error( $package ) ) {
 			$this->ok( false, "fixture Package failed for {$label}: " . $package->get_error_code() );
 
-			return 0;
+			return [ 0, $play_product_id ];
 		}
 
-		return (int) $package->package['package_id'];
+		return [ (int) $package->package['package_id'], $play_product_id ];
 	}
 
 	private function make_product( string $label ): int {
@@ -2728,6 +2930,49 @@ final class SessionAvailabilityIncrementOneTest {
 
 		if ( user_can( (int) $user, 'bc_manage_sessions' ) || is_super_admin( (int) $user ) ) {
 			$this->ok( false, 'the unprivileged fixture user unexpectedly holds Session-management rights' );
+
+			return 0;
+		}
+
+		return (int) $user;
+	}
+
+	private function make_manager_user( int $hall ): int {
+		global $wpdb;
+
+		$login = 'avail1-manager-' . wp_generate_password( 8, false );
+		$user  = wp_insert_user(
+			[
+				'user_login' => $login,
+				'user_pass'  => wp_generate_password( 32 ),
+				'user_email' => $login . '@example.invalid',
+				'role'       => '',
+			]
+		);
+		if ( is_wp_error( $user ) ) {
+			$this->ok( false, 'Hall Manager fixture user could not be created: ' . $user->get_error_message() );
+
+			return 0;
+		}
+
+		$this->created_users[] = (int) $user;
+
+		// ADR-025 forbids add_user_to_blog() for Hall Staff. Plant the exact
+		// per-site role assignment as the existing authorization fixture does.
+		$key = $wpdb->get_blog_prefix( $hall ) . 'capabilities';
+		$wpdb->delete( $wpdb->usermeta, [ 'user_id' => (int) $user, 'meta_key' => $key ] );
+		$wpdb->insert(
+			$wpdb->usermeta,
+			[ 'user_id' => (int) $user, 'meta_key' => $key, 'meta_value' => serialize( [ \BingoCommerce\Core\Roles::HALL_MANAGER => true ] ) ]
+		);
+		clean_user_cache( (int) $user );
+
+		if (
+			! user_can( (int) $user, 'bc_manage_products' )
+			|| ! user_can( (int) $user, 'bc_manage_sessions' )
+			|| is_super_admin( (int) $user )
+		) {
+			$this->ok( false, 'Hall Manager fixture does not hold the expected per-Hall capabilities' );
 
 			return 0;
 		}
