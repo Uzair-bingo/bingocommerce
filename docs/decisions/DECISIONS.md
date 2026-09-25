@@ -7756,6 +7756,32 @@ delete_users.
   decisions; additive to BR-052, BR-061, BR-067, BR-070, BR-073 and approved
   ADR-043.
 
+- **BR-081 — [2026-09-25] — Customer Cart Lines and BR-066 Enforcement Mechanism (Reviewed):**
+
+  A selected exact dated Session and eligible Bingo Package are represented by
+  one normal WooCommerce Package cart line, quantity one. Selected optional
+  add-ons are separate itemized lines linked to that Package selection; ordinary
+  merchandise remains independent. Removing the Package removes its dependent
+  add-ons. Replacement requires removing the existing Package first. Add-ons
+  cannot be added or restored without their eligible parent selection.
+
+  Server-side cart validation uses current Hall-local Catalog and Session
+  authority, not classification projections or submitted prices. A Package
+  requires its exact eligible occurrence assignment and BR-080 eligibility.
+  Add-ons require BR-079 eligibility, compatibility, quantity and relationship
+  pricing. BR-032's one-Package limit applies across the entire cart. Direct-add,
+  quantity-update and restored-cart paths must not bypass these checks; stale or
+  unreadable selections fail closed. Package prices remain WooCommerce prices;
+  add-on prices come from the current Package relationship, not the Play Product
+  shell's regular/sale price.
+
+  This is the reviewed BR-066 mechanism: enforce the fixed non-independent
+  purchase rule at server-side cart boundaries, without globally making Play
+  Products non-purchasable or changing their status, stock or visibility. No
+  third-party bundle/add-on plugin is required. This resolves only BR-066's
+  mechanism deferral and leaves its historical entry intact. Full checkout
+  revalidation, electronic limits, order facts, whole-Package refunds (BR-046),
+  entitlement and storefront presentation remain separate implementation work.
 
 ---
 
@@ -7765,8 +7791,9 @@ delete_users.
   schema verification and isolated-fixture tests. Slice 2 implements the backend
   `PackageAddonService`, fixed transaction profile, lifecycle/medium extensions,
   post-commit audit/projection and targeted reconciliation. Slice 3 implements
-  Package administration UI and request handling; storefront/cart/checkout
-  enforcement remains unimplemented. ADR-044 and
+  Package administration UI and request handling. Subsequent BR-081 implements
+  the customer cart backend and resolves BR-066's mechanism deferral;
+  storefront presentation and full checkout enforcement remain unimplemented. ADR-044 and
   BR-079 business decisions are unchanged; no real Hall migration, deployment
   or production readiness is claimed.
 - Portal integration details still open after ADR-036 through ADR-042: webhook

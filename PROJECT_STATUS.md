@@ -2636,6 +2636,49 @@
   order-metadata, theme or frontend behavior changed. No real Hall was mutated
   or migrated. This work is committed on `feature/portal-sync`; it has not
   been pushed or deployed.
+- **[2026-09-25] BR-081 customer cart backend — implemented, unstaged:** Verified
+  `feature/portal-sync` clean at `febf32044bbcbd793d7c79e102471b2c64d2a159` before
+  editing. Its tree `245750befe6ffe301c8ab86cd5b65026387c1264` matches the locally
+  available earlier `1a1a634c9236faabd5f9ed297655fd6ec0aa6646`. Appended reviewed
+  BR-081 without rewriting BR-066 or other historical decisions. The approved
+  mechanism enforces authoritative Hall-local purchase rules at cart boundaries,
+  without global Play Product non-purchasability/status/stock/visibility changes.
+  Catalog adds anonymous read-only classification/eligible-relationship reads;
+  Sessions adds exact-occurrence selection validation and WooCommerce cart
+  adapters. The signed-out eligibility correction, `CustomerPackageEligibility`,
+  BR-080, management authorization and all schema/migration code are unchanged.
+  One Package line (quantity one) carries the dated Session and a selection ID;
+  separate add-on lines carry the exact parent key and relationship ID. Ordinary
+  merchandise remains independent. Current relationship prices and limits are
+  read server-side. Direct adds, quantity changes, stale/restored/forged carts,
+  orphan add-ons, missing selected children and cross-Hall metadata fail closed.
+  Parent removal cascades children; Undo revalidates the original group. Failed
+  group adds roll back only the new selection. No Catalog/Session write occurs.
+  Inspected installed WooCommerce 11.0.1's distinct classic and Store API paths;
+  added a callback to its existing guest-safe cart-extension endpoint, not a new
+  custom REST/AJAX route. Both API aliases and REST batch quantity sanitization
+  are covered. Contract and implementation boundaries are documented in
+  `docs/architecture/customer-cart-increment-1.md`.
+  Isolated `bingocommerce_state_recon` results: signed-out cart **140/140**,
+  availability **564/564**, legacy Session **352/352**, schedules **159/159**,
+  reconciliation **271/271**, Package Stage B **258/258**, add-on backend
+  **582/582**, add-on administration **350/350**: **2,676 passed, 0 failed**.
+  Focused follow-up reran the cart suite serially: 18 new assertions cover two
+  distinct Paper add-ons on one Paper Package, separate relationship prices and
+  quantities, child removal/Undo, parent removal/Undo restoring both children,
+  and unchanged ordinary merchandise. No production defect was exposed or
+  production code changed; the other regression counts above are from the prior
+  run, not rerun in this follow-up. The Hall-access ownership guard is unchanged.
+  Current-run cart fixture Halls/tables were cleaned up, and persistent-Hall
+  preservation checks passed. Expected fault-injection and Hall Staff writer
+  diagnostics remained in regression logs. The additional Hall-access suite
+  refused to run because its separate `bingocommerce_state_test` fixture already
+  contained a mapping table/schema version; that ownership guard was preserved,
+  not bypassed, and no pass is claimed for that suite. All seven touched PHP
+  files passed syntax checks; `git diff --check` passed. No theme, frontend,
+  full checkout, electronic limits, order facts, refunds or entitlement was
+  implemented. No real Hall was changed or migrated. Nothing staged, committed,
+  pushed or deployed; this is not a customer-launch readiness claim.
 - No Hall Staff Management work currently in progress.
 - Package Increment 1 and the legacy Session Increment 1 remain COMPLETE and
   are recorded under Done. Package Add-ons Increment 1 is approved by
@@ -2697,9 +2740,10 @@ Everything below is tracked work that is NOT a blocker to that demo.
    webhooks and SSO remain later integration phases.
    Commerce scheduling and occurrence reconciliation exist under approved
    ADR-043; production deployment is not claimed.
-2. The BR-066 storefront mechanism that enforces Bingo Play Product
-   non-purchasability. Deferred by decision; requires a new reviewed entry
-   before any implementer selects a mechanism.
+2. Complete checkout-boundary revalidation and exact order facts/linkage.
+   BR-081 now resolves BR-066's mechanism deferral: server-side cart enforcement
+   is implemented without global Play Product purchasability/lifecycle changes.
+   Cart validation alone does not complete checkout/payment/order guarantees.
 3. Package add-ons: ADR-044/BR-079 approve `PackageAddonService`, Catalog v6's
    `bingo_package_addons`, the 1–99 quantity rule, lifecycle/medium integrity,
    fixed transaction profile, and BR-065 `bc_package_relation` projection.
@@ -2714,7 +2758,8 @@ Everything below is tracked work that is NOT a blocker to that demo.
    These observations do not establish that every browser scenario passed.
    The injected post-commit list-read failure and its recovery-only Retry screen
    are covered by automated tests but have not been browser-tested by the user.
-   Storefront/cart/checkout enforcement remains outstanding.
+   BR-081 customer cart enforcement is implemented. Customer selection screens
+   and full checkout enforcement remain outstanding.
 4. Checkout electronic-limit enforcement (BR-042) and redemption accumulation
    (BR-045), including the effective-limit resolver (BR-038, BR-064).
 5. Entitlement snapshot (BR-043, ADR-029), QR issuance (BR-044) and Android

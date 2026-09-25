@@ -19,6 +19,8 @@ final class Plugin {
 	}
 
 	public static function init(): void {
+		// Cart guards must still fail closed when a domain dependency is missing.
+		CustomerCart::register();
 		$missing = self::missing_dependencies();
 
 		if ( [] !== $missing ) {
