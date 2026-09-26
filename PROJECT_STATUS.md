@@ -2808,6 +2808,37 @@
   this native new-refund boundary; see the architecture note before integration.
   Entitlement voiding/QR, retry behavior, gateway reconciliation and storefront
   remain separate. No real Hall data/migration, stage, commit, push or deployment.
+- **[2026-09-26] Order recording: validated digital-face purchase totals — implemented and verified:**
+  Started from clean `feature/portal-sync` at
+  `872451925df2d7394468f085b4790af7694cfa41`. `CartSelection::inspect()` now
+  exposes the result of its existing authoritative electronic validation to
+  `CustomerOrder`. New classic orders and unplaced Store API drafts save that
+  map as `bc_purchase.digital_faces_by_game_type`, keyed by Hall-local Game
+  Type ID. It includes required base and eligible selected add-on quantities;
+  Paper-only selections record an empty map. No electronic limit is saved.
+  Placed orders retain their saved totals, including through native classic
+  pay-for-order/resume and Store API existing-order/cart retries. Drafts follow
+  current selections and Catalog data. Older placed orders missing the field
+  remain unknown and are never backfilled from mutable Catalog data, including
+  when the order lacks the whole purchase summary. Future entitlement work
+  must require reviewed historical recovery before automatically activating an
+  order with missing/invalid totals; absence must not mean Paper/zero.
+  Serial `bingocommerce_state_recon` results: order recording/refunds
+  **1,098/1,098**, cart **140/140**, electronic limits **437/437**:
+  **1,675 passed, 0 failed**, all exit 0. Tests use actual signed-out classic
+  and Store API checkout, offline BACS, Digital/Hybrid/Paper Packages, two Game
+  Types, add-ons, merchandise, coupons and tax. Native retries preserve saved
+  facts after face-count, component-quantity and Game Type assignment edits;
+  customer selections/prices remain unchanged in those retry cases. Draft
+  refresh/replacement/removal, older missing facts, digital-order refunds and
+  two Halls with colliding IDs are covered. Financial records remain unchanged.
+  Fixture network configuration was restored; disposable Halls/tables were
+  cleaned, and persistent fixture Halls 2/3/4 remained unchanged. Known Hall
+  Staff writer-guard diagnostics appeared; no PHP/database warnings occurred.
+  All three changed PHP files pass syntax checks; `git diff --check` passes.
+  No production retry/refund behavior, entitlement/QR, settings writer, capacity
+  counter or UI was added. No real Hall changes or migration; nothing staged,
+  committed, pushed or deployed.
 - No Hall Staff Management work currently in progress.
 - Package Increment 1 and the legacy Session Increment 1 remain COMPLETE and
   are recorded under Done. Package Add-ons Increment 1 is approved by

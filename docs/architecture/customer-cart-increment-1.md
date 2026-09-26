@@ -117,7 +117,9 @@ positive whole numbers (`>= 1`); stored `0` or `'0'` returns
 
 `CartSelection::resolve()` checks before adding any lines. `inspect()` repeats
 the calculation after BR-080/BR-081 integrity checks, covering stale/restored
-carts, quantity changes and checkout. No calculated total/limit is persisted.
+carts, quantity changes and checkout. Neither totals nor limits are persisted
+as cart authority. `inspect()` also returns the successfully validated face map
+for order recording below; unsuccessful inspections return no face map.
 The installed WooCommerce 11.0.1 checkout boundaries were inspected separately:
 
 - Classic `WC_Checkout::process_checkout()` runs `validate_checkout()` before
@@ -140,8 +142,34 @@ metadata, compatible with the existing HPOS configuration. There is no domain
 schema change or direct order SQL. `bc_purchase` on the order stores version,
 Hall site ID, selection UUID, exact occurrence ID/date/name/schedule and nullable
 structured timing, Package ID/type/Woo product/name/quantity, and selected
-add-on relationship IDs, Play Product/Woo IDs and quantities. This records the
-purchase selection, not a base-composition or digital-entitlement snapshot.
+add-on relationship IDs, Play Product/Woo IDs and quantities.
+
+The 2026-09-26 order-recording extension adds
+`bc_purchase.digital_faces_by_game_type`: a map of Hall-local `game_type_id`
+to validated positive integer digital-face total, scoped by the summary's
+`site_id`. It reuses the result of `ElectronicLimit::validate_selection()` from
+the same successful `CartSelection::inspect()` call. This includes required
+base components and selected eligible add-ons; Paper contributes zero. A
+Paper-only selection records an explicit empty map. No electronic limit is
+saved as a purchase fact. This is an additive field in the version-1 purchase
+summary; item bindings and native financial values are unchanged. It records
+purchased quantities of digital faces without creating an entitlement,
+confirming payment or issuing a QR.
+
+New classic orders and unplaced Store API drafts receive these validated
+totals. Draft totals follow current selection and Catalog changes, including
+unchanged-line drafts, add-on removal and Package replacement/removal. Once
+placed, the saved map is retained through WooCommerce's native payment retries;
+later Catalog edits cannot replace it. Existing cart checks still run at their
+existing boundaries. No retry hook or payment policy is changed.
+
+An older placed order without this field remains **unknown**, including when
+it has no purchase summary at all. Recording and retry must not backfill it
+from today's Catalog, and absence must never be interpreted as Paper/zero.
+When entitlement is implemented, missing or invalid historical totals must
+prevent automatic entitlement creation until a separately reviewed recovery
+can establish the purchased quantities from trustworthy historical evidence.
+This slice performs no backfill, recovery or entitlement activation.
 
 Each Package/add-on order item has its own `bc_purchase` binding with the Hall,
 Session, Package, selection UUID, role, relationship ID (zero for the parent),
@@ -190,7 +218,14 @@ to avoid terminating the CLI on redirect. Additional Store API fixture
 sentinels preserve unplaced drafts for repeat native-update tests. Two distinct
 add-ons, merchandise, coupon discounts/nonzero taxes, persisted receipt output,
 Catalog/Session edits, legacy timing, colliding local IDs in two Halls and
-recording failures are covered. All fixture Halls are token-owned and disposable.
+recording failures are covered. The digital-fact cases exercise Digital and
+Hybrid Packages with two Game Types and add-ons, Paper-only totals, draft
+updates including Paper add-ons, and preserved placed totals after changes to
+faces, component quantities and Game Type assignments. Actual classic
+pay-for-order/resume and Store API existing-order/cart retries use unchanged
+customer selections; older orders keep missing totals absent. Refund
+regressions read back the unchanged purchase facts and financial values.
+All fixture Halls are token-owned and disposable.
 
 ## Whole-Package refund restriction (BR-046)
 

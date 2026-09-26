@@ -11,6 +11,8 @@ putenv( 'BC_FIXTURE_WOOCOMMERCE=1' );
 require __DIR__ . '/fixtures/wordpress-bootstrap.php';
 
 use BingoCommerce\Catalog\BingoPlayProductService;
+use BingoCommerce\Catalog\ElectronicLimit;
+use BingoCommerce\Catalog\GameTypeService;
 use BingoCommerce\Catalog\PackageAddonService;
 use BingoCommerce\Catalog\PackageService;
 use BingoCommerce\Catalog\Migrations as CatalogMigrations;
@@ -43,7 +45,9 @@ final class CustomerOrderRecordingTest {
 		add_filter( 'pre_http_request', static fn() => new WP_Error( 'bc_fixture_no_network', 'No outbound HTTP in order fixtures.' ) );
 		$baseline = [];
 		foreach ( [ 2, 3, 4 ] as $site ) { $baseline[ $site ] = $this->snapshot( $site ); }
+		$missing = new stdClass(); $maximum = get_site_option( ElectronicLimit::PLATFORM_OPTION, $missing );
 		try {
+			update_site_option( ElectronicLimit::PLATFORM_OPTION, '500' );
 			$a = $this->fixture( 'a' ); $b = $this->fixture( 'b' );
 			switch_to_blog( $a['site'] ); wp_set_current_user( 0 );
 			WC()->initialize_session(); WC()->initialize_cart();
@@ -66,6 +70,7 @@ final class CustomerOrderRecordingTest {
 			$this->draft_updates( $a );
 			$this->legacy( $a );
 			$this->guards( $a, $b );
+			$this->digital_recording( $a, $b );
 			$this->refunds( $a, $b );
 			$this->history( $a, $orders, $carts );
 			$this->clear(); WC()->session->destroy_session(); remove_action( 'shutdown', [ WC()->session, 'save_data' ], 20 );
@@ -74,11 +79,19 @@ final class CustomerOrderRecordingTest {
 			WC()->customer->set_props( array_combine( array_map( static fn( $key ) => 'billing_' . $key, array_keys( $this->address ) ), $this->address ) );
 			$this->select( $b ); $expected = $this->cart_financials(); $id = $this->checkout( 'store' );
 			$this->assert_order( $id, $b, $expected, 'Hall B with colliding local IDs' );
+			$digital = $b['digital']['digital'] + $b;
+			$this->select( $digital ); $expected = $this->cart_financials(); $id = $this->checkout( 'store' );
+			$this->assert_order( $id, $digital, $expected, 'Hall B digital facts with colliding Game Type IDs' );
 			$this->same( 0, get_current_user_id(), 'all purchase cases finish signed out' );
 		} catch ( Throwable $e ) {
 			++$this->failures;
 			fwrite( STDERR, get_class( $e ) . ': ' . $e->getMessage() . "\n" . $e->getTraceAsString() . "\n" );
-		} finally { $this->cleanup(); }
+		} finally {
+			if ( $maximum === $missing ) { delete_site_option( ElectronicLimit::PLATFORM_OPTION ); }
+			else { update_site_option( ElectronicLimit::PLATFORM_OPTION, $maximum ); }
+			$this->same( $maximum, get_site_option( ElectronicLimit::PLATFORM_OPTION, $missing ), 'fixture network limit restored' );
+			$this->cleanup();
+		}
 		foreach ( $baseline as $site => $before ) { $this->same( $before, $this->snapshot( $site ), "persistent fixture Hall {$site} unchanged" ); }
 		printf( "Order recording: %d passed, %d failed.\n", $this->passes, $this->failures );
 		exit( $this->failures ? 1 : 0 );
@@ -135,6 +148,8 @@ final class CustomerOrderRecordingTest {
 		$this->same( '18:00:00', $facts['start_time_local'], $path . ': structured time recorded' );
 		$this->same( 'America/New_York', $facts['timezone_name'], $path . ': captured occurrence timezone recorded' );
 		$this->same( $f['package'], $facts['package_id'], $path . ': authoritative Package recorded' );
+		$this->same( $f['expected_faces'] ?? [], $facts['digital_faces_by_game_type'] ?? null, $path . ': digital faces recorded by Hall-local Game Type; Paper is an explicit empty map' );
+		$this->same( [], array_intersect( [ 'limit', 'effective_limit', ElectronicLimit::PLATFORM_OPTION, ElectronicLimit::HALL_OPTION ], array_keys( $facts ) ), $path . ': no electronic-limit purchase fact' );
 		$this->same( [
 			[ 'addon_id' => $f['first'], 'bingo_play_product_id' => $f['first_play'], 'wc_product_id' => $f['first_wc'], 'quantity' => 2 ],
 			[ 'addon_id' => $f['second'], 'bingo_play_product_id' => $f['second_play'], 'wc_product_id' => $f['second_wc'], 'quantity' => 3 ],
@@ -278,6 +293,143 @@ final class CustomerOrderRecordingTest {
 		$order = wc_get_order( $id ); $rows = [];
 		foreach ( $order->get_items() as $key => $item ) { $rows[ $key ] = [ $item->get_name(), $item->get_meta( CustomerOrder::META, true ), $this->item_financials( $item ), wc_display_item_meta( $item, [ 'echo' => false ] ) ]; }
 		return [ $order->get_meta( CustomerOrder::META, true ), $order->get_total(), $order->get_discount_total(), $order->get_discount_tax(), $order->get_total_tax(), $rows ];
+	}
+
+	private function digital_recording( array $f, array $other ): void {
+		global $wpdb;
+		$other_before = $this->snapshot( $other['site'] );
+		$this->same( $f['digital']['digital']['game_a'], $other['digital']['digital']['game_a'], 'digital order fixtures have colliding Hall-local Game Type IDs' );
+		foreach ( $f['digital'] as $kind => $variant ) {
+			$selection = $variant + $f;
+			foreach ( [ 'classic', 'store' ] as $path ) {
+				$this->select( $selection ); $expected = $this->cart_financials(); $id = $this->checkout( $path );
+				$this->assert_order( $id, $selection, $expected, $kind . ' ' . $path );
+				$before = $this->order_snapshot( $id ); $lines = [];
+				foreach ( wc_get_order( $id )->get_items() as $item_id => $item ) {
+					if ( is_array( $item->get_meta( CustomerOrder::META, true ) ) ) { $lines[ $item_id ] = [ 'qty' => $item->get_quantity(), 'refund_total' => $item->get_total(), 'refund_tax' => $item->get_taxes()['total'] ]; }
+				}
+				wp_set_current_user( $this->admin );
+				try {
+					$partial = array_slice( $lines, 1, 1, true );
+					$this->same( false, $this->refund_request( 'direct', $id, $this->refund_amount( $partial ), $partial, false ), 'digital order still rejects separate add-on refund' );
+					$this->same( true, $this->refund_request( 'direct', $id, $this->refund_amount( $lines ), $lines, false ), 'digital order still permits whole-Package refund' );
+				} finally { wp_set_current_user( 0 ); }
+				$this->same( $before, $this->order_snapshot( $id ), 'refund retains recorded digital totals and original financial facts' );
+			}
+		}
+		$selection = $f['digital']['digital'] + $f;
+		foreach ( [ false, true ] as $older ) {
+			foreach ( [ 'classic-pay', 'classic-resume', 'store-existing', 'store-cart' ] as $path ) {
+				$this->select( $selection ); $cart = WC()->cart->get_cart(); $coupons = WC()->cart->get_applied_coupons();
+				$id = $this->checkout( str_starts_with( $path, 'store' ) ? 'store' : 'classic' );
+				if ( $older ) {
+					$order = wc_get_order( $id ); $facts = $order->get_meta( CustomerOrder::META, true ); unset( $facts['digital_faces_by_game_type'] );
+					$order->update_meta_data( CustomerOrder::META, $facts ); $order->save();
+				}
+				$before = $this->order_snapshot( $id );
+				// Changes confined to token-owned fixture Catalog rows: faces, component
+				// quantity and Game Type assignment change while cart inputs/prices do not.
+				$wpdb->update( CatalogMigrations::play_products_table(), [ 'faces_per_unit' => 7 ], [ 'bingo_play_product_id' => $selection['first_play'] ] );
+				$wpdb->update( CatalogMigrations::play_products_table(), [ 'game_type_id' => $selection['game_a'] ], [ 'bingo_play_product_id' => $selection['second_play'] ] );
+				$wpdb->update( CatalogMigrations::package_components_table(), [ 'quantity' => 4 ], [ 'package_id' => $selection['package'], 'bingo_play_product_id' => $selection['first_play'] ] );
+				try {
+					$this->same( [ $selection['game_a'] => 67 ], ElectronicLimit::validate_selection( $selection['package'], [ $selection['first'] => 2, $selection['second'] => 3 ] ), 'current Catalog produces different digital totals' );
+					$this->same( $before, $this->order_snapshot( $id ), 'Catalog edits alone cannot rewrite placed digital facts' );
+					$this->retry( $path, $id, $cart, $coupons );
+					$after = $this->order_snapshot( $id );
+					// Native classic resume rebuilds line IDs; compare their saved content.
+					$before[5] = array_values( $before[5] ); $after[5] = array_values( $after[5] );
+					$this->same( $before, $after, $path . ': native retry preserves facts, item contents, quantities, amounts, discounts and taxes' );
+					$facts = wc_get_order( $id )->get_meta( CustomerOrder::META, true );
+					$this->same( ! $older, array_key_exists( 'digital_faces_by_game_type', $facts ), $path . ': older missing totals stay missing; recorded totals survive' );
+				} finally {
+					$wpdb->update( CatalogMigrations::play_products_table(), [ 'faces_per_unit' => $selection['faces'] ], [ 'bingo_play_product_id' => $selection['first_play'] ] );
+					$wpdb->update( CatalogMigrations::play_products_table(), [ 'game_type_id' => $selection['game_b'] ], [ 'bingo_play_product_id' => $selection['second_play'] ] );
+					$wpdb->update( CatalogMigrations::package_components_table(), [ 'quantity' => 3 ], [ 'package_id' => $selection['package'], 'bingo_play_product_id' => $selection['first_play'] ] );
+					$this->clear();
+				}
+			}
+		}
+		$this->select( $selection ); $cart = WC()->cart->get_cart(); $coupons = WC()->cart->get_applied_coupons(); $id = $this->checkout( 'classic' );
+		$order = wc_get_order( $id ); $order->delete_meta_data( CustomerOrder::META ); $order->save();
+		$this->retry( 'classic-resume', $id, $cart, $coupons );
+		$this->same( false, array_key_exists( 'digital_faces_by_game_type', wc_get_order( $id )->get_meta( CustomerOrder::META, true ) ), 'placed order with no summary is not backfilled with digital totals' );
+		$this->digital_drafts( $f );
+		$this->same( $other_before, $this->snapshot( $other['site'] ), 'digital recording and retries leave colliding Hall B byte-identical' );
+	}
+
+	private function digital_drafts( array $f ): void {
+		global $wpdb;
+		$d = $f['digital']['digital']; $parent = $this->select( $d + $f ); $id = 0;
+		$stop = static function ( $order ) use ( &$id ) { $id = $order->get_id(); throw new RouteException( 'bc_fixture_digital_draft', 'Unplaced fixture draft.', 418 ); };
+		add_action( 'woocommerce_store_api_checkout_update_order_meta', $stop, 200 );
+		try {
+			$this->same( 418, $this->request( 'POST' )->get_status(), 'digital draft created through Store API' );
+			$line_ids = array_keys( wc_get_order( $id )->get_items() ); WC()->session->set( 'store_api_draft_order', $id );
+			$this->same( $d['expected_faces'], wc_get_order( $id )->get_meta( CustomerOrder::META, true )['digital_faces_by_game_type'], 'draft has initial validated digital totals' );
+			$wpdb->update( CatalogMigrations::play_products_table(), [ 'faces_per_unit' => 7 ], [ 'bingo_play_product_id' => $d['first_play'] ] );
+			$this->same( 418, $this->request( 'POST' )->get_status(), 'unchanged-line draft rereads current faces' );
+			$this->same( $line_ids, array_keys( wc_get_order( $id )->get_items() ), 'draft refresh did not require replacing line IDs' );
+			$this->same( [ $d['game_a'] => 35, $d['game_b'] => 25 ], wc_get_order( $id )->get_meta( CustomerOrder::META, true )['digital_faces_by_game_type'], 'unplaced draft follows Catalog faces' );
+			foreach ( WC()->cart->get_cart() as $key => $line ) { if ( $d['first'] === ( $line[ CartSelection::META ]['addon_id'] ?? null ) ) { WC()->cart->remove_cart_item( $key ); } }
+			WC()->cart->calculate_totals();
+			$this->same( 418, $this->request( 'POST' )->get_status(), 'digital draft updates after add-on removal' );
+			$this->same( [ $d['game_a'] => 21, $d['game_b'] => 25 ], wc_get_order( $id )->get_meta( CustomerOrder::META, true )['digital_faces_by_game_type'], 'removed add-on no longer contributes draft faces' );
+			$this->clear(); $h = $f['digital']['hybrid']; WC()->cart->add_to_cart( $f['merch'], 10 );
+			CustomerCart::add( [ 'session_id' => $f['session'], 'package_id' => $h['package'], 'addons' => [ [ 'package_addon_id' => $h['first'], 'quantity' => 2 ], [ 'package_addon_id' => $h['second'], 'quantity' => 3 ], [ 'package_addon_id' => $h['paper_addon'], 'quantity' => 10 ] ] ] );
+			WC()->cart->calculate_totals(); WC()->session->set( 'store_api_draft_order', $id );
+			$this->same( 418, $this->request( 'POST' )->get_status(), 'draft changes to Hybrid with digital and Paper add-ons' );
+			$facts = wc_get_order( $id )->get_meta( CustomerOrder::META, true );
+			$this->same( $h['package'], $facts['package_id'], 'draft now records the replacement Package' );
+			$this->same( [ $h['game_a'] => 35, $h['game_b'] => 25 ], $facts['digital_faces_by_game_type'], 'Hybrid Paper base and Paper add-on contribute no digital faces' );
+			$parent = $this->select( $f ); WC()->session->set( 'store_api_draft_order', $id );
+			$this->same( 418, $this->request( 'POST' )->get_status(), 'draft changes to Paper-only' );
+			$this->same( [], wc_get_order( $id )->get_meta( CustomerOrder::META, true )['digital_faces_by_game_type'], 'Paper replacement clears former digital totals' );
+			WC()->cart->remove_cart_item( $parent ); WC()->cart->calculate_totals();
+			$this->same( 418, $this->request( 'POST' )->get_status(), 'draft removes Bingo selection' );
+			$this->same( '', wc_get_order( $id )->get_meta( CustomerOrder::META, true ), 'merchandise-only draft has no digital purchase facts' );
+		} finally {
+			remove_action( 'woocommerce_store_api_checkout_update_order_meta', $stop, 200 );
+			$wpdb->update( CatalogMigrations::play_products_table(), [ 'faces_per_unit' => $d['faces'] ], [ 'bingo_play_product_id' => $d['first_play'] ] );
+			$this->clear();
+		}
+	}
+
+	/** Actual Woo retry entry points, offline BACS. Only its final redirect is intercepted. */
+	private function retry( string $path, int $id, array $cart, array $coupons ): void {
+		$this->same( 0, get_current_user_id(), $path . ': retry is signed out' );
+		$order = wc_get_order( $id ); $order->set_status( 'pending' ); $order->save();
+		if ( in_array( $path, [ 'classic-resume', 'store-cart' ], true ) ) {
+			WC()->cart->cart_contents = $cart;
+			foreach ( $coupons as $coupon ) { WC()->cart->apply_coupon( $coupon ); }
+			WC()->cart->calculate_totals();
+			WC()->session->set( 'classic-resume' === $path ? 'order_awaiting_payment' : 'store_api_draft_order', $id );
+			$this->same( $id, $this->checkout( 'classic-resume' === $path ? 'classic' : 'store' ), $path . ': native checkout reuses existing order' );
+		} elseif ( 'store-existing' === $path ) {
+			$route = \Automattic\WooCommerce\StoreApi\StoreApi::container()->get( \Automattic\WooCommerce\StoreApi\RoutesController::class )->get( 'checkout-order' );
+			register_rest_route( 'wc/store/v1', $route->get_path(), $route->get_args(), true );
+			$request = new WP_REST_Request( 'POST', '/wc/store/v1/checkout/' . $id );
+			$request->set_body_params( [ 'key' => $order->get_order_key(), 'billing_email' => $order->get_billing_email(), 'billing_address' => $this->address, 'payment_method' => 'bacs' ] );
+			$request->set_header( 'Nonce', wp_create_nonce( 'wc_store_api' ) );
+			$response = rest_get_server()->dispatch( $request );
+			$this->same( 200, $response->get_status(), 'Store API existing-order offline payment ' . ( 200 === $response->get_status() ? '' : wp_json_encode( $response->get_data() ) ) );
+		} else {
+			global $wp;
+			$post = $_POST; $get = $_GET; $request = $_REQUEST; $vars = $wp->query_vars; $level = ob_get_level(); $paid = 0;
+			$stop = static function ( $result, $order_id ) use ( &$paid ) { $paid = (int) $order_id; throw new RuntimeException( 'BC_FIXTURE_RETRY_NO_REDIRECT' ); };
+			add_filter( 'woocommerce_payment_successful_result', $stop, 100, 2 ); wc_clear_notices();
+			try {
+				$_POST = [ 'woocommerce_pay' => '1', 'payment_method' => 'bacs' ]; $_GET = [ 'key' => $order->get_order_key() ];
+				$_REQUEST = $_POST + [ 'woocommerce-pay-nonce' => wp_create_nonce( 'woocommerce-pay' ) ]; $wp->query_vars['order-pay'] = $id;
+				WC_Form_Handler::pay_action();
+			} finally {
+				while ( ob_get_level() > $level ) { ob_end_clean(); } $_POST = $post; $_GET = $get; $_REQUEST = $request; $wp->query_vars = $vars;
+				remove_filter( 'woocommerce_payment_successful_result', $stop, 100 );
+			}
+			$this->same( $id, $paid, 'classic pay-for-order reaches offline gateway success' );
+		}
+		$this->same( 'on-hold', wc_get_order( $id )->get_status(), $path . ': offline retry completed without payment transport' );
+		$this->clear();
 	}
 
 	private function refunds( array $f, array $other ): void {
@@ -482,13 +634,14 @@ final class CustomerOrderRecordingTest {
 			$addons = new PackageAddonService();
 			$first = $addons->create( $package, $first_play, '3.25', 4 )->package_addon['package_addon_id'];
 			$second = $addons->create( $package, $second_play, '6.50', 5 )->package_addon['package_addon_id'];
+			$digital = $this->digital_fixture( $base, 'a' === $label ? 6 : 9 );
 			$merch = $this->product( 'Ordinary dauber', '2.00' );
 			$coupon = 'order-' . strtolower( wp_generate_password( 8, false ) );
 			$c = new WC_Coupon(); $c->set_code( $coupon ); $c->set_discount_type( 'percent' ); $c->set_amount( '10' ); $c->save();
 			$now = current_time( 'mysql', true );
 			$wpdb->insert( Migrations::portal_session_templates_table(), [ 'portal_session_id' => 80003, 'name' => 'Order fixture Session', 'portal_status' => 'active', 'is_current' => 1, 'created_at' => $now, 'updated_at' => $now ] );
 			$date = ( new DateTimeImmutable( 'now', wp_timezone() ) )->modify( '+2 days' )->format( 'Y-m-d' );
-			$schedules = new SessionScheduleService(); $schedule = $schedules->create( 80003, 'dates', '18:00', [ $date ], [ $package ] );
+			$schedules = new SessionScheduleService(); $schedule = $schedules->create( 80003, 'dates', '18:00', [ $date ], [ $package, $digital['digital']['package'], $digital['hybrid']['package'] ] );
 			if ( is_wp_error( $schedule ) ) { throw new RuntimeException( 'Fixture schedule failed.' ); }
 			$schedules->generate( (int) $schedule->schedule['schedule_id'] );
 			$session = (int) $wpdb->get_var( $wpdb->prepare( 'SELECT session_id FROM %i WHERE schedule_id = %d', Migrations::sessions_table(), $schedule->schedule['schedule_id'] ) );
@@ -496,8 +649,30 @@ final class CustomerOrderRecordingTest {
 			$name = $wpdb->get_var( $wpdb->prepare( 'SELECT display_name FROM %i WHERE session_id = %d', Migrations::sessions_table(), $session ) );
 			$service = new SessionService(); $created = $service->create( $date, 'Legacy 7pm label', false );
 			$legacy = (int) $created->session['session_id']; $service->assignPackage( $legacy, $package ); $service->setAvailableForSale( $legacy, true );
-			return compact( 'site', 'session', 'date', 'name', 'package', 'package_wc', 'first', 'second', 'first_play', 'second_play', 'first_wc', 'second_wc', 'merch', 'coupon', 'legacy' );
+			return compact( 'site', 'session', 'date', 'name', 'package', 'package_wc', 'first', 'second', 'first_play', 'second_play', 'first_wc', 'second_wc', 'merch', 'coupon', 'legacy', 'digital' );
 		} finally { restore_current_blog(); }
+	}
+	private function digital_fixture( int $paper, int $faces ): array {
+		$game_a = ( new GameTypeService() )->create( 'Regular' )->game_type['game_type_id'];
+		$game_b = ( new GameTypeService() )->create( 'Winner' )->game_type['game_type_id'];
+		$plays = new BingoPlayProductService();
+		$first_wc = $this->product( 'Digital Regular', '50.00' ); $second_wc = $this->product( 'Digital Winner', '60.00' );
+		$first_play = $plays->create( $first_wc, 'digital', $faces, $game_a )->play_product['bingo_play_product_id'];
+		$second_play = $plays->create( $second_wc, 'digital', 5, $game_b )->play_product['bingo_play_product_id'];
+		$result = [];
+		foreach ( [ 'digital', 'hybrid' ] as $kind ) {
+			$components = [ [ 'bingo_play_product_id' => $first_play, 'quantity' => 3 ], [ 'bingo_play_product_id' => $second_play, 'quantity' => 2 ] ];
+			if ( 'hybrid' === $kind ) { $components[] = [ 'bingo_play_product_id' => $paper, 'quantity' => 10 ]; }
+			$package_wc = $this->product( 'Fixture ' . $kind . ' Package', '20.00' );
+			$package = ( new PackageService() )->create( $package_wc, $components )->package['package_id'];
+			$addons = new PackageAddonService();
+			$first = $addons->create( $package, $first_play, '3.25', 4 )->package_addon['package_addon_id'];
+			$second = $addons->create( $package, $second_play, '6.50', 5 )->package_addon['package_addon_id'];
+			$paper_addon = $addons->create( $package, $paper, '1.00', 10 )->package_addon['package_addon_id'];
+			$expected_faces = [ $game_a => $faces * 5, $game_b => 25 ];
+			$result[ $kind ] = compact( 'package', 'package_wc', 'first', 'second', 'first_play', 'second_play', 'first_wc', 'second_wc', 'game_a', 'game_b', 'faces', 'paper_addon', 'expected_faces' );
+		}
+		return $result;
 	}
 	private function product( string $name, string $price ): int {
 		$p = new WC_Product_Simple(); $p->set_name( $name ); $p->set_status( 'publish' ); $p->set_regular_price( $price ); $p->set_virtual( true ); $p->set_tax_status( 'taxable' ); return $p->save();

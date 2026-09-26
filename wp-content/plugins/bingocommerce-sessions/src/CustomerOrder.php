@@ -55,6 +55,11 @@ final class CustomerOrder {
 			$facts = $existing;
 		} else {
 			$facts = null === $parent ? null : self::facts( $parent, $expected );
+			if ( null !== $facts && ( ! $order->get_id() || $order->has_status( 'checkout-draft' ) ) ) {
+				// Reuse this inspection's validated totals. Never backfill a placed order
+				// from current Catalog data; an absent field is not a Paper-only result.
+				$facts['digital_faces_by_game_type'] = $inspection['digital_faces'];
+			}
 		}
 		$matched = [];
 		foreach ( $order->get_items( 'line_item' ) as $item ) {

@@ -90,7 +90,7 @@ final class CartSelection {
 		return [ 'kind' => 'addon', 'product_id' => $addon['wc_product_id'], 'price' => $addon['unit_price'], 'max_quantity' => $addon['max_quantity'] ];
 	}
 
-	/** @return array{errors:\WP_Error,lines:array} Fresh reads; nothing is cached across Hall switches. */
+	/** @return array{errors:\WP_Error,lines:array,digital_faces:?array} Fresh reads; nothing is cached across Hall switches. */
 	public static function inspect( array $contents ): array {
 		$errors = new \WP_Error();
 		$lines = [];
@@ -100,6 +100,7 @@ final class CartSelection {
 		$children = [];
 		$package_id = 0;
 		$selected_addons = [];
+		$digital_faces = null;
 		foreach ( $contents as $key => $item ) {
 			$line = self::line( $item );
 			if ( is_wp_error( $line ) ) {
@@ -149,8 +150,9 @@ final class CartSelection {
 		if ( ! $errors->has_errors() && 1 === $packages ) {
 			$faces = self::electronic_faces( $package_id, $selected_addons );
 			if ( is_wp_error( $faces ) ) { $errors->merge_from( $faces ); }
+			else { $digital_faces = $faces; }
 		}
-		return [ 'errors' => $errors, 'lines' => $lines ];
+		return [ 'errors' => $errors, 'lines' => $lines, 'digital_faces' => $digital_faces ];
 	}
 
 	private static function electronic_faces( int $package_id, array $addons ) {
