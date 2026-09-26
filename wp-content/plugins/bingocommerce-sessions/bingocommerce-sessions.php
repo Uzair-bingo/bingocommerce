@@ -41,6 +41,7 @@ require_once BINGOCOMMERCE_SESSIONS_PATH . 'src/CustomerPackageEligibility.php';
 require_once BINGOCOMMERCE_SESSIONS_PATH . 'src/CartSelection.php';
 require_once BINGOCOMMERCE_SESSIONS_PATH . 'src/CustomerCart.php';
 require_once BINGOCOMMERCE_SESSIONS_PATH . 'src/CustomerOrder.php';
+require_once BINGOCOMMERCE_SESSIONS_PATH . 'src/CustomerRefund.php';
 
 /*
  * ADR-043 §7 reconciliation. DatabaseContention and OccurrenceGenerationWriter

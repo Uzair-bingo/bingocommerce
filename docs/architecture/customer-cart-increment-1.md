@@ -192,6 +192,70 @@ add-ons, merchandise, coupon discounts/nonzero taxes, persisted receipt output,
 Catalog/Session edits, legacy timing, colliding local IDs in two Halls and
 recording failures are covered. All fixture Halls are token-owned and disposable.
 
+## Whole-Package refund restriction (BR-046)
+
+`Sessions\CustomerRefund` validates native WooCommerce refunds; it neither
+processes payments nor creates refunds itself. It resolves the commercial unit
+from the saved BR-083 order/line bindings and **current** order item IDs. Classic
+resume can replace those IDs before payment. It verifies the Hall, selection,
+Session, Package, add-on relationships, products and quantities without reading
+mutable Catalog prices/eligibility or changing the purchase facts.
+
+A refund touching any Bingo line must contain the Package and every selected
+add-on, including zero-priced children, with their full quantities, charged
+post-discount line totals and taxes. Merchandise remains independently
+refundable, including partial quantities/amounts and a later refund of the
+other commercial unit. Every amount on a Bingo-containing order must be
+allocated to current product/fee/shipping lines. Both partial and full
+**amount-only** refunds are refused: a lump sum does not identify which unit is
+being refunded. Requests must match their allocation at Woo's currency
+precision/tax-rounding mode, and cannot exceed each line's remaining quantity,
+amount or taxes. Missing/inconsistent links or unallocated refund history fail
+closed for review. Ordinary-only orders retain Woo's native behavior.
+
+Installed WooCommerce 11.0.1 evidence (paths below are under its plugin root):
+
+- Admin `includes/class-wc-ajax.php:2391–2477` and REST v1/v2/v3 refund creation
+  use `wc_create_refund()`; v3 calls it at
+  `includes/rest-api/Controllers/Version3/class-wc-rest-order-refunds-controller.php:55–65`.
+  There is no Store API refund route; Store API-created orders use these same
+  management refund paths.
+- `includes/wc-order-functions.php:650–681` saves a preliminary refund during
+  `update_taxes()`/`calculate_totals()` **before** `woocommerce_create_refund`.
+  The guard therefore also uses `woocommerce_before_order_refund_object_save`.
+  `WC_Abstract_Order::save()` catches that early exception
+  (`includes/abstracts/abstract-wc-order.php:247–279`), so validation repeats at
+  `woocommerce_create_refund` to return the native `WP_Error`/AJAX/REST failure.
+  Invalid new refunds never reach persistence, gateway refund, restocking or
+  completed-refund events. Valid requests retain Woo's normal processing.
+
+Explicit limits, not claimed protections:
+
+- A manual status-only change to `refunded` is already saved when
+  `wc_order_fully_refunded()` attempts an amount-only refund and ignores its
+  result (`includes/wc-order-functions.php:906–935`). That refund is refused,
+  but the status remains changed. Use itemized refunds, not a status edit;
+  this slice does not add a status-transition guard or entitlement behavior.
+- Direct `wc_refund_payment()`/gateway `process_refund()` calls or refunds in
+  a provider dashboard have no shared pre-refund line-validation hook. They
+  are outside this enforcement boundary. A gateway integration must not bypass
+  the native itemized creation flow and needs its own reviewed reconciliation.
+- Arbitrary direct item writes, deleted refund history, orders with all Bingo
+  markers erased, and custom `wc_create_refund( refund_id: existing_id )`
+  rewrites are not safe supported paths. In that last path Woo can write existing
+  tax items before the hook and deletes the supplied refund on an exception
+  (`includes/wc-order-functions.php:750–754`). Native admin/REST creation does
+  not supply an existing refund ID. No core patch, custom refund processor,
+  cross-request lock or gateway idempotency guarantee is introduced here.
+
+The order-recording harness also tests real native function/AJAX/REST refunds,
+manual and offline-gateway modes, complete/partial/add-on-only/amount-only
+requests, mixed orders, coupons/taxes, free children, current versus stale IDs
+after native resume, historical prices and the status-only limitation. It
+checks persisted orders/refund lines and that refused requests never save a
+refund or reach gateway/restock/completion boundaries. Only token-owned
+disposable Halls are used; no funds move.
+
 ## Verification and next boundary
 
 Run `BC_TEST_DB=bingocommerce_state_recon php tests/customer-cart-increment-1.php`.
@@ -210,7 +274,10 @@ validators themselves are not mocked. Failed digital cases must report an
 electronic validation error. It restores the fixture's original network option
 and checks persistent-fixture Hall preservation and disposable-Hall cleanup.
 
-Not a complete purchase/launch implementation: existing-order payment/retry
-validation, BR-046 whole-Package refunds, payment/entitlement snapshots and QR
-activation remain separate work. Configuration writers/UI also remain
+Not a complete purchase/launch implementation: WooCommerce retains its native
+payment retry flow. Isolated retries with unchanged inputs preserved the saved
+purchase facts; changed-input retries were not verified. Refund integration
+limits above, BR-046 entitlement voiding, payment/entitlement snapshots and QR
+activation remain separate work.
+Configuration writers/UI also remain
 unimplemented; configuration authority stays with BR-064.

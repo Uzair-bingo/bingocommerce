@@ -2770,6 +2770,44 @@
   `git diff --check` passed. Payment retries, refunds, entitlement snapshots/QR,
   configuration UI and storefront remain separate work. No real Hall changes,
   real-Hall migration, deployment or production-readiness claim is made.
+- **[2026-09-25] BR-046 whole-Package native refund guard — implemented and verified:**
+  Started from clean `feature/portal-sync` at
+  `b53f47baa8426cabfaa9a41a07713df091659520`. Added Sessions `CustomerRefund`
+  and its registration; no payment/retry code changed. The guard reconstructs
+  the commercial unit from BR-083 saved links and current order item IDs, not
+  Catalog state or pre-payment line IDs. Any Bingo refund must include the
+  whole Package and every selected add-on with full quantities, post-discount
+  amounts and taxes. Merchandise stays independently refundable. Unallocated
+  amount-only refunds on Bingo-containing orders, inconsistent links and
+  excessive allocations are refused; ordinary-only orders are unchanged.
+  Inspected WooCommerce 11.0.1 function/admin AJAX/REST refund paths. Its early
+  refund saves require both the refund-object pre-save guard and the shared
+  `woocommerce_create_refund` validation hook. Invalid new requests fail before
+  refund persistence, gateway processing, restocking and completion events;
+  WooCommerce still owns all valid refund processing. No custom processor or
+  Woo/core edit was added. Architecture records the exact boundaries and limits.
+  Serial isolated `bingocommerce_state_recon` results: order recording plus
+  native refunds **736/736**, cart **140/140**, electronic limits **437/437**:
+  **1,313 passed, 0 failed**, all exit 0. The expanded order suite retains its
+  original regressions and tests actual AJAX/REST/function requests, automatic
+  offline-gateway and manual refunds, whole units/mixed orders, partial and
+  add-on-only refusals, amount-only refusals, coupons/taxes, free children,
+  merchandise independence, historical prices, native resume/current IDs,
+  stale-ID refusals and Hall isolation. Persisted order facts, names, IDs and
+  finances remain unchanged; valid refund line allocations are read back.
+  BACS creates guest orders; the fixture refund gateway has no payment transport.
+  Outbound HTTP/mail are blocked. Token-owned Halls/tables were removed after
+  testing and persistent fixture Halls 2/3/4 remained unchanged. Only the known
+  Hall Staff writer-guard diagnostics appeared on test output; deliberate early
+  vetoes use Woo's normal save-exception logger. All four changed/new PHP files
+  pass syntax checks and `git diff --check` passes. Hall-access was not rerun.
+  **Not full refund-integration coverage:** the tested status-only `refunded`
+  edit retains its already-saved status even though its amount-only refund is
+  refused. Direct gateway/provider-dashboard refunds, arbitrary item/history
+  edits and custom reuse of an existing refund ID are not safely covered by
+  this native new-refund boundary; see the architecture note before integration.
+  Entitlement voiding/QR, retry behavior, gateway reconciliation and storefront
+  remain separate. No real Hall data/migration, stage, commit, push or deployment.
 - No Hall Staff Management work currently in progress.
 - Package Increment 1 and the legacy Session Increment 1 remain COMPLETE and
   are recorded under Done. Package Add-ons Increment 1 is approved by
@@ -2837,6 +2875,9 @@ Everything below is tracked work that is NOT a blocker to that demo.
    BR-081 now resolves BR-066's mechanism deferral: server-side cart enforcement
    is implemented without global Play Product purchasability/lifecycle changes.
    Order recording alone does not complete payment/refund/entitlement guarantees.
+   BR-046 now guards native itemized refund creation; status-only edits and
+   out-of-band gateway paths still need separate integration review, and
+   entitlement voiding is not implemented.
 3. Package add-ons: ADR-044/BR-079 approve `PackageAddonService`, Catalog v6's
    `bingo_package_addons`, the 1–99 quantity rule, lifecycle/medium integrity,
    fixed transaction profile, and BR-065 `bc_package_relation` projection.

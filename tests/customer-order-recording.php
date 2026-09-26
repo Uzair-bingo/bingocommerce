@@ -22,6 +22,13 @@ use BingoCommerce\Sessions\SessionScheduleService;
 use BingoCommerce\Sessions\SessionService;
 use Automattic\WooCommerce\StoreApi\Exceptions\RouteException;
 
+/** No payment transport: observes Woo's native automatic-refund call only. */
+final class OrderFixtureRefundGateway extends WC_Payment_Gateway {
+	public int $refund_calls = 0;
+	public function __construct() { $this->id = 'bc_fixture_refund'; $this->supports = [ 'refunds' ]; }
+	public function process_refund( $order_id, $amount = null, $reason = '' ) { ++$this->refund_calls; return true; }
+}
+
 final class CustomerOrderRecordingTest {
 	private array $sites = [];
 	private int $admin;
@@ -59,6 +66,7 @@ final class CustomerOrderRecordingTest {
 			$this->draft_updates( $a );
 			$this->legacy( $a );
 			$this->guards( $a, $b );
+			$this->refunds( $a, $b );
 			$this->history( $a, $orders, $carts );
 			$this->clear(); WC()->session->destroy_session(); remove_action( 'shutdown', [ WC()->session, 'save_data' ], 20 );
 			switch_to_blog( $b['site'] ); WC()->session = null; WC()->cart = null; WC()->customer = null;
@@ -255,6 +263,14 @@ final class CustomerOrderRecordingTest {
 			CustomerOrder::record( wc_get_order( $id ) );
 			$this->same( $before[ $id ], $this->order_snapshot( $id ), 'non-draft recording preserves saved facts despite still-eligible mutable Catalog changes' );
 			$this->clear();
+			$lines = [];
+			foreach ( wc_get_order( $id )->get_items() as $item_id => $item ) {
+				if ( is_array( $item->get_meta( CustomerOrder::META, true ) ) ) { $lines[ $item_id ] = [ 'qty' => $item->get_quantity(), 'refund_total' => $item->get_total(), 'refund_tax' => $item->get_taxes()['total'] ]; }
+			}
+			wp_set_current_user( $this->admin );
+			try { $this->same( true, $this->refund_request( 'direct', $id, $this->refund_amount( $lines ), $lines, false ), 'historical refund uses charged order lines after Catalog price/name changes' ); }
+			finally { wp_set_current_user( 0 ); }
+			$this->same( $before[ $id ], $this->order_snapshot( $id ), 'historical refund leaves original purchase facts and finances unchanged' );
 		}
 	}
 
@@ -262,6 +278,153 @@ final class CustomerOrderRecordingTest {
 		$order = wc_get_order( $id ); $rows = [];
 		foreach ( $order->get_items() as $key => $item ) { $rows[ $key ] = [ $item->get_name(), $item->get_meta( CustomerOrder::META, true ), $this->item_financials( $item ), wc_display_item_meta( $item, [ 'echo' => false ] ) ]; }
 		return [ $order->get_meta( CustomerOrder::META, true ), $order->get_total(), $order->get_discount_total(), $order->get_discount_tax(), $order->get_total_tax(), $rows ];
+	}
+
+	private function refunds( array $f, array $other ): void {
+		$gateway = new OrderFixtureRefundGateway();
+		WC()->payment_gateways()->payment_gateways[] = $gateway;
+		$other_before = $this->snapshot( $other['site'] );
+		$saves = 0; $events = 0; $restocks = 0;
+		$saved = static function () use ( &$saves ) { ++$saves; };
+		$processed = static function () use ( &$events ) { ++$events; };
+		$restock = static function ( $allowed ) use ( &$restocks ) { ++$restocks; return $allowed; };
+		add_action( 'woocommerce_after_order_refund_object_save', $saved );
+		add_action( 'woocommerce_refund_created', $processed );
+		add_filter( 'woocommerce_can_restock_refunded_items', $restock );
+		try {
+			foreach ( [ 'direct', 'ajax', 'rest' ] as $path ) {
+				$cases = [ 'full', 'manual', 'whole-order', 'package-only', 'addon-only', 'partial-quantity', 'partial-amount', 'missing-tax', 'merchandise', 'amount-only', 'full-amount-only', 'mismatched-amount' ];
+				if ( 'direct' === $path ) { $cases = array_merge( $cases, [ 'foreign-hall', 'missing-link', 'unbound-duplicate', 'merchandise-overallocation', 'resumed', 'stale-ids', 'no-addons', 'tax-only', 'zero-price-addon', 'omitted-free-addon', 'subtotal-tax-rounding' ] ); }
+				foreach ( $cases as $case ) {
+					wp_set_current_user( 0 );
+					$this->select( $f );
+					if ( 'no-addons' === $case ) {
+						foreach ( WC()->cart->get_cart() as $key => $line ) { if ( 'addon' === ( $line[ CartSelection::META ]['role'] ?? null ) ) { WC()->cart->remove_cart_item( $key ); } }
+						WC()->cart->calculate_totals();
+					}
+					$cart = WC()->cart->get_cart(); $coupons = WC()->cart->get_applied_coupons();
+					$id = $this->checkout( 'rest' === $path ? 'store' : 'classic' );
+					$order = wc_get_order( $id );
+					if ( in_array( $case, [ 'resumed', 'stale-ids' ], true ) ) {
+						$old_ids = array_keys( $order->get_items() ); $order->set_status( 'pending' ); $order->save();
+						WC()->cart->cart_contents = $cart;
+						foreach ( $coupons as $coupon ) { WC()->cart->apply_coupon( $coupon ); }
+						WC()->cart->calculate_totals(); WC()->session->set( 'order_awaiting_payment', $id );
+						$this->same( $id, WC()->checkout()->create_order( [ 'payment_method' => 'bacs' ] ), 'refund fixture resumes real classic order' );
+						$order = wc_get_order( $id );
+						$this->ok( $old_ids !== array_keys( $order->get_items() ), 'native resume replaced item IDs before refund' );
+						$this->clear();
+					}
+					wp_set_current_user( $this->admin );
+					$order->set_payment_method( $gateway ); $order->save();
+					$all = []; $unit = []; $merch = [];
+					foreach ( $order->get_items() as $item_id => $item ) {
+						$binding = $item->get_meta( CustomerOrder::META, true );
+						if ( in_array( $case, [ 'zero-price-addon', 'omitted-free-addon' ], true ) && 'addon' === ( $binding['role'] ?? null ) ) { $item->set_total( 0 ); $item->set_subtotal( 0 ); $item->set_taxes( [ 'total' => [], 'subtotal' => [] ] ); $item->save(); }
+						$all[ $item_id ] = [ 'qty' => $item->get_quantity(), 'refund_total' => $item->get_total(), 'refund_tax' => $item->get_taxes()['total'] ];
+						if ( is_array( $binding ) ) { $unit[ $item_id ] = $all[ $item_id ]; } else { $merch[ $item_id ] = $all[ $item_id ]; }
+					}
+					if ( in_array( $case, [ 'zero-price-addon', 'omitted-free-addon' ], true ) ) { $order->update_taxes(); $order->calculate_totals( false ); }
+					$lines = 'whole-order' === $case ? $all : $unit;
+					$parent = array_key_first( $unit ); $child = array_keys( $unit )[1] ?? null;
+					if ( 'stale-ids' === $case ) { $lines = array_combine( $old_ids, array_values( $all ) ); }
+					if ( 'omitted-free-addon' === $case ) { unset( $lines[ $child ] ); }
+					if ( 'package-only' === $case ) { $lines = [ $parent => $unit[ $parent ] ]; }
+					if ( 'addon-only' === $case ) { $lines = [ $child => $unit[ $child ] ]; }
+					if ( 'partial-quantity' === $case ) { $lines[ $child ]['qty'] = 1; }
+					if ( 'partial-amount' === $case ) { $lines[ $parent ]['refund_total'] = '1.00'; }
+					if ( 'missing-tax' === $case ) { $lines[ $child ]['refund_tax'] = []; }
+					if ( 'tax-only' === $case ) { foreach ( $lines as &$line ) { $line['qty'] = 0; $line['refund_total'] = 0; } unset( $line ); }
+					if ( in_array( $case, [ 'merchandise', 'merchandise-overallocation' ], true ) ) {
+						$lines = $merch;
+						foreach ( $lines as &$line ) { $line['qty'] = 1; $line['refund_total'] = 'merchandise' === $case ? '1.80' : '30.00'; $line['refund_tax'] = array_map( static fn( $tax ) => (float) $tax / 10, $line['refund_tax'] ); } unset( $line );
+					}
+					if ( str_contains( $case, 'amount-only' ) ) { $lines = []; }
+					if ( 'foreign-hall' === $case ) { $facts = $order->get_meta( CustomerOrder::META, true ); $facts['site_id'] = $other['site']; $order->update_meta_data( CustomerOrder::META, $facts ); $order->save(); }
+					if ( 'missing-link' === $case ) { $item = $order->get_item( $child ); $item->delete_meta_data( CustomerOrder::META ); $item->save(); }
+					if ( 'unbound-duplicate' === $case ) { $item = new WC_Order_Item_Product(); $item->set_product_id( $f['first_wc'] ); $item->set_quantity( 1 ); $order->add_item( $item ); $order->save(); }
+					$rounding = get_option( 'woocommerce_tax_round_at_subtotal' );
+					if ( 'subtotal-tax-rounding' === $case ) { update_option( 'woocommerce_tax_round_at_subtotal', 'yes' ); }
+					$amount = $this->refund_amount( $lines );
+					if ( in_array( $case, [ 'amount-only', 'mismatched-amount' ], true ) ) { $amount = '1.00'; }
+					if ( 'full-amount-only' === $case ) { $amount = $order->get_total(); }
+					$before = $this->order_snapshot( $id ); $status = $order->get_status();
+					$before_calls = $gateway->refund_calls; $before_saves = $saves; $before_events = $events; $before_restocks = $restocks;
+					$ok = $this->refund_request( $path, $id, $amount, $lines, 'manual' !== $case );
+					$expected = in_array( $case, [ 'full', 'manual', 'whole-order', 'merchandise', 'resumed', 'no-addons', 'zero-price-addon', 'subtotal-tax-rounding' ], true );
+					$label = $path . ' refund ' . $case;
+					$this->same( $expected, $ok, $label . ': native result' );
+					$this->same( $before, $this->order_snapshot( $id ), $label . ': original facts, current item IDs and charged values unchanged' );
+					$this->same( $before_calls + ( $expected && 'manual' !== $case ? 1 : 0 ), $gateway->refund_calls, $label . ': offline gateway invoked only for valid automatic refund' );
+					$this->same( $before_events + ( $expected ? 1 : 0 ), $events, $label . ': completed-refund event only for valid refund' );
+					$this->same( $before_restocks + ( $expected ? 1 : 0 ), $restocks, $label . ': restocking reached only for valid refund' );
+					$refunds = wc_get_order( $id )->get_refunds();
+					$this->same( $expected ? 1 : 0, count( $refunds ), $label . ': persisted refund count' );
+					if ( ! $expected ) { $this->same( $before_saves, $saves, $label . ': rejected before first refund save' ); $this->same( $status, wc_get_order( $id )->get_status(), $label . ': status unchanged on refusal' ); }
+					else {
+						$this->same( count( $lines ), count( $refunds[0]->get_items() ), $label . ': exact refund line count' );
+						$this->same( $amount, wc_format_decimal( $refunds[0]->get_amount(), 2 ), $label . ': coupon-adjusted amount and taxes' );
+						$actual = []; $wanted = [];
+						foreach ( $refunds[0]->get_items() as $item ) { $actual[ (int) $item->get_meta( '_refunded_item_id', true ) ] = [ -(float) $item->get_quantity(), wc_format_decimal( -(float) $item->get_total(), 2 ), array_map( static fn( $tax ) => wc_format_decimal( -(float) $tax, 2 ), $item->get_taxes()['total'] ) ]; }
+						foreach ( $lines as $item_id => $line ) { $wanted[ $item_id ] = [ (float) $line['qty'], wc_format_decimal( $line['refund_total'], 2 ), array_map( static fn( $tax ) => wc_format_decimal( $tax, 2 ), $line['refund_tax'] ) ]; }
+						ksort( $actual ); ksort( $wanted );
+						$this->same( $wanted, $actual, $label . ': persisted refunds retain exact current-line allocation, quantities, amounts and taxes' );
+						if ( 'whole-order' !== $case ) {
+							$followup = 'merchandise' === $case ? $unit : $merch;
+							$this->same( true, $this->refund_request( 'direct', $id, $this->refund_amount( $followup ), $followup ), $label . ': other refund unit remains independent' );
+						}
+					}
+					if ( false === $rounding ) { delete_option( 'woocommerce_tax_round_at_subtotal' ); } else { update_option( 'woocommerce_tax_round_at_subtotal', $rounding ); }
+				}
+			}
+			$this->clear(); WC()->cart->add_to_cart( $f['merch'], 2 ); WC()->cart->calculate_totals(); wp_set_current_user( 0 );
+			$id = $this->checkout( 'classic' ); wp_set_current_user( $this->admin );
+			$order = wc_get_order( $id ); $order->set_payment_method( $gateway ); $order->save();
+			$this->same( true, $this->refund_request( 'direct', $id, '1.00', [] ), 'ordinary-only order retains native amount-only refunds' );
+			// A status edit is not a refund request: Woo saves the status first, then
+			// ignores wc_create_refund's error. Document, do not rewrite that workflow.
+			wp_set_current_user( 0 ); $this->select( $f ); $id = $this->checkout( 'classic' ); wp_set_current_user( $this->admin );
+			$order = wc_get_order( $id ); $before_calls = $gateway->refund_calls; $before_saves = $saves;
+			$order->update_status( 'refunded' );
+			$this->same( 'refunded', wc_get_order( $id )->get_status(), 'status-only change limitation: Woo already persisted the status' );
+			$this->same( [], wc_get_order( $id )->get_refunds(), 'status-only amount refund refused rather than silently bypassing itemization' );
+			$this->same( $before_saves, $saves, 'status-only amount refund has no preliminary write' );
+			$this->same( $before_calls, $gateway->refund_calls, 'status-only change does not call a gateway' );
+			$this->same( $other_before, $this->snapshot( $other['site'] ), 'refunds leave second Hall with colliding local IDs unchanged' );
+		} finally {
+			remove_action( 'woocommerce_after_order_refund_object_save', $saved ); remove_action( 'woocommerce_refund_created', $processed ); remove_filter( 'woocommerce_can_restock_refunded_items', $restock ); wp_set_current_user( 0 );
+		}
+	}
+
+	private function refund_amount( array $lines ): string {
+		$amount = 0.0;
+		foreach ( $lines as $line ) { foreach ( array_merge( [ $line['refund_total'] ], array_values( $line['refund_tax'] ) ) as $value ) { $amount += 'yes' === get_option( 'woocommerce_tax_round_at_subtotal' ) ? (float) $value : (float) wc_format_decimal( $value, 2 ); } }
+		return wc_format_decimal( $amount, 2 );
+	}
+
+	private function refund_request( string $path, int $id, string $amount, array $lines, bool $automatic = true ): bool {
+		if ( 'direct' === $path ) {
+			$result = wc_create_refund( [ 'order_id' => $id, 'amount' => $amount, 'line_items' => $lines, 'refund_payment' => $automatic, 'restock_items' => true ] );
+			return $result instanceof WC_Order_Refund && $result->get_id() > 0;
+		}
+		if ( 'rest' === $path ) {
+			$server = rest_get_server(); ( new WC_REST_Order_Refunds_Controller() )->register_routes();
+			$request = new WP_REST_Request( 'POST', '/wc/v3/orders/' . $id . '/refunds' );
+			$public = [];
+			foreach ( $lines as $item_id => $line ) { $taxes = []; foreach ( $line['refund_tax'] as $rate => $tax ) { $taxes[] = [ 'id' => $rate, 'refund_total' => $tax ]; } $public[] = [ 'id' => $item_id, 'quantity' => $line['qty'], 'refund_total' => $line['refund_total'], 'refund_tax' => $taxes ]; }
+			$request->set_body_params( [ 'amount' => $amount, 'line_items' => $public, 'api_refund' => $automatic, 'api_restock' => true ] );
+			return 201 === $server->dispatch( $request )->get_status();
+		}
+		$post = $_POST; $request = $_REQUEST; $level = ob_get_level(); $output = '';
+		$die = static fn() => static function () { throw new Error( 'BC_FIXTURE_AJAX_FINISHED' ); };
+		add_filter( 'wp_doing_ajax', '__return_true' ); add_filter( 'wp_die_ajax_handler', $die );
+		try {
+			$_POST = [ 'order_id' => $id, 'refund_amount' => $amount, 'refunded_amount' => wc_get_order( $id )->get_total_refunded(), 'api_refund' => $automatic ? 'true' : 'false', 'restock_refunded_items' => 'true', 'line_item_qtys' => wp_json_encode( array_map( static fn( $line ) => $line['qty'], $lines ) ), 'line_item_totals' => wp_json_encode( array_map( static fn( $line ) => $line['refund_total'], $lines ) ), 'line_item_tax_totals' => wp_json_encode( array_map( static fn( $line ) => $line['refund_tax'], $lines ) ) ];
+			$_REQUEST = $_POST + [ 'security' => wp_create_nonce( 'order-item' ) ];
+			WC_AJAX::refund_line_items();
+		} catch ( Error $e ) { if ( 'BC_FIXTURE_AJAX_FINISHED' !== $e->getMessage() ) { throw $e; } }
+		finally { while ( ob_get_level() > $level ) { $output = ob_get_clean() . $output; } $_POST = $post; $_REQUEST = $request; remove_filter( 'wp_doing_ajax', '__return_true' ); remove_filter( 'wp_die_ajax_handler', $die ); }
+		return true === ( json_decode( $output, true )['success'] ?? null );
 	}
 	private function item_financials( WC_Order_Item_Product $item ): array {
 		$taxes = $item->get_taxes(); ksort( $taxes );
