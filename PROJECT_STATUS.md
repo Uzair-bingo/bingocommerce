@@ -2839,6 +2839,52 @@
   No production retry/refund behavior, entitlement/QR, settings writer, capacity
   counter or UI was added. No real Hall changes or migration; nothing staged,
   committed, pushed or deployed.
+- **[2026-09-26] Paid online digital entitlement snapshot — implemented and isolated-verified:**
+  Started from clean `feature/portal-sync` at
+  `7f51448c4ac580ef8d7de5da51b134aad50496bb`. The new planned normal
+  `bingocommerce-digital-tickets` plugin observes only
+  `woocommerce_payment_complete`; it does not change gateways, checkout,
+  payment retries, order recording or refunds. Positive-total online checkout
+  orders with confirmed Woo payment and valid saved purchase facts produce one
+  immutable Hall-local `bingo_entitlements` row, keyed uniquely by order ID.
+  It stores exact Session/Package/selection identity and the saved
+  `digital_faces_by_game_type` map, never today's Catalog calculation or an
+  electronic limit. Current order-line links/quantities must match saved facts.
+  Plugin-owned schema v1 verifies structure/indexes before recording its site
+  version; payment callbacks never migrate. Duplicate/interleaved events use
+  the unique index and readback, never an UPDATE/REPLACE; conflicting facts do
+  not overwrite the original. Paper with an explicit empty map and ordinary
+  merchandise produce no entitlement. Missing/malformed historical totals
+  remain unknown and require reviewed historical recovery. **Zero-total
+  checkouts remain outside this paid-order slice** and report
+  `bc_entitlement_zero_total_out_of_scope`, without preventing native completion.
+  Snapshot failures are Hall/order-attributed diagnostics, not payment failures.
+  Serial `bingocommerce_state_recon` verification: new entitlement harness
+  **357/357**, existing order recording/refunds **1,098/1,098**, cart
+  **140/140**, electronic limits **437/437**: **2,032 passed, 0 failed**,
+  all exit 0. The existing suites also loaded the new plugin in their isolated
+  processes, without persistent activation. Real guest classic order creation
+  and Store API checkout use offline BACS; real `WC_Order::payment_complete()`
+  models confirmation without a payment transport. Tests cover multiple Game
+  Types/add-ons, Hybrid/Paper/merchandise, actual free-coupon completion in both
+  paths, corrupt/missing facts, unpaid/draft refusals, immutable order facts and
+  finances, Catalog edits before confirmation, failed storage/diagnostics,
+  interleaved duplicate-key insert, verified migrations and colliding Hall-local
+  identities. This is not provider-webhook or parallel-process load testing.
+  An initial test used a nonexistent Catalog method; corrected to the existing
+  `updateFacesPerUnit()` API before the passing run. The sandbox initially
+  blocked MySQL; the guarded fixture ran with local-connection permission and
+  never fell back to the development database. Known Hall Staff writer-guard
+  diagnostics and the deliberately failed diagnostic-sink message appeared.
+  Disposable Halls/tables were cleaned; fixture Halls 2/3/4 remained unchanged;
+  the fixture network option was restored. All five new PHP files pass syntax
+  checks; `git diff --check` passes.
+  **QR issuance, refund/cancellation voiding, automatic snapshot failure
+  recovery and gateway reconciliation remain unfinished.** Native repeated
+  payment completion on an already-paid order need not emit the primary event
+  again. No free-order entitlement or admin/POS/import activation rule was added.
+  The plugin was not activated on the development installation; no real-Hall
+  migration/data change, stage, commit, push or deployment was performed.
 - No Hall Staff Management work currently in progress.
 - Package Increment 1 and the legacy Session Increment 1 remain COMPLETE and
   are recorded under Done. Package Add-ons Increment 1 is approved by
@@ -2930,11 +2976,14 @@ Everything below is tracked work that is NOT a blocker to that demo.
    (BR-064). BR-082 implements the read-only effective-limit resolver and
    electronic validation at cart addition and final classic/Store API checkout;
    BR-083 adds exact order facts; existing-order payment/retry remains separate.
-5. Entitlement snapshot (BR-043, ADR-029), QR issuance (BR-044) and Android
-   redemption (ADR-030).
-6. Exact WooCommerce successful-payment hook/status mapping for BR-053
-   entitlement activation. The business rule is resolved; only the integration
-   mapping is open.
+5. QR issuance (BR-044), Package-scoped refund/cancellation voiding (BR-046)
+   and Android redemption (ADR-030). The positive-total online entitlement
+   snapshot (BR-043, ADR-029) is now implemented and isolated-verified, but
+   is not the complete lifecycle or a customer-facing digital launch.
+6. Provider confirmation integration, missed-snapshot recovery/reconciliation,
+   and a separately reviewed zero-total checkout boundary. BR-053's normal
+   paid-online snapshot event is now `woocommerce_payment_complete`; this
+   does not verify any real gateway webhook or change Woo retries.
 7. Coordinated starter-product catalog copy at provisioning (BR-047, ADR-027);
    Game Types instead follow ADR-035 synchronization. ADR-042 / BR-076 narrow
    this for the automatic-provisioning MVP: no starter Product / Play Product

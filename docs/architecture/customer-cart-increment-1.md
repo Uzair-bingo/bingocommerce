@@ -227,6 +227,106 @@ customer selections; older orders keep missing totals absent. Refund
 regressions read back the unchanged purchase facts and financial values.
 All fixture Halls are token-owned and disposable.
 
+## Paid online digital entitlement snapshot (BR-043 / BR-053 / ADR-029)
+
+The 2026-09-26 follow-up implements the snapshot only in the planned normal
+`bingocommerce-digital-tickets` plugin. It observes **only**
+`woocommerce_payment_complete`. In installed WooCommerce 11.0.1,
+`WC_Order::payment_complete()` saves its payment date and new status before
+emitting that event. Its already-paid branch emits a different dynamic event;
+this slice does not subscribe to that branch or alter native retries. Classic
+checkout and Store API create orders with `created_via = checkout` and
+`store-api`, respectively. BACS awaiting-payment success is not confirmation.
+No status transition, checkout success/redirect, or cart event creates a snapshot.
+The integration trusts the gateway's normal verified call to `payment_complete`;
+it does not independently verify a provider webhook or change a gateway.
+
+The observer reloads the current-Hall order via Woo CRUD and requires an online
+checkout origin, positive order total, Woo paid state, payment date and payment
+method. It validates version-1 saved `bc_purchase` Hall/selection/dated-Session/
+Package identity and the current order lines' saved Package/add-on links and
+quantities. It never looks up current Catalog, Game Types, Session sales state,
+prices or electronic limits. This is not a new-purchase validation or a policy
+for changed-input payment retries.
+
+Schema v1 is owned by Digital Tickets, with the per-site option
+`bc_digital_tickets_db_version`. The Hall-local
+`$wpdb->prefix . 'bingo_entitlements'` table contains:
+
+- `entitlement_id` primary key and unique indexed `order_id`;
+- exact `session_id`, `package_id`, and binary selection UUID;
+- `snapshot_version` and `digital_faces_json`, the complete saved Hall-local
+  Game-Type-to-positive-integer-total map (not the electronic limit);
+- `status` initially `active`, `confirmed_at` from Woo's saved payment time in
+  UTC, and index `(session_id, status)`.
+
+There is no redundant `blog_id`, device registry, QR field, capacity counter or
+financial record in this table. Exact occurrence date/name/timing and native
+charged line amounts/discounts/taxes remain in the existing order facts/lines.
+Versioned `dbDelta` migration verifies columns, engine and indexes before
+recording its version. Existing-Hall admin catch-up, a version-gated Network
+Super Admin sweep and new-site initialization are registered. Migration is
+never run by payment events. No real-Hall activation/migration was performed.
+
+A single prepared insert writes the whole snapshot; `UNIQUE(order_id)` is the
+concurrent-delivery arbiter. Readback recognizes a matching winning insert.
+There is no UPDATE, REPLACE or upsert: repeats never overwrite totals, identity,
+confirmation time or state, including a future void state. Conflicting saved
+facts report `bc_entitlement_snapshot_conflict`, leaving the original intact.
+
+Paper with an explicit empty saved map, and unmarked ordinary merchandise,
+create no entitlement. Missing, empty-for-Digital/Hybrid, zero, negative,
+non-integer or malformed totals remain **unknown**, not zero; marked orders
+without a valid purchase summary also fail closed. No historical recovery or
+Catalog-based backfill is implemented. An entirely unmarked older order cannot
+be identified as Bingo from absent facts, so it receives no entitlement either;
+future recovery requires trustworthy historical evidence, not current Catalog.
+
+**$0 checkouts are outside this paid-order slice.** Woo may call
+`payment_complete()` for a free checkout. A marked zero-total order creates no
+snapshot and reports `bc_entitlement_zero_total_out_of_scope`; Woo's free
+checkout still completes normally. This does not decide free-order entitlement.
+Admin/POS/import origins are likewise outside the online purchase contract.
+
+Snapshot errors are logged under Woo source `bingocommerce-digital-tickets`
+with Hall/order IDs and emitted through
+`bingocommerce_digital_tickets_snapshot_failed`. They do not change payment
+outcome, order state, items, facts or amounts. Schema errors fail closed. A
+verified redelivery can recover a missed insert, but **automatic recovery and
+gateway reconciliation remain unfinished**: calling Woo `payment_complete()`
+again on an already-paid order need not emit the primary event again. Never
+charge again to repair a missing snapshot. Provider integration/recovery needs
+verification before customer-facing digital launch.
+
+**QR issuance and refund/cancellation voiding remain unfinished.** This record
+is not a QR or redemption implementation. Future QR state must reference the
+Hall-local entitlement ID; Package-scoped BR-046 refund/cancellation must void
+it without reacting to merchandise-only refunds. A refund/cancel-before-late-
+confirmation race needs that future lifecycle integration. No current refund
+or payment-retry behavior is changed by this slice.
+
+Focused verification:
+`BC_TEST_DB=bingocommerce_state_recon php tests/digital-entitlement-snapshot.php`.
+It creates signed-out classic Woo order-creation and Store API checkout orders,
+uses offline BACS, then invokes real `WC_Order::payment_complete()` without a
+payment transport. Coverage includes multiple Game Types and add-ons, Hybrid
+Paper exclusion, Paper/merchandise, actual free coupon checkout, malformed and
+missing historical facts, duplicate/interleaved deliveries, failed storage,
+schema verification, Catalog edits, immutable order financials and Hall isolation.
+The interleaved insert test exercises a real duplicate-key loser, not two
+parallel OS processes. All data and migrations are confined to token-owned
+disposable Halls in the guarded isolated database.
+
+Existing order/refund, cart and electronic-limit regressions were also run
+serially with the new plugin loaded in each isolated process. Reproduce for
+each of `tests/customer-order-recording.php`,
+`tests/customer-cart-increment-1.php`, and `tests/customer-electronic-limits.php`
+by replacing the final path in this command (no persistent plugin activation):
+
+```sh
+BC_TEST_DB=bingocommerce_state_recon BC_FIXTURE_WOOCOMMERCE=1 php -r 'require "tests/fixtures/wordpress-bootstrap.php"; require "wp-content/plugins/bingocommerce-digital-tickets/bingocommerce-digital-tickets.php"; BingoCommerce\DigitalTickets\Plugin::init(); require "tests/customer-order-recording.php";'
+```
+
 ## Whole-Package refund restriction (BR-046)
 
 `Sessions\CustomerRefund` validates native WooCommerce refunds; it neither
@@ -312,7 +412,9 @@ and checks persistent-fixture Hall preservation and disposable-Hall cleanup.
 Not a complete purchase/launch implementation: WooCommerce retains its native
 payment retry flow. Isolated retries with unchanged inputs preserved the saved
 purchase facts; changed-input retries were not verified. Refund integration
-limits above, BR-046 entitlement voiding, payment/entitlement snapshots and QR
-activation remain separate work.
+limits above, BR-046 entitlement voiding, snapshot failure recovery and QR
+issuance/activation remain separate work. The narrow positive-total online
+payment-complete snapshot boundary is implemented above; it does not complete
+the digital entitlement lifecycle.
 Configuration writers/UI also remain
 unimplemented; configuration authority stays with BR-064.
