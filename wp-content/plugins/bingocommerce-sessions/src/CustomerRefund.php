@@ -6,7 +6,7 @@ namespace BingoCommerce\Sessions;
 
 if ( ! defined( 'ABSPATH' ) ) { exit; }
 
-/** BR-046 validation only. WooCommerce owns refund persistence and processing. */
+/** BR-046 validation and successful-unit notification. Woo owns refund processing. */
 final class CustomerRefund {
 	private static bool $registered = false;
 
@@ -18,6 +18,37 @@ final class CustomerRefund {
 		// WC_Abstract_Order::save() catches the early veto. Throw here as well so
 		// wc_create_refund returns its normal WP_Error before gateway/restock/events.
 		add_action( 'woocommerce_create_refund', [ self::class, 'validate' ] );
+		add_action( 'woocommerce_refund_created', [ self::class, 'notify_package_refunded' ], 10, 2 );
+	}
+
+	/** Post-success only: publish a saved whole-Package refund, never a proposed one. */
+	public static function notify_package_refunded( $refund_id, array $args ): void {
+		try {
+			// Existing-refund rewrites are outside the native new-refund contract.
+			if ( ! empty( $args['refund_id'] ) ) { return; }
+			$refund = wc_get_order( (int) $refund_id );
+			if ( ! $refund instanceof \WC_Order_Refund || $refund->get_id() < 1
+				|| $refund->get_parent_id() !== (int) ( $args['order_id'] ?? 0 )
+				|| ( ! empty( $args['refund_payment'] ) && ! $refund->get_refunded_payment() ) ) { return; }
+			$order = wc_get_order( $refund->get_parent_id() );
+			if ( ! $order instanceof \WC_Order ) { return; }
+			$unit = self::unit( $order );
+			if ( [] === $unit ) { return; }
+			// Reuse the same BR-046 validator against persisted amounts/links. It
+			// excludes this refund from prior history and never consults Catalog.
+			self::validate( $refund );
+			$allocation = self::allocation( $refund, $order->get_items( [ 'line_item', 'fee', 'shipping' ] ) );
+			if ( [] === array_intersect_key( $unit, $allocation ) ) { return; }
+			do_action( 'bingocommerce_package_refunded', $order->get_id(), $order->get_meta( CustomerOrder::META, true ), $refund->get_id() );
+		} catch ( \Throwable $error ) {
+			// Throwing after gateway success lets wc_create_refund delete the saved
+			// refund. Report the missed notification without changing that outcome.
+			try {
+				wc_get_logger()->error( 'bc_package_refund_notification_failed', [ 'source' => 'bingocommerce-sessions', 'site_id' => get_current_blog_id(), 'refund_id' => (int) $refund_id ] );
+			} catch ( \Throwable $logging_error ) {
+				error_log( sprintf( 'BingoCommerce package refund notification failed site=%d refund=%d', get_current_blog_id(), (int) $refund_id ) );
+			}
+		}
 	}
 
 	public static function validate( \WC_Order_Refund $refund ): void {

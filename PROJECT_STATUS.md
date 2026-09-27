@@ -2885,6 +2885,47 @@
   again. No free-order entitlement or admin/POS/import activation rule was added.
   The plugin was not activated on the development installation; no real-Hall
   migration/data change, stage, commit, push or deployment was performed.
+- **[2026-09-26] BR-046 existing digital entitlement voiding — implemented and isolated-verified:**
+  Started from clean `feature/portal-sync` at
+  `102c3b625f23afaf975569f9d3107a476854101a`. `CustomerRefund` observes
+  Woo's successful native `woocommerce_refund_created` event, reloads the saved
+  refund, and reuses its existing whole-unit validator and current order-item
+  links. Only a complete Bingo Package/add-on refund emits
+  `bingocommerce_package_refunded`; valid merchandise-only refunds do not.
+  Automatic refunds additionally require Woo's persisted refunded-payment flag.
+  The pre-refund restrictions and native refund processing are unchanged.
+  Digital Tickets consumes that notification and Woo's persisted
+  `woocommerce_order_status_cancelled` transition. `EntitlementVoiding` matches
+  current-Hall saved order/Session/Package/selection identity and conditionally
+  changes an existing entitlement's `active` status to `void`. Snapshot totals,
+  identity, version and confirmation timestamp remain unchanged; repeats are
+  harmless. No current Catalog reads, inserted entitlement/tombstone, schema
+  change or reactivation path is added. Failure diagnostics do not throw into
+  Woo's already-successful refund/cancellation flow; verified event redelivery
+  can retry the status write without another refund or payment.
+  Serial `bingocommerce_state_recon` results with Digital Tickets loaded:
+  entitlement/snapshot/voiding **628/628**, existing order recording/native
+  refunds **1,098/1,098**, cart **140/140**, electronic limits **437/437**:
+  **2,303 passed, 0 failed**, all exit 0. The expanded suite uses actual
+  `wc_create_refund()`, Woo REST v3 refunds on Store API-created orders and
+  native order cancellation, with signed-out purchases, fixture-admin refund
+  actions and a noncharging fixture gateway. It verifies whole-unit versus
+  merchandise/partial/add-on/amount-only refunds, gateway failure, coupons/tax,
+  repeats, archived Catalog dependencies, immutable order facts/financials and
+  entitlement snapshots, no-existing-entitlement cases, invalid identities,
+  failed void storage/redelivery and colliding Hall-local order/domain IDs.
+  The existing regression additionally covers native AJAX and replaced item IDs.
+  Disposable Halls/tables were removed, persistent fixture Halls 2/3/4 stayed
+  unchanged, and the fixture network setting was restored. Known Hall Staff
+  writer-guard and deliberate diagnostic-sink test messages appeared. All five
+  changed/new PHP files pass syntax; `git diff --check` passes.
+  **Not complete lifecycle coverage:** status-only `refunded` edits (tested),
+  direct/provider-dashboard refunds, existing-refund rewrites, arbitrary
+  order/refund-history edits, missed-event recovery and refund/cancellation
+  before an entitlement exists still require reviewed reconciliation. Storage
+  failures require operational review. QR/Android, payment, retries, checkout
+  and storefront are unchanged. No real-Hall data/migration, plugin activation,
+  stage, commit, push or deployment was performed.
 - No Hall Staff Management work currently in progress.
 - Package Increment 1 and the legacy Session Increment 1 remain COMPLETE and
   are recorded under Done. Package Add-ons Increment 1 is approved by
@@ -2952,9 +2993,10 @@ Everything below is tracked work that is NOT a blocker to that demo.
    BR-081 now resolves BR-066's mechanism deferral: server-side cart enforcement
    is implemented without global Play Product purchasability/lifecycle changes.
    Order recording alone does not complete payment/refund/entitlement guarantees.
-   BR-046 now guards native itemized refund creation; status-only edits and
-   out-of-band gateway paths still need separate integration review, and
-   entitlement voiding is not implemented.
+   BR-046 now guards native itemized refund creation and voids existing digital
+   entitlements after whole-Package refunds or order cancellation. Status-only
+   refunded edits, out-of-band gateway paths and missing-event/lifecycle races
+   still need separate integration review and reconciliation.
 3. Package add-ons: ADR-044/BR-079 approve `PackageAddonService`, Catalog v6's
    `bingo_package_addons`, the 1–99 quantity rule, lifecycle/medium integrity,
    fixed transaction profile, and BR-065 `bc_package_relation` projection.
@@ -2976,10 +3018,11 @@ Everything below is tracked work that is NOT a blocker to that demo.
    (BR-064). BR-082 implements the read-only effective-limit resolver and
    electronic validation at cart addition and final classic/Store API checkout;
    BR-083 adds exact order facts; existing-order payment/retry remains separate.
-5. QR issuance (BR-044), Package-scoped refund/cancellation voiding (BR-046)
-   and Android redemption (ADR-030). The positive-total online entitlement
-   snapshot (BR-043, ADR-029) is now implemented and isolated-verified, but
-   is not the complete lifecycle or a customer-facing digital launch.
+5. QR issuance (BR-044), Android redemption (ADR-030) and remaining lifecycle
+   reconciliation. The positive-total online entitlement snapshot (BR-043,
+   ADR-029) and BR-046 voiding of existing records after native whole-Package
+   refunds/cancellation are implemented and isolated-verified, but are not the
+   complete lifecycle or a customer-facing digital launch.
 6. Provider confirmation integration, missed-snapshot recovery/reconciliation,
    and a separately reviewed zero-total checkout boundary. BR-053's normal
    paid-online snapshot event is now `woocommerce_payment_complete`; this

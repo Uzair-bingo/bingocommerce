@@ -298,12 +298,11 @@ again on an already-paid order need not emit the primary event again. Never
 charge again to repair a missing snapshot. Provider integration/recovery needs
 verification before customer-facing digital launch.
 
-**QR issuance and refund/cancellation voiding remain unfinished.** This record
-is not a QR or redemption implementation. Future QR state must reference the
-Hall-local entitlement ID; Package-scoped BR-046 refund/cancellation must void
-it without reacting to merchandise-only refunds. A refund/cancel-before-late-
-confirmation race needs that future lifecycle integration. No current refund
-or payment-retry behavior is changed by this slice.
+**QR issuance remains unfinished.** This record is not a QR or redemption
+implementation. Future QR state must reference the Hall-local entitlement ID.
+The follow-up below implements BR-046 voiding for existing records only;
+refund/cancel-before-late-confirmation races still require later lifecycle
+integration. Payment and retry behavior remain unchanged.
 
 Focused verification:
 `BC_TEST_DB=bingocommerce_state_recon php tests/digital-entitlement-snapshot.php`.
@@ -370,7 +369,8 @@ Explicit limits, not claimed protections:
   `wc_order_fully_refunded()` attempts an amount-only refund and ignores its
   result (`includes/wc-order-functions.php:906–935`). That refund is refused,
   but the status remains changed. Use itemized refunds, not a status edit;
-  this slice does not add a status-transition guard or entitlement behavior.
+  no status-transition guard is added, and this is not a successful itemized
+  refund that triggers entitlement voiding below.
 - Direct `wc_refund_payment()`/gateway `process_refund()` calls or refunds in
   a provider dashboard have no shared pre-refund line-validation hook. They
   are outside this enforcement boundary. A gateway integration must not bypass
@@ -390,6 +390,73 @@ after native resume, historical prices and the status-only limitation. It
 checks persisted orders/refund lines and that refused requests never save a
 refund or reach gateway/restock/completion boundaries. Only token-owned
 disposable Halls are used; no funds move.
+
+### Existing-entitlement voiding follow-up (BR-046, 2026-09-26)
+
+`CustomerRefund` now observes native `woocommerce_refund_created` after Woo's
+refund flow. Installed WooCommerce 11.0.1
+`includes/wc-order-functions.php:667–743` saves the refund, attempts an optional
+gateway refund, deletes/returns on gateway failure, updates the parent, then
+emits this event. Neither the early-save hook nor `woocommerce_create_refund`
+is used for voiding. The observer reloads the persisted current-Hall refund and
+parent through Woo CRUD, rejects mismatched parents/existing-refund rewrites,
+and requires the saved refunded-payment flag for automatic gateway refunds.
+It reuses the existing BR-046 validator against saved links, current item IDs,
+full quantities, discounted amounts/taxes and refund history. That validator
+excludes the current refund itself from prior history. A valid merchandise-only
+refund emits no Package notification. The pre-refund guard rules are unchanged.
+
+For a successfully recorded whole Bingo unit only, Sessions emits the internal
+cross-plugin action `bingocommerce_package_refunded(order_id, bc_purchase,
+refund_id)`. Digital Tickets consumes it. Native manual refunds and successful
+gateway refunds are both supported; no custom refund processor is introduced.
+
+Cancellation uses `woocommerce_order_status_cancelled`, emitted by
+`WC_Order::status_transition()` after `WC_Order::save()` persists the change
+(`includes/class-wc-order.php:283–287, 433–463`). The observer reloads the order
+in the current Hall and requires the persisted `cancelled` status, rather than
+trusting a supplied order object or the event name alone. It does not cancel an
+order, refund money, intercept checkout, or modify payment/retry behavior.
+
+`DigitalTickets\EntitlementVoiding` matches an **existing** Hall-local row by
+order ID and saved `bc_purchase` Hall, Session, Package and selection identity.
+It conditionally changes only `status = active` to `void`, then checks readback.
+Every identity field, confirmation time, snapshot version and digital-face map
+remains byte-identical. Already-void repeats are no-ops; a concurrent matching
+void also satisfies readback. No Catalog/Session lookup, face recalculation,
+new entitlement, tombstone, schema change, payment change or QR is involved.
+Paper/merchandise and orders with no entitlement receive no new row.
+
+Post-success notification/void errors are logged, not thrown into Woo's refund
+flow: an exception there can delete an already-processed refund record.
+Digital Tickets also emits `bingocommerce_digital_tickets_void_failed` with
+the error, current-Hall order/site IDs, cause and refund ID. A failed void write
+leaves the original snapshot and successful Woo refund/cancellation intact,
+but requires operational review; there is no background recovery worker. A
+verified event redelivery can retry only the status write, without another
+refund or charge.
+
+This is **not complete refund/lifecycle coverage**. The limits listed above
+remain: status-only `refunded` edits, provider-dashboard/direct-gateway refunds,
+existing-refund rewrites, and arbitrary order/item/refund-history changes are
+not supported reconciliation paths. Invalid identity links or unavailable
+storage require review rather than guessing another entitlement. Events
+missed while plugins are unavailable are not automatically reconciled. A
+refund/cancellation before any entitlement exists (including a concurrent late
+snapshot insertion) is outside this existing-record slice; no future-payment
+blocking record is created. Refund deletion, order reopening and repeat payment
+events do not restore a void entitlement. QR issuance, Android state/usage
+revocation and lifecycle reconciliation remain unfinished.
+
+The isolated `tests/digital-entitlement-snapshot.php` harness now exercises real
+`wc_create_refund()`, Woo REST v3 refunds for Store API-created orders, and native
+`WC_Order::update_status('cancelled')`. Signed-out purchases are followed by
+authorized fixture-admin refund actions. It covers mixed merchandise, full
+Package-and-add-on refunds, rejected partial/add-on/amount-only refunds, a
+noncharging gateway's success/failure, coupons/tax, repeated events, Catalog
+archival, unchanged snapshots/order financials, missing entitlements, identity
+mismatches, storage-failure redelivery, and colliding Hall-local order/domain
+IDs. Existing native AJAX/REST/refund guard regressions run separately.
 
 ## Verification and next boundary
 
@@ -412,9 +479,10 @@ and checks persistent-fixture Hall preservation and disposable-Hall cleanup.
 Not a complete purchase/launch implementation: WooCommerce retains its native
 payment retry flow. Isolated retries with unchanged inputs preserved the saved
 purchase facts; changed-input retries were not verified. Refund integration
-limits above, BR-046 entitlement voiding, snapshot failure recovery and QR
+limits above, lifecycle/snapshot failure recovery and QR
 issuance/activation remain separate work. The narrow positive-total online
-payment-complete snapshot boundary is implemented above; it does not complete
-the digital entitlement lifecycle.
+payment-complete snapshot boundary and existing-entitlement refund/cancellation
+voiding are implemented above; they do not complete the digital entitlement
+lifecycle.
 Configuration writers/UI also remain
 unimplemented; configuration authority stays with BR-064.

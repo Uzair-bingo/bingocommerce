@@ -22,6 +22,17 @@ use BingoCommerce\DigitalTickets\Plugin;
 use BingoCommerce\Sessions\CustomerCart;
 use BingoCommerce\Sessions\SessionService;
 
+/** No network or money movement; exercise Woo's successful/failed refund branch. */
+final class EntitlementFixtureRefundGateway extends WC_Payment_Gateway {
+	public bool $succeed = true;
+	public int $calls = 0;
+	public function __construct() { $this->id = 'bc_entitlement_fixture'; $this->supports = [ 'refunds' ]; }
+	public function process_refund( $order_id, $amount = null, $reason = '' ) {
+		++$this->calls;
+		return $this->succeed ? true : new WP_Error( 'fixture_refund_refused', 'Offline fixture refused refund.' );
+	}
+}
+
 final class DigitalEntitlementSnapshotTest {
 	private array $sites = [];
 	private string $token;
@@ -29,6 +40,7 @@ final class DigitalEntitlementSnapshotTest {
 	private int $passes = 0;
 	private int $failures = 0;
 	private array $errors = [];
+	private array $void_errors = [];
 	private array $address = [ 'first_name' => 'Fixture', 'last_name' => 'Customer', 'address_1' => '1 Test Street', 'city' => 'Albany', 'state' => 'NY', 'postcode' => '12207', 'country' => 'US', 'email' => 'guest@example.invalid', 'phone' => '5185550100' ];
 
 	public function run(): void {
@@ -36,6 +48,7 @@ final class DigitalEntitlementSnapshotTest {
 		add_filter( 'pre_wp_mail', '__return_true' );
 		add_filter( 'pre_http_request', static fn() => new WP_Error( 'bc_fixture_no_network', 'No outbound HTTP.' ) );
 		add_action( 'bingocommerce_digital_tickets_snapshot_failed', function ( $error, $order, $site ): void { $this->errors[] = [ $error->get_error_code(), $order, $site ]; }, 10, 3 );
+		add_action( 'bingocommerce_digital_tickets_void_failed', function ( $error, $order, $site ): void { $this->void_errors[] = [ $error->get_error_code(), $order, $site ]; }, 10, 3 );
 		$baseline = [];
 		foreach ( [ 2, 3, 4 ] as $site ) { $baseline[ $site ] = $this->hall_snapshot( $site ); }
 		$missing = new stdClass(); $maximum = get_site_option( ElectronicLimit::PLATFORM_OPTION, $missing );
@@ -76,6 +89,7 @@ final class DigitalEntitlementSnapshotTest {
 			$this->same( [], $this->errors, 'normal paid Digital/Hybrid cases have no snapshot errors' );
 			$this->unknown_and_excluded( $a, $b );
 			$this->storage_failures( $a );
+			$this->voiding( $a, $b );
 			$this->history( $a );
 			$this->isolation( $a, $b );
 			$this->same( 0, get_current_user_id(), 'all purchase cases run genuinely signed out' );
@@ -209,10 +223,142 @@ final class DigitalEntitlementSnapshotTest {
 		$this->same( true, Migrations::verify_current_site_schema(), 'new Hall automatically provisioned' );
 		$id = $this->order( $b, 'digital', 'store' ); $this->confirm( $id ); $row = $this->row( $id );
 		$this->same( $b['faces'], json_decode( $row['digital_faces_json'], true ), 'Hall B uses its own colliding Game Type IDs and distinct totals' );
+		wc_get_order( $id )->update_status( 'cancelled' ); $row['status'] = 'void';
+		$this->same( $row, $this->row( $id ), 'Hall B native cancellation changes only its own entitlement status' );
 		$this->same( $a_before, $this->hall_snapshot( $a['site'] ), 'Hall B payment leaves Hall A byte-identical' );
 		$this->enter( $a['site'] ); $b_before = $this->hall_snapshot( $b['site'] );
 		do_action( 'woocommerce_payment_complete', $id ); // Current Hall only; never switch to the order's claimed site.
+		do_action( 'woocommerce_order_status_cancelled', $id );
 		$this->same( $b_before, $this->hall_snapshot( $b['site'] ), 'Hall A event cannot read/write Hall B record' );
+	}
+
+	private function voiding( array $a, array $b ): void {
+		global $wpdb;
+		$this->enter( $b['site'] ); $b_id = $this->order( $b ); $this->confirm( $b_id );
+		$this->enter( $a['site'] ); $b_before = $this->hall_snapshot( $b['site'] );
+		$this->same( true, null !== $this->row( $b_id ), 'void isolation includes colliding Woo order IDs with active snapshots' );
+		$gateway = new EntitlementFixtureRefundGateway(); WC()->payment_gateways()->payment_gateways[] = $gateway;
+		$errors = count( $this->void_errors );
+		foreach ( [ 'classic', 'store' ] as $path ) {
+			foreach ( [ 'whole-package', 'whole-order', 'merchandise', 'addon-only', 'partial', 'amount-only', 'gateway-failure', 'cancel', 'status-only-refunded' ] as $case ) {
+				$id = $this->order( $a, 'hybrid', $path ); $this->confirm( $id );
+				$order = wc_get_order( $id ); $row = $this->row( $id ); $before = $this->order_snapshot( $id );
+				$this->same( true, (float) $order->get_discount_total() > 0 && (float) $order->get_total_tax() > 0, 'void fixture includes coupons and tax' );
+				wp_set_current_user( $this->admin );
+				if ( 'cancel' === $case ) {
+					$this->same( true, $order->update_status( 'cancelled' ), "$path native cancellation persists" );
+					$this->same( 'cancelled', wc_get_order( $id )->get_status(), 'cancelled status is persisted before observer' );
+					$row['status'] = 'void'; $this->same( $row, $this->row( $id ), 'cancellation changes only entitlement status' );
+					do_action( 'woocommerce_order_status_cancelled', $id );
+					$this->same( $row, $this->row( $id ), 'repeated cancellation is harmless' );
+				} elseif ( 'status-only-refunded' === $case ) {
+					$order->update_status( 'refunded' );
+					$this->same( 'refunded', wc_get_order( $id )->get_status(), 'documented status-only limitation remains' );
+					$this->same( [], wc_get_order( $id )->get_refunds(), 'status-only amount refund is refused' );
+					$this->same( $row, $this->row( $id ), 'refunded status without successful itemized refund does not void' );
+				} else {
+					$unit = $this->refund_lines( $order, true ); $merch = $this->refund_lines( $order, false );
+					$lines = match ( $case ) { 'whole-order' => $unit + $merch, 'merchandise' => $merch, 'amount-only' => [], default => $unit };
+					if ( 'addon-only' === $case ) { $child = array_key_last( $unit ); $lines = [ $child => $unit[ $child ] ]; }
+					if ( 'partial' === $case ) { $lines[ array_key_first( $unit ) ]['refund_total'] = '1.00'; }
+					$order->set_payment_method( $gateway ); $order->save(); $gateway->succeed = 'gateway-failure' !== $case;
+					$result = $this->refund( $id, $lines, true, 'store' === $path );
+					$accepted = in_array( $case, [ 'whole-package', 'whole-order', 'merchandise' ], true );
+					$this->same( $accepted, $result instanceof WC_Order_Refund, "$path $case native refund result" );
+					$this->same( $accepted ? 1 : 0, count( wc_get_order( $id )->get_refunds() ), "$case persisted native refund count" );
+					if ( in_array( $case, [ 'whole-package', 'whole-order' ], true ) ) { $row['status'] = 'void'; }
+					$this->same( $row, $this->row( $id ), "$case exact snapshot/state after native result" );
+					if ( $accepted ) {
+						$this->same( true, $result->get_refunded_payment(), 'successful offline-gateway refund flag persisted' );
+						do_action( 'woocommerce_refund_created', $result->get_id(), [ 'order_id' => $id, 'refund_payment' => true ] );
+						$this->same( $row, $this->row( $id ), 'duplicate completed-refund event changes nothing' );
+						if ( 'merchandise' === $case ) {
+							$followup = $this->refund( $id, $unit, false, 'store' === $path );
+							$this->same( true, $followup instanceof WC_Order_Refund, 'later manual whole-Package refund succeeds independently' );
+							$row['status'] = 'void'; $this->same( $row, $this->row( $id ), 'later Package refund voids original snapshot' );
+						}
+						if ( 'whole-order' !== $case ) {
+							do_action( 'woocommerce_payment_complete', $id );
+							$this->same( $row, $this->row( $id ), 'unchanged payment observer cannot reactivate refunded Package' );
+						}
+					}
+				}
+				$this->same( $before, $this->order_snapshot( $id ), "$path $case original order facts, lines and finances untouched" );
+				wp_set_current_user( 0 );
+			}
+		}
+		$this->same( $errors, count( $this->void_errors ), 'normal refunds and cancellation produce no void errors' );
+		// Current Catalog is irrelevant, even when the purchased component is archived.
+		$id = $this->order( $a ); $this->confirm( $id ); $row = $this->row( $id );
+		wp_set_current_user( $this->admin );
+		$this->same( false, is_wp_error( ( new BingoPlayProductService() )->archive( $a['first_play'] ) ), 'later Catalog archive succeeds' );
+		try {
+			$reads = []; $watch = static function ( $sql ) use ( &$reads ) { if ( preg_match( '/\b(?:SELECT|SHOW)\b.*bingo_(?:play_products|packages|package_components|game_types|sessions)/is', $sql ) ) { $reads[] = $sql; } return $sql; };
+			add_filter( 'query', $watch );
+			try { $result = $this->refund( $id, $this->refund_lines( wc_get_order( $id ), true ) ); }
+			finally { remove_filter( 'query', $watch ); }
+			$this->same( true, $result instanceof WC_Order_Refund, 'whole-Package refund succeeds after Catalog archive' );
+			$this->same( [], $reads, 'refund and void never read current Catalog/Session state' );
+			$row['status'] = 'void'; $this->same( $row, $this->row( $id ), 'historical snapshot survives Catalog archive and refund' );
+		} finally {
+			$this->same( false, is_wp_error( ( new BingoPlayProductService() )->restore( $a['first_play'] ) ), 'fixture Catalog component restored' );
+			wp_set_current_user( 0 );
+		}
+		foreach ( [ 'paper', 'merch', 'digital' ] as $kind ) {
+			$id = $this->order( $a, $kind ); // No payment for Digital: specifically no existing entitlement.
+			wc_get_order( $id )->update_status( 'cancelled' );
+			$this->same( null, $this->row( $id ), "$kind cancellation never creates a row or tombstone" );
+		}
+		// A missing snapshot on an otherwise valid paid order must not be invented by refund.
+		$id = $this->order( $a ); $this->confirm( $id );
+		$wpdb->delete( Migrations::table(), [ 'order_id' => $id ], [ '%d' ] );
+		wp_set_current_user( $this->admin ); $result = $this->refund( $id, $this->refund_lines( wc_get_order( $id ), true ) ); wp_set_current_user( 0 );
+		$this->same( true, $result instanceof WC_Order_Refund, 'valid refund without an entitlement remains allowed' );
+		$this->same( null, $this->row( $id ), 'refund never backfills missing entitlement' );
+		// Identity mismatch does not target another Hall or another selection.
+		foreach ( [ 'site_id', 'package_id', 'selection_id' ] as $field ) {
+			$id = $this->order( $a ); $this->confirm( $id ); $row = $this->row( $id ); $order = wc_get_order( $id ); $facts = $order->get_meta( 'bc_purchase', true );
+			$facts[ $field ] = match ( $field ) { 'site_id' => $b['site'], 'selection_id' => wp_generate_uuid4(), default => $facts[ $field ] + 100 };
+			$order->update_meta_data( 'bc_purchase', $facts ); $order->save(); $order->update_status( 'cancelled' );
+			$this->same( $row, $this->row( $id ), "$field mismatch leaves snapshot unchanged and reports review" );
+			$this->same( [ 'bc_entitlement_void_failed', $id, $a['site'] ], end( $this->void_errors ), 'void error identifies current Hall/order' );
+		}
+		// Failed status write must not undo a successful native refund.
+		$id = $this->order( $a ); $this->confirm( $id ); $row = $this->row( $id );
+		$fail = static function ( $sql ) { return str_starts_with( $sql, 'UPDATE `' . Migrations::table() . '` SET status' ) ? 'SELECT * FROM bc_fixture_absent_void_table' : $sql; };
+		wp_set_current_user( $this->admin ); $quiet = $wpdb->suppress_errors( true ); add_filter( 'query', $fail );
+		try { $result = $this->refund( $id, $this->refund_lines( wc_get_order( $id ), true ) ); }
+		finally { remove_filter( 'query', $fail ); $wpdb->suppress_errors( $quiet ); wp_set_current_user( 0 ); }
+		$this->same( true, $result instanceof WC_Order_Refund, 'void storage failure leaves successful refund intact' );
+		$this->same( 1, count( wc_get_order( $id )->get_refunds() ), 'successful refund not deleted after void error' );
+		$this->same( $row, $this->row( $id ), 'failed status write preserves original snapshot' );
+		$this->same( [ 'bc_entitlement_void_failed', $id, $a['site'] ], end( $this->void_errors ), 'storage failure is reported' );
+		do_action( 'woocommerce_refund_created', $result->get_id(), [ 'order_id' => $id, 'refund_payment' => false ] );
+		$row['status'] = 'void'; $this->same( $row, $this->row( $id ), 'redelivery after storage recovery voids without another refund' );
+		$this->same( $b_before, $this->hall_snapshot( $b['site'] ), 'all Hall A refunds/cancellations leave active colliding Hall B byte-identical' );
+	}
+
+	private function refund_lines( WC_Order $order, bool $bingo ): array {
+		$lines = [];
+		foreach ( $order->get_items() as $id => $item ) {
+			if ( $bingo !== is_array( $item->get_meta( 'bc_purchase', true ) ) ) { continue; }
+			$lines[ $id ] = [ 'qty' => $item->get_quantity(), 'refund_total' => $item->get_total(), 'refund_tax' => $item->get_taxes()['total'] ];
+		}
+		return $lines;
+	}
+	private function refund( int $id, array $lines, bool $automatic = false, bool $rest = false ): WC_Order_Refund|WP_Error {
+		$amount = 0.0;
+		foreach ( $lines as $line ) { foreach ( array_merge( [ $line['refund_total'] ], array_values( $line['refund_tax'] ) ) as $value ) { $amount += (float) wc_format_decimal( $value, 2 ); } }
+		$amount = [] === $lines ? '1.00' : wc_format_decimal( $amount, 2 );
+		if ( ! $rest ) { return wc_create_refund( [ 'order_id' => $id, 'amount' => $amount, 'line_items' => $lines, 'refund_payment' => $automatic ] ); }
+		$server = rest_get_server(); ( new WC_REST_Order_Refunds_Controller() )->register_routes();
+		$request = new WP_REST_Request( 'POST', '/wc/v3/orders/' . $id . '/refunds' ); $public = [];
+		foreach ( $lines as $item_id => $line ) {
+			$taxes = []; foreach ( $line['refund_tax'] as $rate => $tax ) { $taxes[] = [ 'id' => $rate, 'refund_total' => $tax ]; }
+			$public[] = [ 'id' => $item_id, 'quantity' => $line['qty'], 'refund_total' => $line['refund_total'], 'refund_tax' => $taxes ];
+		}
+		$request->set_body_params( [ 'amount' => $amount, 'line_items' => $public, 'api_refund' => $automatic ] ); $response = $server->dispatch( $request );
+		return 201 === $response->get_status() ? wc_get_order( (int) $response->get_data()['id'] ) : new WP_Error( 'fixture_rest_refund_failed', wp_json_encode( $response->get_data() ) );
 	}
 
 	private function confirm( int $id ): void {
