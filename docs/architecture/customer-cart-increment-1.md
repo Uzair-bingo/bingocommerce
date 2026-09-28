@@ -596,11 +596,42 @@ save dispatches status-transition notifications; the ordinary synchronous
 `WC_Emails` path (`includes/class-wc-emails.php:96–148`) renders the processing
 email before the entitlement/ticket observers. Both classic and Store API
 fixtures observed `customer_processing_order` with no ticket, followed by a
-ticket after payment completion. Therefore this increment adds no email QR,
-does not reorder payment/email events and sends no separate message. Deferred
+ticket after payment completion. Therefore the original increment added no email QR,
+did not reorder payment/email events and sent no separate message. Deferred
 emails or later resends/status emails can run after issuance, but safe email
 image delivery/integration is still unfinished; the browser canvas cannot
-execute in email. Existing Woo emails remain unchanged.
+execute in email.
+
+**Customer email-link follow-up:** actual `wp_mail` messages from both checkout
+origins exposed a separate gap: the installed processing email had no customer
+order-view link (Woo `templates/emails/email-order-details.php:82–89` links the
+order number only for administrators; the plain template also links only for
+administrators at lines 88–90). `CustomerTicket::email_order_link()`, registered
+on `woocommerce_email_after_order_table`, now adds one “View your Bingo order”
+link to existing customer processing/completed emails, HTML or plain text.
+It uses Woo's `get_checkout_order_received_url()` and reloads the order in the
+current Hall; supported online origin, positive paid total, payment date/method
+and valid saved Digital/Hybrid purchase facts/totals are required. Paper,
+merchandise, unpaid, $0 and invalid-fact orders receive no added link. It neither
+issues nor embeds a ticket and need not wait for entitlement creation: the
+destination independently authorizes access and checks current entitlement and
+terminal-marker state. There is no new email, payment hook or access exemption.
+
+The email-link reproduction had **1,257 passes, 2 failures**, one missing link
+per checkout origin. The corrected focused suite has **1,330 passes, 0 failures**.
+It captures native processing and completed messages before transport, follows
+the extracted processing link in fresh signed-out PHP-CGI requests, and renders
+the classic shortcode or installed Order Confirmation block template. Requests
+run WordPress URL parsing against a disposable checkout page with native Woo
+endpoint rules. After the guest grace period, tests submit the actual form's
+nonce and billing email through CGI stdin (including classic `filter_input()`),
+without mocking permissions. Correct verification displays the same QR; wrong
+email, nonce or order key does not. Facts, items and financial totals stay
+unchanged. Both final verified outputs passed browser rendering (**6 + 10**)
+and independent decode (**1 + 1**); order/refund/retry regressions with Digital
+Tickets loaded passed **1,098/1,098**. This verifies the actual generated email
+and native guest request/content paths, not SMTP delivery, a mail client, public
+web-server/theme routing, custom email templates or a real payment gateway.
 
 Tests extend `tests/digital-entitlement-snapshot.php` with real classic/Store
 API guest orders, exclusions, repeat/interleaved

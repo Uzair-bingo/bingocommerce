@@ -3048,6 +3048,39 @@
   not claimed as verified. Existing QR email/lifecycle/Android limits remain.
   Five existing work-in-progress files were amended (renderer, two tests,
   architecture and this status); everything remains unstaged/uncommitted.
+- **[2026-09-28] Customer email → guest order → QR follow-up — isolated-verified:**
+  Started clean on `feature/portal-sync` at
+  `181566ada6356a6a4a5ef2cb0f35b8b231d955ff`, with an empty index.
+  Capturing the actual native paid customer emails exposed missing order-view
+  links for both classic and Store API orders: **1,257 passed, 2 failed**.
+  The only production correction adds one normal Woo order-received link to
+  existing customer processing/completed HTML/plain emails for valid paid,
+  positive-total online Digital/Hybrid orders. Current-Hall saved facts are
+  checked; no QR/token is embedded, no separate notification is sent and no
+  payment, retry, refund or authorization behavior is changed. The link can be
+  generated before entitlement issuance; the destination still requires an
+  eligible existing ticket and Woo guest authorization.
+  Fresh signed-out PHP-CGI requests followed the extracted email URL through
+  WordPress query parsing to the native classic and block confirmation views.
+  After aging the disposable orders beyond the grace period, actual native
+  verification form POSTs succeeded with matching email/nonces. Wrong email,
+  nonce and order key disclosed no QR. Both verified pages rendered and decoded
+  the exact saved reference; views and emails preserved purchase facts, item
+  records, amounts, discounts and taxes. Paper, merchandise, unpaid, $0 and
+  malformed/foreign-Hall facts receive no added link.
+  Serial `bingocommerce_state_recon` verification: focused suite **1,330/1,330**;
+  existing order/refund/retry suite with Digital Tickets loaded **1,098/1,098**;
+  browser rendering **16/16** and independent Vision decoding **2/2**.
+  Total **2,446 passed, 0 failed**, all final runs exit 0. Four changed/new PHP
+  files pass syntax checks; `git diff --check` passes. Owned disposable Halls
+  were removed; persistent fixture Halls 2/3/4 and restored settings were checked.
+  **Limits:** mail was captured at `pre_wp_mail`, not delivered; CGI exercised
+  actual GET/POST parsing and native content, not public web-server/theme or
+  mailbox navigation. No custom/deferred email transport or real gateway was
+  tested. Direct QR email delivery, $0 policy, Android and previous lifecycle
+  limits remain unfinished. No real Hall, fixture ownership guard, schema or
+  Woo source was changed. Five modified files and one new test worker remain
+  unstaged/uncommitted; no push or deployment.
 - No Hall Staff Management work currently in progress.
 - Package Increment 1 and the legacy Session Increment 1 remain COMPLETE and
   are recorded under Done. Package Add-ons Increment 1 is approved by

@@ -96,6 +96,7 @@ final class DigitalEntitlementSnapshotTest {
 			$this->same( [], $this->errors, 'normal paid Digital/Hybrid cases have no snapshot errors' );
 			$this->upgrade( $a );
 			$this->qr( $a, $b );
+			$this->email_journey( $a );
 			$this->unknown_and_excluded( $a, $b );
 			$this->storage_failures( $a );
 			$this->voiding( $a, $b );
@@ -282,6 +283,134 @@ final class DigitalEntitlementSnapshotTest {
 		$this->same( $before, $this->order_snapshot( $id ), 'block views preserve order facts, lines and financial amounts' );
 	}
 
+	private function email_journey( array $a ): void {
+		if ( $this->token !== get_option( 'bc_entitlement_test_owner' ) ) { throw new RuntimeException( 'Email fixture ownership refused.' ); }
+		$old_checkout = get_option( 'woocommerce_checkout_page_id', false );
+		$page = wp_insert_post( [ 'post_type' => 'page', 'post_status' => 'publish', 'post_title' => 'Fixture checkout', 'post_content' => '[woocommerce_checkout]' ], true );
+		if ( is_wp_error( $page ) ) { throw new RuntimeException( $page->get_error_message() ); }
+		update_option( 'woocommerce_checkout_page_id', $page );
+		// Site initialization resets WP_Rewrite after Woo's network-level init.
+		// Provision this owned Hall's actual endpoint rules, not hand-built URLs.
+		$GLOBALS['wp_rewrite']->init(); WC()->query->init_query_vars(); WC()->query->add_endpoints();
+		flush_rewrite_rules( false );
+		try {
+		foreach ( [ 'classic', 'store' ] as $path ) {
+			wp_update_post( [ 'ID' => $page, 'post_content' => 'classic' === $path ? '[woocommerce_checkout]' : wp_slash( file_get_contents( WC()->plugin_path() . '/templates/templates/blockified/order-confirmation.html' ) ) ] );
+			$id = $this->order( $a, 'hybrid', $path ); $messages = [];
+			$this->same( '', $this->email_link_html( $id ), "$path unpaid order has no added paid-order email link" );
+			$capture = static function ( $result, $atts ) use ( &$messages ) {
+				if ( str_contains( wp_json_encode( $atts['to'] ), 'guest@example.invalid' ) ) { $messages[] = $atts; }
+				return true; // Capture the actual wp_mail message; never deliver fixture email.
+			};
+			add_filter( 'pre_wp_mail', $capture, 20, 2 );
+			try { $this->confirm( $id ); } finally { remove_filter( 'pre_wp_mail', $capture, 20 ); }
+			$this->same( 1, count( $messages ), "$path actual paid customer email captured; no separate QR email" );
+			$message = $messages[0]['message'] ?? ''; $order = wc_get_order( $id );
+			$expected = $order->get_checkout_order_received_url();
+			$dom = new DOMDocument(); @$dom->loadHTML( $message, LIBXML_NONET ); $links = [];
+			foreach ( $dom->getElementsByTagName( 'a' ) as $anchor ) { $links[] = $anchor->getAttribute( 'href' ); }
+			$links = array_values( array_filter( $links, static fn( $link ) => $link === $expected ) );
+			$this->same( 1, count( $links ), "$path actual customer email includes normal guest order-received link" );
+			$reference = DigitalTicket::reference_for_order( $id );
+			$this->same( false, str_contains( $message, 'data-bc-ticket' ) || str_contains( $message, $reference ), "$path synchronous email contains no QR or bearer ticket" );
+			if ( ! $links ) { continue; } // Reproduction must not invent a link absent from the email.
+			$this->follow_email_link( $a, $id, $path, $links[0], $reference );
+			$this->same( '', $this->email_link_html( $id, true ), "$path admin email receives no customer link" );
+			$messages = []; $before = $this->order_snapshot( $id );
+			add_filter( 'pre_wp_mail', $capture, 20, 2 );
+			try { wc_get_order( $id )->update_status( 'completed' ); } finally { remove_filter( 'pre_wp_mail', $capture, 20 ); }
+			$this->same( 1, count( $messages ), "$path actual native completed customer email captured" );
+			$this->same( 1, substr_count( html_entity_decode( $messages[0]['message'] ?? '' ), $expected ), "$path completed email reuses the same native order URL" );
+			$this->same( $reference, DigitalTicket::reference_for_order( $id ), "$path completed email does not replace ticket" );
+			$this->same( $before, $this->order_snapshot( $id ), "$path email rendering leaves financial and purchase records unchanged" );
+		}
+		} finally {
+			if ( false === $old_checkout ) { delete_option( 'woocommerce_checkout_page_id' ); }
+			else { update_option( 'woocommerce_checkout_page_id', $old_checkout ); }
+		}
+	}
+
+	private function email_link_html( int $id, bool $admin = false ): string {
+		ob_start();
+		CustomerTicket::email_order_link( wc_get_order( $id ), $admin, false, WC()->mailer()->get_emails()['WC_Email_Customer_Processing_Order'] );
+		return ob_get_clean();
+	}
+
+	private function follow_email_link( array $a, int $id, string $path, string $url, string $reference ): void {
+		$order = wc_get_order( $id ); $created = $order->get_date_created(); $before = $this->order_snapshot( $id );
+		try {
+			$immediate = $this->email_request( $a, $url );
+			$this->same( 1, substr_count( $immediate, 'data-bc-ticket="' . $reference . '"' ), "$path actual email link opens paid guest QR inside grace period" );
+			$order->set_date_created( time() - 20 * MINUTE_IN_SECONDS ); $order->save();
+			$verify = $this->email_request( $a, $url );
+			$this->same( false, str_contains( $verify, $reference ), "$path fresh guest after grace sees no QR before verification" );
+			$dom = new DOMDocument(); @$dom->loadHTML( $verify, LIBXML_NONET );
+			$forms = ( new DOMXPath( $dom ) )->query( '//form[contains(@class,"woocommerce-verify-email")]' );
+			$this->same( 1, $forms->length, "$path email link reaches native Woo verification form" );
+			if ( 1 !== $forms->length ) { return; }
+			$form = $forms->item( 0 ); $action = $form->getAttribute( 'action' ) ?: $url; $fields = [];
+			foreach ( $form->getElementsByTagName( 'input' ) as $input ) {
+				if ( $input->hasAttribute( 'name' ) ) { $fields[ $input->getAttribute( 'name' ) ] = $input->getAttribute( 'value' ); }
+			}
+			$this->same( $url, $action, "$path native verification posts back to the emailed order URL" );
+			$fields['email'] = $this->address['email'];
+			$verified = $this->email_request( $a, $action, $fields );
+			$this->same( 1, substr_count( $verified, 'data-bc-ticket="' . $reference . '"' ), "$path real CGI POST completes native verification and displays same QR" );
+			$wrong = $fields; $wrong['email'] = 'stranger@example.invalid';
+			$denied = $this->email_request( $a, $action, $wrong );
+			$this->same( false, str_contains( $denied, $reference ) || str_contains( $denied, 'data-bc-ticket' ), "$path wrong email cannot expose QR/reference" );
+			$wrong = $fields; $wrong[ 'classic' === $path ? 'check_submission' : '_wpnonce' ] = 'invalid';
+			$this->same( false, str_contains( $this->email_request( $a, $action, $wrong ), $reference ), "$path invalid verification nonce cannot expose QR" );
+			$wrong_url = add_query_arg( 'key', 'incorrect', $url );
+			$this->same( false, str_contains( $this->email_request( $a, $wrong_url, $fields ), $reference ), "$path wrong order key cannot expose QR with valid email/nonce" );
+			$this->same( $reference, DigitalTicket::reference_for_order( $id ), "$path email access reuses saved ticket" );
+			$this->same( $before, $this->order_snapshot( $id ), "$path email journey preserves facts, items, amounts, discounts and tax" );
+			$artifact = getenv( 'BC_QR_ARTIFACT_DIR' );
+			if ( $artifact ) {
+				$directory = realpath( $artifact );
+				if ( ! $directory || ! str_starts_with( $directory, '/private/tmp/bc-qr-test.' ) ) { throw new RuntimeException( 'Email artifact guard refused.' ); }
+				$directory .= '/email-' . $path; if ( ! is_dir( $directory ) ) { mkdir( $directory ); }
+				file_put_contents( $directory . '/order.html', $verified ); file_put_contents( $directory . '/reference.txt', $reference );
+				if ( 'store' === $path ) { file_put_contents( $directory . '/unauthorized.html', $denied ); }
+			}
+			$email = WC()->mailer()->get_emails()['WC_Email_Customer_Processing_Order'];
+			$this->same( 1, substr_count( $email->get_content_plain(), $url ), "$path native plain-text email also carries usable order URL" );
+		} finally { $order->set_date_created( $created ); $order->save(); }
+	}
+
+	/** Each navigation is a fresh signed-out CGI request, including real filter_input(). */
+	private function email_request( array $a, string $url, array $fields = [] ): string {
+		$parts = wp_parse_url( $url ); $site = get_site( $a['site'] );
+		if ( ! $parts || $parts['host'] !== $site->domain ) { throw new RuntimeException( 'Email URL is not the owned fixture Hall.' ); }
+		$body = $fields ? http_build_query( $fields ) : '';
+		$worker = __DIR__ . '/qr-email-view-request.php'; $cgi = dirname( PHP_BINARY ) . '/php-cgi';
+		if ( ! is_executable( $cgi ) ) { throw new RuntimeException( 'php-cgi is required; CLI POST simulation is not equivalent.' ); }
+		$env = [ 'PATH' => getenv( 'PATH' ), 'BC_TEST_DB' => 'bingocommerce_state_recon', 'BC_FIXTURE_CGI' => '1',
+			'BC_FIXTURE_WOOCOMMERCE' => '1', 'BC_QR_EMAIL_SITE' => (string) $a['site'], 'BC_QR_EMAIL_OWNER' => $this->token,
+			'HTTP_HOST' => $parts['host'], 'REQUEST_URI' => ( $parts['path'] ?? '/' ) . '?' . ( $parts['query'] ?? '' ),
+			'QUERY_STRING' => $parts['query'] ?? '', 'REQUEST_METHOD' => $fields ? 'POST' : 'GET',
+			'SCRIPT_NAME' => '/index.php', 'PHP_SELF' => '/index.php', 'SCRIPT_FILENAME' => $worker, 'REDIRECT_STATUS' => '1',
+			'CONTENT_TYPE' => 'application/x-www-form-urlencoded', 'CONTENT_LENGTH' => (string) strlen( $body ),
+		];
+		$process = proc_open( [ $cgi, $worker ], [ 0 => [ 'pipe', 'r' ], 1 => [ 'pipe', 'w' ], 2 => [ 'pipe', 'w' ] ], $pipes, dirname( __DIR__ ), $env );
+		if ( ! is_resource( $process ) ) { throw new RuntimeException( 'Could not launch CGI fixture.' ); }
+		fwrite( $pipes[0], $body ); fclose( $pipes[0] );
+		stream_set_blocking( $pipes[1], false ); stream_set_blocking( $pipes[2], false );
+		$out = ''; $err = ''; $deadline = microtime( true ) + 30; $status = [];
+		do {
+			$out .= stream_get_contents( $pipes[1] ); $err .= stream_get_contents( $pipes[2] ); $status = proc_get_status( $process );
+			if ( ! $status['running'] ) { break; }
+			usleep( 10000 );
+		} while ( microtime( true ) < $deadline );
+		if ( $status['running'] ) { proc_terminate( $process, 9 ); }
+		$out .= stream_get_contents( $pipes[1] ); $err .= stream_get_contents( $pipes[2] );
+		fclose( $pipes[1] ); fclose( $pipes[2] ); $exit = proc_close( $process );
+		if ( $status['running'] || 0 !== ( $status['exitcode'] >= 0 ? $status['exitcode'] : $exit ) ) { throw new RuntimeException( 'CGI fixture failed: ' . $err ); }
+		[ $headers, $html ] = array_pad( preg_split( '/\r?\n\r?\n/', $out, 2 ), 2, '' );
+		$this->same( true, str_contains( $headers, 'X-BC-Fixture-Guest: 0' ) && ! str_contains( $headers, 'Status:' ), 'email navigation reached native Woo endpoint as a guest under CGI' );
+		return $html;
+	}
+
 	private function unknown_and_excluded( array $a, array $b ): void {
 		foreach ( [ 'classic', 'store' ] as $path ) {
 			foreach ( [ 'paper', 'merch' ] as $kind ) {
@@ -293,6 +422,7 @@ final class DigitalEntitlementSnapshotTest {
 				try { ob_start(); CustomerTicket::render( wc_get_order( $id ) ); $html = ob_get_clean(); }
 				finally { $_GET = $get; }
 				$this->same( '', $html, "$path $kind customer view renders no QR" );
+				$this->same( '', $this->email_link_html( $id ), "$path $kind email is unchanged" );
 				$this->same( $errors, count( $this->errors ), "$path $kind is not an unknown-totals error" );
 				$this->same( $before, $this->order_snapshot( $id ), "$path $kind order unchanged" );
 			}
@@ -300,6 +430,7 @@ final class DigitalEntitlementSnapshotTest {
 			$this->error( $id, 'bc_entitlement_zero_total_out_of_scope' );
 			$this->same( null, $this->row( $id ), "$path zero-dollar payment_complete explicitly excluded" );
 			$this->same( null, DigitalTicket::reference_for_order( $id ), "$path zero-dollar checkout has no QR" );
+			$this->same( '', $this->email_link_html( $id ), "$path zero-dollar email is unchanged" );
 		}
 		$game = array_key_first( $a['faces'] );
 		foreach ( [ null, [], 'bad', [ $game => 0 ], [ $game => '0' ], [ $game => '6' ], [ $game => -1 ], [ $game => 1.5 ], [ $game => true ], [ 0 => 6 ], [ 'bad' => 6 ], [ '01' => 6 ] ] as $index => $totals ) {
@@ -310,6 +441,7 @@ final class DigitalEntitlementSnapshotTest {
 			$this->confirm( $id ); $this->error( $id, 'bc_entitlement_totals_unknown' );
 			$this->same( null, $this->row( $id ), "missing/malformed totals $index create no record" );
 			$this->same( null, DigitalTicket::reference_for_order( $id ), "missing/malformed totals $index create no QR" );
+			$this->same( '', $this->email_link_html( $id ), "missing/malformed totals $index add no link" );
 			$this->same( $before, $this->order_snapshot( $id ), "refused snapshot $index leaves persisted order untouched" );
 		}
 		foreach ( [ 'missing_summary', 'foreign_hall', 'bad_link', 'wrong_quantity', 'paper_with_faces', 'digital_empty', 'admin_origin' ] as $case ) {
@@ -332,6 +464,7 @@ final class DigitalEntitlementSnapshotTest {
 			$code = match ( $case ) { 'paper_with_faces', 'digital_empty' => 'bc_entitlement_totals_unknown', 'admin_origin' => 'bc_entitlement_order_origin_unsupported', default => 'bc_entitlement_saved_facts_invalid' };
 			$this->error( $id, $code ); $this->same( null, $this->row( $id ), "$case fails closed" );
 			$this->same( null, DigitalTicket::reference_for_order( $id ), "$case cannot issue a QR" );
+			$this->same( '', $this->email_link_html( $id ), "$case adds no email link" );
 			$this->same( $before, $this->order_snapshot( $id ), "$case leaves order facts and money untouched" );
 		}
 		foreach ( [ 'pending', 'failed', 'cancelled', 'checkout-draft' ] as $status ) {

@@ -24,6 +24,7 @@ final class Plugin {
 		add_action( 'woocommerce_payment_complete', [ EntitlementSnapshot::class, 'on_payment_complete' ], 10 );
 		add_action( 'woocommerce_payment_complete', [ DigitalTicket::class, 'on_payment_complete' ], 20 );
 		add_action( 'woocommerce_order_details_after_order_table', [ CustomerTicket::class, 'render' ] );
+		add_action( 'woocommerce_email_after_order_table', [ CustomerTicket::class, 'email_order_link' ], 10, 4 );
 		add_action( 'bingocommerce_package_refunded', [ EntitlementVoiding::class, 'on_package_refunded' ], 10, 3 );
 		add_action( 'woocommerce_order_status_cancelled', [ EntitlementVoiding::class, 'on_cancelled' ], 10, 3 );
 		add_action( 'admin_init', [ Migrations::class, 'maybe_migrate_current_site' ] );

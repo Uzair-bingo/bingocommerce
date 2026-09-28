@@ -10,6 +10,31 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
 
 /** Render only inside Woo's customer order details; no public QR/image endpoint. */
 final class CustomerTicket {
+	/** Native paid-order emails precede QR issuance. Link to the guarded view, not a QR. */
+	public static function email_order_link( $order, $sent_to_admin, $plain_text, $email ): void {
+		if ( $sent_to_admin || ! $email instanceof \WC_Email || ! $email->is_customer_email()
+			|| ! in_array( $email->id, [ 'customer_processing_order', 'customer_completed_order' ], true )
+			|| ! $order instanceof \WC_Order || ! Migrations::is_hall() ) { return; }
+		$current = wc_get_order( $order->get_id() );
+		if ( ! $current instanceof \WC_Order || ! hash_equals( $current->get_order_key(), $order->get_order_key() )
+			|| ! in_array( $current->get_created_via( 'edit' ), [ 'checkout', 'store-api' ], true )
+			|| ! $current->is_paid() || ! $current->get_date_paid( 'edit' ) || (float) $current->get_total( 'edit' ) <= 0
+			|| '' === $current->get_payment_method( 'edit' ) ) { return; }
+		$facts = $current->get_meta( 'bc_purchase', true );
+		if ( ! EntitlementSnapshot::valid_facts( $current, $facts ) || 'paper' === $facts['package_type'] ) { return; }
+		$faces = $facts['digital_faces_by_game_type'] ?? null;
+		if ( ! is_array( $faces ) || [] === $faces ) { return; }
+		foreach ( $faces as $game_type => $total ) {
+			if ( ! is_int( $game_type ) || $game_type < 1 || ! is_int( $total ) || $total < 1 ) { return; }
+		}
+		// The normal Woo URL/key reveals no ticket reference. Its destination must
+		// authorize the viewer and read current entitlement/terminal state afresh.
+		$url = $current->get_checkout_order_received_url();
+		$label = __( 'View your Bingo order', 'bingocommerce-digital-tickets' );
+		if ( $plain_text ) { echo "\n" . esc_html( $label ) . ': ' . esc_url_raw( $url ) . "\n"; }
+		else { echo '<p><a href="' . esc_url( $url ) . '">' . esc_html( $label ) . '</a></p>'; }
+	}
+
 	public static function render( $order ): void {
 		if ( ! $order instanceof \WC_Order || ! Migrations::is_hall() ) { return; }
 		// Reload in this Hall; never accept a foreign-Hall object as authorization.
