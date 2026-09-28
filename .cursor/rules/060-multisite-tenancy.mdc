@@ -33,9 +33,11 @@ network mapping repository and synchronized hall-local replicas are implemented.
   migration/schema verifier; all seven baseline tables now exist in code.
   Slice 2 implements `PackageAddonService`, the fixed mutation profile,
   lifecycle/medium integrity, post-commit audit/projection and targeted retry.
-  Slice 3 implements Package administration UI and request handling;
-  storefront/cart/checkout enforcement remains unimplemented. No real Hall
-  migration or deployment is claimed.
+  Slice 3 implements Package administration UI and request handling. The
+  customer cart backend and electronic-limit checks at cart addition and
+  classic/Store API checkout are implemented; the customer storefront theme and
+  selection screens remain pending. No real Hall migration or deployment is
+  claimed.
 - Package add-on service/admin requests derive Hall context only from the
   current WordPress site. Never accept a request Hall/blog/site ID. Resolve
   Package, Play Product, relationship and WooCommerce product identities only

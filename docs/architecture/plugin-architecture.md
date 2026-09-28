@@ -6,9 +6,9 @@ independently activatable and testable.
 | Plugin | Responsibility | Depends on |
 |---|---|---|
 | `bingocommerce-core` | Roles & capabilities, tenant context helpers, audit log service, migration framework | WooCommerce (network) |
-| `bingocommerce-catalog` | Hall-scoped Game Type replica/domain behavior, Bingo Play Product domain metadata/mapping, Bingo Package definitions/components, ADR-044 Package add-on eligibility/configuration, administration and targeted projection reconciliation, BR-032/BR-065 metadata projections, hall electronic-limit override/current-value resolver, starter-product domain logic when that deferred copy exists (ADR-026/ADR-031/ADR-035/ADR-044; add-on schema Slice 1, backend Slice 2 and admin UI Slice 3 implemented; ADR-042 MVP runs no starter copy) | core |
+| `bingocommerce-catalog` | Hall-scoped Game Type replica/domain behavior, Bingo Play Product domain metadata/mapping, Bingo Package definitions/components, ADR-044 Package add-on eligibility/configuration, administration and targeted projection reconciliation, BR-032/BR-065 metadata projections, BR-064 network maximum and Hall override settings screens/writers plus the read-only current-value resolver, starter-product domain logic when that deferred copy exists (ADR-026/ADR-031/ADR-035/ADR-044; add-on schema Slice 1, backend Slice 2 and admin UI Slice 3 implemented; ADR-042 MVP runs no starter copy) | core |
 | `bingocommerce-sessions` | Portal Session-template replica; Commerce schedules with immutable named timezone and structured time; dated occurrence generation/reconciliation; inclusive hall-local 30-day window; centralized current-definition membership; Available for Sale; Package assignment; and customer occurrence-before-Package selection (BR-050–BR-052/BR-063/BR-073/BR-077/BR-078; approved ADR-043) | core, catalog |
-| `bingocommerce-digital-tickets` | Purchase-time entitlement snapshot (activated on successful online payment confirmation — BR-053), QR issue/redeem, device binding, staff reactivation, Android REST API, redemption accumulation | core, catalog, sessions |
+| `bingocommerce-digital-tickets` | Implemented: Hall-local purchase-time entitlement snapshot on successful online payment, refund/cancellation voiding and terminal markers, stable QR reference, guarded customer order-view rendering, and a paid-order email link to that authorized view. Pending: Android scanning/redemption, device binding, and staff reactivation | core, catalog, sessions |
 | `bingocommerce-portal-integration` | Portal-facing machine endpoint; request authentication/validation; provisioning-operation persistence/sequencing; Portal Hall mapping coordination; HallCommerceState/managed-marker coordination; Portal snapshot synchronization; safe API responses and integration audit attribution (ADR-035–ADR-042) | core |
 | `bingocommerce-platform` | Actual WordPress Multisite site creation; WooCommerce/site initialization; triggering existing per-site BingoCommerce migrations and role provisioning; returning a structured setup result to the integration orchestrator; billing lifecycle (BR-016); retention/deletion (BR-017); network reporting. Does not own Catalog domain rules. ADR-042 MVP does not trigger starter Product/Play Product copy | core |
 
@@ -34,14 +34,17 @@ ADR-044 Slice 1's `bingo_package_addons` migration and schema verification;
 Slice 2 implements `PackageAddonService`, the fixed mutation profile,
 lifecycle/medium integrity, post-commit audit/projection and targeted
 reconciliation. Slice 3 implements Package administration UI and request handling;
-storefront/cart/checkout enforcement remains unimplemented. No real Hall
-migration or deployment is claimed. Its two
+the customer cart backend and electronic-limit checks at cart addition and
+classic/Store API checkout are implemented. Customer storefront theme and
+selection screens remain pending. No real Hall migration or deployment is
+claimed. Its two
 baseline Session tables belong to `bingocommerce-sessions`. Session schema v3
 adds the Portal-template replica and three schedule-definition tables in the
-same plugin without replacing those baseline tables. `bingocommerce-platform` owns Platform
-Admin mutation/initialization of the network electronic-maximum option;
-`bingocommerce-catalog` owns the optional hall site option and resolves the
-effective current value.
+same plugin without replacing those baseline tables. `bingocommerce-catalog`
+owns both the Platform Admin network-maximum settings writer and the authorized
+Hall override settings writer, as well as the read-only effective-value
+resolver. `bingocommerce-platform` does not initialize or own the network
+electronic-maximum option.
 
 The compatibility review produced the additive Portal-template / Commerce-
 schedule / dated-occurrence implementation in the current repository. It
@@ -56,8 +59,9 @@ deployment is not claimed.
   Games/Patterns/Caller/device/XML functionality.
 - BingoCommerce authority: Products, Play Products, Packages, pricing,
   inventory, commerce schedules, structured commerce time, dated occurrences,
-  Package availability, sales eligibility, checkout/orders/payments, future
-  entitlement state, address availability, and the authoritative Hall site URL.
+  Package availability, sales eligibility, checkout/orders/payments, address
+  availability, the authoritative Hall site URL, and implemented Hall-local
+  entitlement/ticket state. Android redemption remains future work.
 - Within the single authoritative Bingo Innovation Portal environment, cross-
   system identity uses `halls.id` -> WordPress Site ID, `game_types.id` -> hall-
   scoped Game Type replica, and `bingo_sessions.id` for the operational Session

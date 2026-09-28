@@ -3077,7 +3077,8 @@
   **Limits:** mail was captured at `pre_wp_mail`, not delivered; CGI exercised
   actual GET/POST parsing and native content, not public web-server/theme or
   mailbox navigation. No custom/deferred email transport or real gateway was
-  tested. Direct QR email delivery, $0 policy, Android and previous lifecycle
+  tested. Embedded QR email delivery or a separate QR email sender, $0 policy,
+  Android and previous lifecycle
   limits remain unfinished. No real Hall, fixture ownership guard, schema or
   Woo source was changed. Five modified files and one new test worker remain
   unstaged/uncommitted; no push or deployment.
@@ -3192,8 +3193,10 @@ Everything below is tracked work that is NOT a blocker to that demo.
    webhooks and SSO remain later integration phases.
    Commerce scheduling and occurrence reconciliation exist under approved
    ADR-043; production deployment is not claimed.
-2. Complete existing-order payment/retry validation and remaining purchase
-   guarantees. BR-083 records exact checkout order facts and Package/add-on
+2. WooCommerce's native payment retry flow remains in use; isolated retries with
+   unchanged inputs preserved saved purchase facts. Changed-input retries and
+   real gateway paths remain unverified; no custom retry feature is approved.
+   Other purchase guarantees remain as described below. BR-083 records exact checkout order facts and Package/add-on
    linkage through both classic and Store API checkout.
    BR-081 now resolves BR-066's mechanism deferral: server-side cart enforcement
    is implemented without global Play Product purchasability/lifecycle changes.
@@ -3217,15 +3220,17 @@ Everything below is tracked work that is NOT a blocker to that demo.
    The injected post-commit list-read failure and its recovery-only Retry screen
    are covered by automated tests but have not been browser-tested by the user.
    BR-081 customer cart enforcement, BR-082 electronic checkout validation and
-   BR-083 order recording are implemented. Customer selection screens and
-   existing-order payment/retry enforcement remain outstanding.
+   BR-083 order recording are implemented. Customer selection screens remain
+   outstanding; payment-retry status is summarized in item 2 above.
 4. Redemption accumulation (BR-045). BR-064 authorized configuration screens
    and save/removal actions are implemented and isolated-tested. BR-082 keeps
    the read-only effective-limit resolver and electronic validation at cart
    addition and final classic/Store API checkout;
-   BR-083 adds exact order facts; existing-order payment/retry remains separate.
-5. QR email delivery, Android redemption (ADR-030) and remaining lifecycle
-   reconciliation. The first positive-total online QR/customer-order-view
+   BR-083 adds exact order facts. WooCommerce's native retry flow remains in
+   use; only unchanged-input retries were observed. Changed-input retries and
+   real gateway paths remain unverified, and no custom retry feature is approved.
+5. Embedded QR email delivery or a separate QR email sender, Android redemption
+   (ADR-030) and remaining lifecycle reconciliation. The first positive-total online QR/customer-order-view
    increment (BR-044), entitlement snapshot (BR-043, ADR-029) and BR-046 native
    whole-Package refund/cancellation markers/voiding are implemented and
    isolated-verified, but are not the complete lifecycle or a customer-facing
@@ -3492,7 +3497,18 @@ Everything below is tracked work that is NOT a blocker to that demo.
   Catalog v6 tables and six Session v3 tables. ADR-044 Slice 1 implements the
   add-on migration/schema verifier and Slice 2 implements its backend service,
   fixed mutations, integrity extensions, post-commit audit/projection and
-  targeted reconciliation. Slice 3 implements Package administration UI and request
-  handling; storefront/cart/checkout enforcement remains unimplemented. No real Hall
+  targeted reconciliation. Slice 3 implements Package administration UI and
+  request handling. The BR-081 customer cart backend and BR-082 electronic-limit
+  checks at cart addition and classic/Store API checkout are implemented; the
+  customer storefront theme and selection screens remain pending. No real Hall
   migration or deployment is claimed.
 - **Rule for AI agents:** Read `AGENTS.md`, `docs/architecture/plugin-architecture.md`, and this file before coding. Do not re-scaffold Multisite, WooCommerce, or core bootstrap.
+
+### Current checkpoint — user-reported commit `2f886fc` (2026-09-28)
+
+BR-064's Catalog-owned Network Admin platform-maximum settings and Hall-local
+override settings, including explicit override removal, are committed. The Hall
+screen also reports when a saved override exceeds the platform maximum and
+shows the actual saved and effective values. This records repository state only;
+it does not claim production deployment or restoration/verification of live
+Hall database values.

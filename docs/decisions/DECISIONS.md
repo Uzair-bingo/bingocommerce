@@ -7842,10 +7842,11 @@ delete_users.
   `PackageAddonService`, fixed transaction profile, lifecycle/medium extensions,
   post-commit audit/projection and targeted reconciliation. Slice 3 implements
   Package administration UI and request handling. Subsequent BR-081 implements
-  the customer cart backend and resolves BR-066's mechanism deferral;
-  storefront presentation and full checkout enforcement remain unimplemented. ADR-044 and
-  BR-079 business decisions are unchanged; no real Hall migration, deployment
-  or production readiness is claimed.
+  the customer cart backend and resolves BR-066's mechanism deferral; BR-082
+  implements electronic-limit validation at cart addition and classic/Store
+  API checkout. Customer storefront presentation and selection screens remain
+  pending. ADR-044 and BR-079 business decisions are unchanged; no real Hall
+  migration, deployment or production readiness is claimed.
 - Portal integration details still open after ADR-036 through ADR-042: webhook
   signing, retry, replay and ordering; transitional synchronization conflict
   policy; and SSO protocol/account/tenant mapping. Commerce-schedule recurrence,

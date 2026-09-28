@@ -26,23 +26,21 @@ Request -> hallname.parent-domain.com
      -> Physical product / ordinary merchandise: cart -> checkout -> gateway -> order (HPOS)
      -> Bingo Package (Paper / Digital / Hybrid-Combo): customer selects an
         eligible dated Session (exact date + Session name) before selecting
-        the Bingo Package; cart -> checkout -> gateway -> order (HPOS)
-        -> Checkout aggregates digital faces per Game Type against the effective
-           electronic-card limit (BR-038/BR-042) -- server-side, authoritative
-        -> when online payment is successfully confirmed (BR-053;
-           do not hardcode a particular WooCommerce order-status name as the
-           business rule):
-              -> freeze purchase-time entitlement snapshot (BR-043)
-              -> Digital/Hybrid packages: issue exactly one digital ticket/QR
-                 for the digital entitlement (custom table); Paper-only
-                 packages issue no QR (BR-044)
-        -> Game Operator scans -> REST endpoint validates -> marks redeemed
-           (a valid QR remains redeemable after Session start; late redemption
-            during the Session is allowed -- BR-056)
-        -> Redemption confirms/records the player's digital entitlement for
-           that Session (BR-041, BR-045, BR-055); Android uses that entitlement later
-           when the applicable Game Type(s) are actually played -- redemption
-           does not itself launch or change any game
+        the Bingo Package
+        -> implemented server-side cart validation and electronic-limit checks
+           at cart addition and classic/Store API checkout; storefront/theme
+           selection screens remain pending
+        -> order records exact Session, Package, add-on links/quantities and
+           saved digital-face totals by Game Type; Woo line amounts, discounts
+           and taxes remain the financial record (BR-083)
+        -> after confirmed positive-total online payment (BR-053): save the
+           immutable Hall-local entitlement snapshot and issue one stable QR
+           reference for an eligible Digital/Hybrid Package; Paper-only and
+           ordinary merchandise get none (BR-043/BR-044)
+        -> authorized customer order view renders the QR; paid-order email
+           provides a link to that view, not an embedded QR
+        -> Game Operator scanning, Android redemption, device binding and
+           accumulated per-tablet usage remain future work (BR-041/BR-045/BR-055)
 ```
 Platform administration uses WordPress Network Admin as the trusted entry
 context, with BingoCommerce custom network-level modules/services implementing
@@ -55,8 +53,8 @@ ADR-035 adds the existing Laravel Bingo Innovation Portal as the authority for
 Hall identity, Game Type identity/configuration, and operational Session-template
 identity. BingoCommerce remains the authority for WooCommerce/catalog commerce,
 commerce schedules and structured time, exact dated occurrences, Package
-availability, sales eligibility, checkout/orders/payments, and future
-entitlement state.
+availability, sales eligibility, checkout/orders/payments, and Hall-local
+entitlement/ticket state.
 
 Within the single authoritative Bingo Innovation Portal environment, stable
 mappings use `halls.id` <-> WordPress Site ID and `game_types.id` <-> a hall-
@@ -124,17 +122,17 @@ automatic Enable/Disable. See
 - WordPress user identity is network-shared (`bc_users` / `bc_usermeta`);
   hall membership, roles, orders, merchant/payment context, and commerce
   records remain hall-scoped.
-- Digital tickets: custom indexed table (exact final schema is a later
-  technical-design decision per ADR-029/ADR-030). Conceptually needs to track:
-  an unguessable ticket reference, the order it was issued from (one ticket
-  per Digital/Hybrid order, not per line item — BR-044), hall/site_id, status
-  (issued/redeemed/void), the redeeming device/tablet identity (BR-045's
-  `caller_id` is the confirmed Android tablet identity — do not lock a
-  differently-named device-identity column ahead of the technical-design
-  pass), redemption time, and reactivation history (count, last timestamp,
-  last staff actor — BR-010). A Paper-only Bingo Package never creates a
-  ticket row; Digital and Hybrid/Combo packages create exactly one, covering
-  the digital entitlement only (BR-044, ADR-030).
+- Digital tickets and entitlements: implemented Hall-local tables use the
+  current site's `$wpdb->prefix`, not a `blog_id` column. `bingo_entitlements`
+  stores the immutable order/session/package/selection snapshot and digital
+  faces; `bingo_entitlement_voids` stores terminal refund/cancellation markers;
+  `bingo_tickets` stores one opaque token and issue time per entitlement. A
+  Paper-only Package has no entitlement or ticket; an eligible paid Digital or
+  Hybrid Package gets one QR reference for its digital entitlement only
+  (BR-043/BR-044). Android device binding, redemption records and staff
+  reactivation history remain future storage/design work; do not treat proposed
+  `blog_id`, device, redemption or reactivation fields as existing ticket-table
+  columns (BR-010/BR-045/ADR-029/ADR-030).
 - Catalog/Session persistence (ADR-031, narrowed by ADR-035 and extended in the
   current repository by approved ADR-043): WooCommerce
   products are commerce shells. The current implementation has eleven per-site
@@ -148,9 +146,11 @@ automatic Enable/Disable. See
   `$wpdb->prefix`. ADR-044 Slice 1 implements Catalog v6 migration and schema
   verification; Slice 2 implements `PackageAddonService`, its fixed mutation
   profile, integrity extensions, post-commit audit/projection and targeted
-  reconciliation. Slice 3 implements Package administration UI and request handling;
-  storefront/cart/checkout enforcement remains unimplemented. No real Hall migration,
-  deployment or production readiness is claimed.
+  reconciliation. Slice 3 implements Package administration UI and request
+  handling. The customer cart backend and electronic-limit checks at cart
+  addition and classic/Store API checkout are implemented; storefront theme and
+  selection screens remain pending. No real Hall migration, deployment or
+  production readiness is claimed.
   Game Type, Bingo Play Product, Package, and Session use local
   surrogate domain IDs; Portal `game_types.id` is the trusted cross-
   system Game Type identity, and the local Game Type row becomes its hall-scoped
@@ -247,21 +247,26 @@ automatic Enable/Disable. See
   authoritatively server-side at checkout, aggregating digital faces by Game
   Type; Paper never participates. This replaces the retired session-wide
   qualifying-order capacity model (superseded ADR-006).
-- Purchase-time entitlement snapshot (BR-043, ADR-029, BR-053): frozen
-  per-Game-Type digital entitlement captured when online payment is
-  successfully confirmed (BR-053); never recalculated from later, mutable
-  Product/Package/Game Type state. Follows ADR-005's general
-  custom-indexed-table principle (not the retired session-capacity
-  mechanism — see ADR-028); exact schema is a later technical-design
-  decision. Do not hardcode a WooCommerce order-status name as the
-  business activation rule.
-- Redemption accumulation (BR-045, BR-055, BR-073, ADR-030/ADR-035): scoped by
-  hall/tenant + exact dated commerce occurrence (`session_id` in the current
-  model) + Android caller_id + Game Type; multiple valid Digital Packages for the same
-  occurrence may redeem onto the same tablet and accumulate independently by Game
-  Type. An incoming Package/receipt is accepted or rejected as a whole against
-  the effective electronic limit — no partial redemption. A Session starting
-  does not automatically expire a valid QR (BR-056).
+- Purchase-time entitlement snapshot (BR-043, ADR-029, BR-053): after confirmed
+  positive-total online payment, Digital Tickets saves the immutable per-Game-
+  Type face map from the order's `bc_purchase` facts; it never recalculates from
+  later Catalog state. The implemented per-Hall `bingo_entitlements` table has
+  a unique `order_id`, exact `session_id`, `package_id`, `selection_id`,
+  `snapshot_version`, `digital_faces_json`, status and confirmation time.
+  `bingo_entitlement_voids` stores indexed terminal refund/cancellation facts;
+  `bingo_tickets` stores one stable opaque token per entitlement. These tables
+  use the current Hall's `$wpdb->prefix`. QR lookup requires both active
+  entitlement status and absence of a terminal marker. The authorized customer
+  order view renders the QR, and eligible paid-order emails link to that view;
+  no embedded QR or separate QR email sender exists. Zero-total orders and
+  unknown/invalid historical totals do not create entitlements. Do not hardcode
+  a WooCommerce order-status name as the payment-confirmation rule.
+- Redemption accumulation (BR-045, BR-055, BR-073, ADR-030/ADR-035) remains
+  future work: Android caller/device binding, Game Operator scanning and
+  redemption are not implemented. The approved future scope is Hall + exact
+  dated occurrence + device + Game Type, with each Package/receipt accepted or
+  rejected as a whole against the effective electronic limit. A Session
+  starting does not automatically expire a valid QR (BR-056).
 - Reporting facts (BR-054): purchase/payment date and Session attribution are
   separate. Do not move a Monday payment for Tuesday's Session onto Tuesday's
   payment/accounting date.

@@ -30,16 +30,18 @@ alwaysApply: false
   products are commerce shells. A WooCommerce product ID must not be linked
   simultaneously as a Package and Bingo Play Product. Enforcement must be
   concurrency-safe; a standalone check-then-insert across the authoritative
-  tables is insufficient. Finalize the serialization/transaction mechanism in
-  the Package/Bingo Play Product implementation-design slice; do not add a
-  table or automatically reuse ADR-025.
+  tables is insufficient. The approved ADR-032/ADR-033 serialization and
+  transaction mechanisms are implemented; preserve their reviewed boundaries
+  and do not add a table or automatically reuse ADR-025.
 - The linked WooCommerce Package product's native price is the Package base-
   price authority. ADR-044/BR-079 approve `bingo_package_addons` as the authority
   for Package-specific add-on price, 1–99 maximum quantity, enabled state and
   exact eligibility. Catalog v6 and the backend `PackageAddonService` are
   implemented; Slice 3 implements Package Admin UI/request handling.
-  Storefront/cart/checkout enforcement remains unimplemented; no real Hall
-  migration or deployment is claimed.
+  The customer cart backend and electronic-limit validation at cart addition
+  and classic/Store API checkout are implemented. The customer storefront theme
+  and selection screens remain pending; no real Hall migration or deployment is
+  claimed.
   When preparing an eligible never-configured row after WooCommerce
   initialization and outside the Catalog transaction, load
   `\wc_get_product( $wc_product_id )`, require `\WC_Product`, and treat
@@ -122,9 +124,10 @@ alwaysApply: false
   requires a separately approved requirement. Received/shared Sessions are
   excluded. The schedule requires structured Commerce time, which a Hall
   Manager may enter manually in v1; display-name text remains non-authoritative.
-  One Package may be assigned to multiple dated occurrences. Existing Session
-  persistence stays unchanged until its compatibility/refactoring review is
-  approved.
+  One Package may be assigned to multiple dated occurrences. The compatibility
+  review is complete: the additive Portal-template, Commerce-schedule and
+  dated-occurrence model is implemented under ADR-043, preserving the legacy
+  Session tables and relationships.
 - At most one Bingo Package per checkout, plus its eligible add-ons and any
   ordinary merchandise (BR-032, BR-040) — never more than one package.
 - Final Package identity and Package/add-on eligibility checks use authoritative

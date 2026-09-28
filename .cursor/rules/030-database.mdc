@@ -63,13 +63,17 @@ current model.
   migration and schema verification; Slice 2 implements its backend service,
   fixed mutation profile, integrity extensions, post-commit audit/projection
   and targeted reconciliation. Slice 3 implements Package administration UI/request
-  handling; storefront/cart/checkout enforcement remains unimplemented. No real
-  Hall migration or deployment is claimed.
-  Operational domains still explicitly deferred — including final entitlement,
-  redemption accumulation, device, and offline persistence — MUST NOT have
-  storage invented ahead of their dedicated designs. Where an existing ADR
-  already requires an operational custom indexed table, follow that ADR without
-  inferring its undecided schema from ADR-031.
+  handling. The customer cart backend and electronic-limit checks at cart
+  addition and classic/Store API checkout are implemented; the customer
+  storefront theme and selection screens remain pending. No real Hall migration
+  or deployment is claimed.
+  Digital entitlement snapshots, void markers and QR references have
+  implemented Hall-local indexed tables under the Digital Tickets plugin.
+  Operational domains still explicitly deferred — including Android redemption
+  accumulation, device binding, reactivation history, and offline persistence —
+  MUST NOT have storage invented ahead of their dedicated designs. Where an
+  existing ADR already requires an operational custom indexed table, follow
+  that ADR without inferring its undecided schema from ADR-031.
 - A future Android/tablet device registry is not yet decided: its existence,
   persistence, ownership scope, and schema are deferred to the upcoming
   Android/API persistence design. Do not classify it as per-site or
@@ -225,16 +229,21 @@ ambiguous COMMIT emits neither. Targeted projection retry accepts the current-
 Hall `bingo_play_product_id` and resolves WooCommerce identity internally. The
 Hall-wide mismatch scanner is deferred to the storefront/readiness phase.
 
-## Digital Ticket Table (conceptual data requirements — exact final schema is
-a later technical-design decision per ADR-029/ADR-030)
+## Digital Tickets and Entitlements
 
-Needs to track: an unguessable ticket reference (store a hash where
-practical), the order it was issued from (ONE ticket per Digital/Hybrid
-order, not per line item — BR-044), `blog_id`, status (`issued` / `redeemed`
-/ `void`), the redeeming device/tablet identity (BR-045's `caller_id` is the
-confirmed Android tablet identity — do not lock a differently-named
-device-identity column ahead of the technical-design pass), redemption time,
-and reactivation history (count, last timestamp, last staff actor — BR-010).
+Implemented Hall-local tables use `$wpdb->prefix` for tenant isolation; they
+do not contain `blog_id`. `bingo_entitlements` stores an order-level snapshot
+whose saved purchase facts are immutable: order, exact Session, Package,
+selection and per-Game-Type digital faces; the record also has a status.
+`bingo_entitlement_voids` stores terminal refund or
+cancellation evidence. `bingo_tickets` stores one stable opaque token and issue
+time per entitlement. These facts are authoritative only within the current
+Hall. QR lookup requires an active entitlement and no terminal marker.
+
+Android device binding, redemption accumulation/events and staff reactivation
+history remain future design/storage work. Do not describe proposed `blog_id`,
+device, redemption or reactivation fields as columns in the implemented ticket
+table (BR-010/BR-044/BR-045, ADR-029/ADR-030).
 
 ## Electronic Card Limit (BR-038/BR-042/BR-045 — read this before touching checkout or redemption)
 
@@ -266,8 +275,9 @@ and reactivation history (count, last timestamp, last staff actor — BR-010).
   Game Type or combined Game-Type bucket (BR-057). Do not design per-game
   play-history storage as part of this feature (BR-058).
 - UI-side calculation alone is never sufficient at either boundary.
-- The platform electronic maximum is configurable (currently 300). NEVER
-  hardcode 300.
+- The platform electronic maximum is a configurable business reference (300),
+  not an assured installed value or an automatic default. It must be configured
+  and read at runtime; there is no automatic 300 fallback. NEVER hardcode 300.
 - Configuration persistence is locked by ADR-031. Exact table/column design for
   later per-tablet/session/Game-Type redemption accumulation remains deferred
   to its dedicated technical-design pass.

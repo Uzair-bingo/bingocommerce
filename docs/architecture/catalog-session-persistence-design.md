@@ -6,9 +6,11 @@ tables at schema v3, for eleven implemented tables total. ADR-044 Slice 1
 implements the `bingo_package_addons` migration and schema verification; Slice 2
 implements `PackageAddonService`, its fixed transaction profile,
 lifecycle/medium integrity, post-commit audit/projection and targeted
-reconciliation. Slice 3 implements Package administration UI and request handling;
-storefront/cart/checkout enforcement remains unimplemented. No real Hall
-migration or deployment is claimed. The
+reconciliation. Slice 3 implements Package administration UI and request
+handling. The customer cart backend and electronic-limit validation at cart
+addition and classic/Store API checkout are implemented; the customer
+storefront theme and selection screens remain pending. No real Hall migration
+or deployment is claimed. The
 additive Session schedule/occurrence model exists under approved ADR-043;
 production deployment is not claimed.
 
@@ -1071,8 +1073,10 @@ profile, lifecycle/medium extensions, audit, projection and targeted
 reconciliation are implemented and isolated-tested. Slice 3 implements the
 Package Admin UI, nonce/controller boundary, checkbox/bulk orchestration,
 regular-price prefill and browser Remove confirmation on the existing Edit
-Package screen. Storefront/cart/checkout enforcement remains unimplemented;
-no real Hall migration or deployment is claimed.
+Package screen. The later BR-081/BR-082 slices implement the customer cart
+backend and electronic-limit validation at cart addition and classic/Store API
+checkout. Customer storefront theme and selection screens remain pending; no
+real Hall migration or deployment is claimed.
 
 The add-on slice extends, but does not replace, the existing Catalog boundaries.
 Eligibility requires an active Package, active Play Product, enabled relationship

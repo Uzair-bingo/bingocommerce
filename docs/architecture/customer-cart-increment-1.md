@@ -299,9 +299,9 @@ again on an already-paid order need not emit the primary event again. Never
 charge again to repair a missing snapshot. Provider integration/recovery needs
 verification before customer-facing digital launch.
 
-**QR issuance remains unfinished.** This record is not a QR or redemption
-implementation. Future QR state must reference the Hall-local entitlement ID.
-The follow-ups below implement BR-046 existing-record voiding and durable
+The subsequent online QR increment implements stable QR issuance from the
+Hall-local entitlement. This cart/order-recording slice does not itself issue
+QRs or implement Android redemption. The follow-ups below implement BR-046 existing-record voiding and durable
 refund/cancellation markers that block later snapshot creation. Payment and
 retry behavior remain unchanged; the timing/recovery limits are stated below.
 
@@ -447,7 +447,9 @@ missed while plugins are unavailable are not automatically reconciled. A
 refund/cancellation before any entitlement exists was outside this original
 existing-record slice; the next follow-up adds future-payment blocking.
 Refund deletion, order reopening and repeat payment
-events do not restore a void entitlement. QR issuance, Android state/usage
+events do not restore a void entitlement. QR issuance and the authorized
+customer order view are implemented; the paid-order email links to that view.
+Embedded QR email delivery, a separate QR email sender, Android state/usage
 revocation and lifecycle reconciliation remain unfinished.
 
 The isolated `tests/digital-entitlement-snapshot.php` harness now exercises real
@@ -516,14 +518,16 @@ and Hall isolation. Query-filter sentinels interleave the real Woo calls at both
 inserts; they prove convergence after both successful observers return, **not
 parallel-process or crash safety**. A transient active row can exist until the
 cancellation observer records/enforces its marker, or between snapshot insert
-and its second marker check. Future QR/redemption consumers must coordinate
-with lifecycle writes and honor terminal evidence, not read snapshot status
-alone. The earlier-callback race is verified, not arbitrary concurrent Woo
+and its second marker check. The implemented QR lookup checks both entitlement
+status and terminal-marker absence. Future Android redemption must also honor
+terminal evidence, not read snapshot status alone. The earlier-callback race is verified, not arbitrary concurrent Woo
 writes or combined persistence failures and reentrant callbacks. Missed hooks,
 failed marker writes/process termination and pre-upgrade refund/cancellation
 history have no automatic reconciliation/backfill here. These and the refund-path limits above remain
 launch boundaries; no entitlement is reactivated and no recovery payment or
-refund should be sent to repair storage. QR and Android remain unimplemented.
+refund should be sent to repair storage. QR rendering in the authorized
+customer order view and its paid-order email link are implemented; Android
+redemption remains unimplemented.
 
 ### Online QR reference increment (BR-044 / ADR-030, 2026-09-28)
 
@@ -691,8 +695,9 @@ and checks persistent-fixture Hall preservation and disposable-Hall cleanup.
 Not a complete purchase/launch implementation: WooCommerce retains its native
 payment retry flow. Isolated retries with unchanged inputs preserved the saved
 purchase facts; changed-input retries were not verified. Refund integration
-limits above, lifecycle/snapshot failure recovery, QR email delivery and Android
-redemption remain separate work. The narrow positive-total online
+limits above, lifecycle/snapshot failure recovery, embedded QR email delivery
+or a separate QR email sender, and Android redemption remain separate work.
+The paid-order email link to the authorized QR view is implemented. The narrow positive-total online
 payment-complete snapshot/QR boundary, existing-entitlement voiding and durable
 refund/cancellation-before-entitlement markers are implemented above; they do
 not complete the digital entitlement lifecycle.

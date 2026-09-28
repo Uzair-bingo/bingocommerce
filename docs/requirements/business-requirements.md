@@ -206,8 +206,10 @@ deferred.
   five tables; ADR-044 Slice 1 adds the add-on migration/schema verifier and
   Slice 2 implements the backend service, fixed mutation profile, integrity
   extensions, post-commit audit/projection and targeted reconciliation. Slice 3 implements
-  Package administration UI and request handling; storefront/cart/checkout enforcement
-  remains unimplemented. No real Hall migration or deployment is claimed. The
+  Package administration UI and request handling. The customer cart backend
+  and electronic-limit validation at cart addition and classic/Store API
+  checkout are implemented; the customer storefront theme and selection
+  screens remain pending. No real Hall migration or deployment is claimed. The
   additive Portal-template and Commerce-schedule tables in Session schema v3 do
   not replace them.
   `bc_product_kind` and `bc_package_relation` remain deterministic WooCommerce
@@ -237,8 +239,10 @@ deferred.
 ## Electronic Card Limit
 - There is no maximum orders/customers per Session and no aggregate Session-wide
   capacity counter — that model is retired. The **electronic card limit** applies
-  independently per Game Type. Platform Admin sets a network-level platform maximum
-  (currently 300, but configurable, never a hard-coded invariant); an authorized
+  independently per Game Type. Platform Admin sets a network-level platform maximum.
+  The value 300 is the configurable business reference, not a claim about the
+  current saved setting; the actual maximum comes from the network option and
+  there is no automatic default. An authorized
   Hall Manager may set one optional per-site override for their hall, which can never effectively exceed the current
   platform maximum. Effective limit = `min(hall_override, current_platform_maximum)`
   if an override exists, else the current platform maximum — always evaluated

@@ -33,8 +33,10 @@ BingoCommerce is a hosted multi-tenant e-commerce platform for bingo halls, chur
   profile, lifecycle/medium integrity, post-commit audit, projection, targeted
   reconciliation and backend tests. Slice 3 implements the Package Admin UI,
   nonce/controller boundary, bulk-form orchestration, regular-price prefill and
-  browser Remove confirmation. Storefront/cart/checkout enforcement remains
-  unimplemented. No real Hall migration or deployment is claimed. Add-on prices
+  browser Remove confirmation. The customer cart backend and electronic-limit
+  validation at cart addition and classic/Store API checkout are implemented;
+  the customer storefront theme and selection screens remain pending. No real
+  Hall migration or deployment is claimed. Add-on prices
   are canonical `DECIMAL(19,2)` values. The new-row UI
   prefill loads the linked product with `\wc_get_product( $wc_product_id )`,
   requires `\WC_Product`, and reads the unfiltered edit-context string with
@@ -52,7 +54,8 @@ BingoCommerce is a hosted multi-tenant e-commerce platform for bingo halls, chur
   deployment is not claimed.
 - ADR-035 Portal integration authority: Portal owns Hall/Game Type/operational
   Session-template identity; BingoCommerce owns commerce schedules, dated
-  occurrences, Catalog/commerce, checkout, orders, and future entitlement state
+  occurrences, Catalog/commerce, checkout, orders, and Hall-local entitlement/
+  ticket state
 - Redis persistent object caching approach (ADR-007)
 - S3-compatible object storage approach (ADR-009)
 
@@ -110,15 +113,16 @@ Custom code lives ONLY in:
    and schema verification under ADR-044 Slice 1; Slice 2 implements its backend
    service, fixed mutations, integrity extensions, post-commit audit/projection
    and targeted reconciliation. Slice 3 implements Package administration UI
-   and request handling; storefront/cart/checkout enforcement remains
-   unimplemented. The
+   and request handling. The customer cart backend and electronic-limit checks
+   at cart addition and classic/Store API checkout are implemented; the
+   customer storefront theme and selection screens remain pending. The
    current additive Session schema also uses `bingo_portal_session_templates`,
    `bingo_session_schedules`,
    `bingo_session_schedule_dates`, and `bingo_session_schedule_packages` for
    the approved ADR-043 model; this does not replace the ADR-031
    tables. Production deployment is not claimed. Per BR-065, do not treat
    `bc_product_kind` or `bc_package_relation` as a competing Catalog authority.
-9. **Electronic-Limit Enforcement (Checkout vs. Redemption):** The electronic-card limit — a configurable maximum digital faces per Game Type (network-level platform maximum with an optional per-site hall override, never a hard-coded invariant; currently 300 at the platform level) — has two distinct enforcement boundaries. Checkout performs authoritative server-side validation against the current effective limit (BR-042); it does not increment or reserve a shared counter, so it requires no transactional locking merely because the retired ADR-006 model once needed that. Android redemption checks and mutates accumulated per-tablet/session/Game-Type usage (BR-045) and MUST be atomic/concurrency-safe, accepting or rejecting each incoming receipt as a whole. There is no session-wide qualifying-order capacity model.
+9. **Electronic-Limit Enforcement (Checkout vs. Redemption):** The electronic-card limit is a configurable maximum digital faces per Game Type, using a network-level platform maximum with an optional per-site Hall override. The value 300 is a configurable business reference, not an assured installed value or automatic default; the maximum must be configured and read at runtime. Checkout performs authoritative server-side validation against the current effective limit (BR-042); it does not increment or reserve a shared counter, so it requires no transactional locking merely because the retired ADR-006 model once needed that. Android redemption checks and mutates accumulated per-tablet/session/Game-Type usage (BR-045) and MUST be atomic/concurrency-safe, accepting or rejecting each incoming receipt as a whole. There is no session-wide qualifying-order capacity model.
 10. **Tenant-Safe Object Caching:** If persistent object caching is enabled, cache keys and invalidation behavior MUST remain tenant-safe in Multisite. A hall-scoped cache-clear operation must never invalidate unrelated halls. Exact Redis/plugin/provider configuration must be verified against the selected implementation before production use.
 11. **No Caching on Dynamic Pages:** Never full-page cache `/cart`, `/checkout`, `/my-account`, QR redemption endpoints, or admin dashboards.
 
