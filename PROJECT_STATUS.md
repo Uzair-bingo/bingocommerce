@@ -2973,6 +2973,81 @@
   No payment, retry, refund processor, QR, Android or storefront changes; no
   real-Hall data/migration, stage, commit, push or deployment. Seven modified
   files remain unstaged for review.
+- **[2026-09-28] BR-044 / ADR-030 first online QR issuance increment — implemented and isolated-verified:**
+  Started clean on `feature/portal-sync` at
+  `a280d0bb95f1447632a13b3b22cf7942168d1a65`. Digital Tickets schema v3 adds
+  Hall-local `bingo_tickets`, with a primary entitlement key and unique binary
+  256-bit random token. Priority-20 payment-complete issuance runs after the
+  existing snapshot observer, reuses its saved-fact validation and requires
+  matching immutable digital totals, positive-total confirmed online payment,
+  active entitlement and no terminal marker. Repeat/interleaved events reuse
+  the same insert-only ticket. No current Catalog reads, face/price/person data
+  in the QR, Woo financial writes or new payment/refund behavior are introduced.
+  Paper, merchandise, pending payment, unknown/invalid facts, $0, void or marked
+  orders issue nothing. Hybrid QR scope is digital only.
+  Both internal reference lookup methods read entitlement status AND terminal
+  marker afresh; a marker blocks even if the snapshot status update failed.
+  Hall hints never switch context. Normal Woo customer order details display a
+  scannable canvas using WooCommerce 11.0.1's bundled encoder and a small plugin
+  renderer. Owner capability or guest key plus Woo email verification is
+  required. Views never issue/rotate a ticket; there is no public lookup API.
+  **Email gap:** actual classic/Store API native processing emails were observed
+  before the payment-complete entitlement/ticket exists. No email QR, reordered
+  notification or separate sender is added. Deferred/later email image delivery
+  remains unfinished; browser canvas code cannot execute inside an email.
+  Serial `bingocommerce_state_recon` runs with Digital Tickets loaded passed:
+  entitlement/QR/lifecycle **1,220/1,220**, order recording/native refunds and
+  retries **1,098/1,098**, cart **140/140**, electronic limits **437/437**.
+  Network-blocked headless Chrome rendered actual fixture classic shortcode order-view HTML
+  (**6/6**); macOS Vision independently decoded the QR to the exact saved
+  reference (**1/1**). Total **2,902 passed, 0 failed**, all final runs exit 0.
+  Coverage includes real guest classic/Store API orders, multiple Game Types
+  and add-ons, Hybrid/Paper/merchandise, repeat/interleaved issuance, missing or
+  malformed facts, insert/read failures, Catalog changes, both terminal-event
+  orders, marker-only blocking, native refunds/cancellation, coupons/taxes,
+  unchanged financials and colliding local IDs. Disposable Halls were removed,
+  persistent fixture Halls 2/3/4 remained unchanged and settings were restored.
+  Seven changed/new PHP files and both JavaScript files pass syntax checks;
+  `git diff --check` passes. Browser/Vision checks needed local-process sandbox
+  permission; no dependency/plugin was installed or external QR service used.
+  **Remaining limits:** JavaScript-required customer-view rendering; no QR
+  emails, Android redemption/device binding, in-store/POS activation, offline
+  flow, $0 policy, historical ticket backfill or automatic recovery. Existing
+  terminal-observer timing/missed-event and out-of-band/status-only refund
+  boundaries remain; no independent-process/crash-safety claim is made.
+  No real-Hall migration/data, gateway, checkout, retry, refund processor,
+  shipping, theme or storefront changes. Work remains unstaged/uncommitted;
+  no push, deployment or live plugin activation was performed.
+- **[2026-09-28] Online QR Order Confirmation block guest follow-up — isolated-verified:**
+  Preserved the uncommitted QR work on `feature/portal-sync` at `a280d0b`;
+  index was empty. The earlier QR run used the classic shortcode view even
+  for Store API-created orders; it did not prove Order Confirmation blocks.
+  The added test renders the installed Woo blockified Order Confirmation
+  template through `do_blocks()` and its real registered permission/render
+  callbacks, with a natively paid Store API fixture order and user ID zero.
+  Immediate authorized viewing worked. After the grace period, native blocks
+  displayed the order totals for a valid `_wpnonce`/email, but the QR renderer
+  only understood classic `check_submission`: corrected reproduction
+  **1,241 passed, 2 failed**, one for each native verification nonce action.
+  The only production correction adds support for the block's `wc_verify_email`
+  and `wc_create_account` nonce actions in `CustomerTicket::can_view()`. Hall
+  isolation, mandatory guest order key, sanitized email verification and all
+  entitlement/terminal-marker checks remain intact. No other production file
+  was changed in this follow-up.
+  Focused suite rerun: **1,243/1,243**; browser block-output checks **10/10**;
+  independent QR decode **1/1** — **1,254 passed, 0 failed**, all exit 0.
+  Authorized guests see the same QR immediately and after email verification;
+  missing/wrong keys, expired unverified access, wrong email and invalid nonce
+  reveal neither QR nor reference. Order facts and financial values remain
+  unchanged. Disposable Halls were cleaned; persistent fixture Halls 2/3/4
+  remained unchanged. Changed PHP/JavaScript syntax and `git diff --check` pass.
+  This is native PHP block-template rendering plus browser/decoder checks of
+  that output, not a live HTTP/browser checkout or real payment integration.
+  BACS clears the draft-order session ID: an initial test assumption otherwise
+  was removed, and the block's separate session-only authorization branch is
+  not claimed as verified. Existing QR email/lifecycle/Android limits remain.
+  Five existing work-in-progress files were amended (renderer, two tests,
+  architecture and this status); everything remains unstaged/uncommitted.
 - No Hall Staff Management work currently in progress.
 - Package Increment 1 and the legacy Session Increment 1 remain COMPLETE and
   are recorded under Done. Package Add-ons Increment 1 is approved by
@@ -3065,11 +3140,12 @@ Everything below is tracked work that is NOT a blocker to that demo.
    (BR-064). BR-082 implements the read-only effective-limit resolver and
    electronic validation at cart addition and final classic/Store API checkout;
    BR-083 adds exact order facts; existing-order payment/retry remains separate.
-5. QR issuance (BR-044), Android redemption (ADR-030) and remaining lifecycle
-   reconciliation. The positive-total online entitlement snapshot (BR-043,
-   ADR-029) and BR-046 voiding of existing records after native whole-Package
-   refunds/cancellation are implemented and isolated-verified, but are not the
-   complete lifecycle or a customer-facing digital launch.
+5. QR email delivery, Android redemption (ADR-030) and remaining lifecycle
+   reconciliation. The first positive-total online QR/customer-order-view
+   increment (BR-044), entitlement snapshot (BR-043, ADR-029) and BR-046 native
+   whole-Package refund/cancellation markers/voiding are implemented and
+   isolated-verified, but are not the complete lifecycle or a customer-facing
+   digital launch.
 6. Provider confirmation integration, missed-snapshot recovery/reconciliation,
    and a separately reviewed zero-total checkout boundary. BR-053's normal
    paid-online snapshot event is now `woocommerce_payment_complete`; this

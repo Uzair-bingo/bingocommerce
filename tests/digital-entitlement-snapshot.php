@@ -19,6 +19,8 @@ use BingoCommerce\Catalog\PackageAddonService;
 use BingoCommerce\Catalog\PackageService;
 use BingoCommerce\DigitalTickets\Migrations;
 use BingoCommerce\DigitalTickets\Plugin;
+use BingoCommerce\DigitalTickets\DigitalTicket;
+use BingoCommerce\DigitalTickets\CustomerTicket;
 use BingoCommerce\Sessions\CustomerCart;
 use BingoCommerce\Sessions\SessionService;
 
@@ -71,11 +73,15 @@ final class DigitalEntitlementSnapshotTest {
 				foreach ( [ 'digital', 'hybrid' ] as $kind ) {
 					$id = $this->order( $a, $kind, $path ); $before = $this->order_snapshot( $id );
 					$this->same( null, $this->row( $id ), "$path $kind unpaid creates no entitlement" );
+					$this->same( null, DigitalTicket::reference_for_order( $id ), "$path $kind unpaid has no QR" );
 					$this->confirm( $id );
 					$row = $this->row( $id ); $facts = wc_get_order( $id )->get_meta( 'bc_purchase', true );
 					$this->same( $a['faces'], json_decode( $row['digital_faces_json'] ?? '', true ), "$path $kind exact saved multiple-Game-Type map with add-ons" );
 					foreach ( [ 'session_id', 'package_id', 'selection_id' ] as $key ) { $this->same( (string) $facts[ $key ], $row[ $key ] ?? null, "$path $kind exact $key" ); }
 					$this->same( 'active', $row['status'] ?? null, "$path $kind active only after confirmation" );
+					$reference = DigitalTicket::reference_for_order( $id );
+					$this->same( 1, preg_match( '/\ABC1\.' . $a['site'] . '\.[a-f0-9]{64}\z/', $reference ?? '' ), "$path $kind opaque 256-bit Hall-local QR" );
+					$this->same( $a['faces'], DigitalTicket::resolve( $reference ?? '' )['digital_faces_by_game_type'] ?? null, "$path $kind QR covers digital snapshot only" );
 					$this->same( $before, $this->order_snapshot( $id ), "$path $kind purchase facts, names, IDs, quantities, amounts, discounts, taxes unchanged" );
 					$this->same( 4, count( wc_get_order( $id )->get_items() ), 'Package plus two add-ons plus independent merchandise' );
 					$this->same( [], array_intersect( [ 'limit', 'effective_limit' ], array_keys( $row ?? [] ) ), 'no electronic limit in entitlement' );
@@ -84,10 +90,12 @@ final class DigitalEntitlementSnapshotTest {
 					$this->same( $row, $this->row( $id ), 'repeated event and native repeat preserve every snapshot field' );
 					$this->same( true, Migrations::migrate_current_site(), 'migration after entitlement creation succeeds' );
 					$this->same( $row, $this->row( $id ), 'schema rerun preserves snapshot' );
+					$this->same( $reference, DigitalTicket::reference_for_order( $id ), 'events, native repeat and schema rerun reuse ticket' );
 				}
 			}
 			$this->same( [], $this->errors, 'normal paid Digital/Hybrid cases have no snapshot errors' );
 			$this->upgrade( $a );
+			$this->qr( $a, $b );
 			$this->unknown_and_excluded( $a, $b );
 			$this->storage_failures( $a );
 			$this->voiding( $a, $b );
@@ -109,18 +117,189 @@ final class DigitalEntitlementSnapshotTest {
 		exit( $this->failures ? 1 : 0 );
 	}
 
+	private function qr( array $a, array $b ): void {
+		global $wpdb, $wp;
+		$other_before = $this->hall_snapshot( $b['site'] );
+		foreach ( [ 'classic', 'store' ] as $path ) {
+			$id = $this->order( $a, 'hybrid', $path ); $before = $this->order_snapshot( $id );
+			// Observe actual Woo customer email template rendering during native payment.
+			$emails = [];
+			$observe = static function ( $order, $admin, $plain, $email ) use ( $id, &$emails ): void {
+				if ( $order->get_id() === $id && ! $admin ) { $emails[] = [ $email->id, DigitalTicket::reference_for_order( $id ) ]; }
+			};
+			WC()->mailer(); add_action( 'woocommerce_email_after_order_table', $observe, 10, 4 );
+			try { $this->confirm( $id ); } finally { remove_action( 'woocommerce_email_after_order_table', $observe, 10 ); }
+			$this->same( [ [ 'customer_processing_order', null ] ], $emails, "$path native synchronous processing email precedes entitlement/ticket" );
+			$reference = DigitalTicket::reference_for_order( $id );
+			$this->same( true, is_string( $reference ), "$path QR exists after payment event" );
+			if ( 'store' === $path ) { $this->qr_block_view( $id, $reference ); }
+			$saved = $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM %i WHERE entitlement_id=%d', Migrations::tickets_table(), (int) $this->row( $id )['entitlement_id'] ), ARRAY_A );
+			$get = $_GET; $vars = $wp->query_vars;
+			try {
+				unset( $_GET['key'] );
+				ob_start(); CustomerTicket::render( wc_get_order( $id ) ); $html = ob_get_clean();
+				$this->same( '', $html, 'signed-out direct order hook without key discloses nothing' );
+				$_GET['key'] = 'incorrect'; $wp->query_vars = [ 'order-received' => $id ];
+				ob_start(); WC_Shortcode_Checkout::output( [] ); $html = ob_get_clean();
+				$this->same( false, str_contains( $html, 'data-bc-ticket' ), 'native order view rejects incorrect key' );
+				$_GET['key'] = wc_get_order( $id )->get_order_key();
+				ob_start(); WC_Shortcode_Checkout::output( [] ); $html = ob_get_clean();
+				$this->same( 1, substr_count( $html, 'data-bc-ticket="' . $reference . '"' ), "$path actual Woo order view renders exactly one QR canvas" );
+				$this->same( true, wp_script_is( 'bc-customer-ticket', 'enqueued' ), 'native view enqueues local renderer' );
+				$artifact = getenv( 'BC_QR_ARTIFACT_DIR' );
+				if ( 'classic' === $path && $artifact ) {
+					$directory = realpath( $artifact );
+					if ( ! $directory || ! str_starts_with( $directory, '/private/tmp/bc-qr-test.' ) || ! is_dir( $directory ) ) { throw new RuntimeException( 'QR artifact directory guard refused.' ); }
+					file_put_contents( $directory . '/order.html', $html );
+					file_put_contents( $directory . '/reference.txt', $reference );
+				}
+				$grace = static fn() => -1; add_filter( 'woocommerce_order_email_verification_grace_period', $grace );
+				$customer = WC()->session->get( 'customer' ); WC()->session->set( 'customer', [] );
+				try {
+					ob_start(); WC_Shortcode_Checkout::output( [] ); $locked = ob_get_clean();
+					$this->same( false, str_contains( $locked, 'data-bc-ticket' ), 'expired guest key alone does not bypass Woo email verification' );
+					WC()->session->set( 'customer', [ 'email' => $this->address['email'] ] );
+					ob_start(); WC_Shortcode_Checkout::output( [] ); $verified = ob_get_clean();
+					$this->same( true, str_contains( $verified, 'data-bc-ticket="' . $reference . '"' ), 'Woo-verified guest can still see same QR' );
+				} finally { remove_filter( 'woocommerce_order_email_verification_grace_period', $grace ); WC()->session->set( 'customer', $customer ); }
+			} finally { $_GET = $get; $wp->query_vars = $vars; }
+			do_action( 'woocommerce_payment_complete', $id );
+			$this->same( $saved, $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM %i WHERE entitlement_id=%d', Migrations::tickets_table(), (int) $this->row( $id )['entitlement_id'] ), ARRAY_A ), 'views/repeated payment never rotate or overwrite ticket' );
+			$this->same( $before, $this->order_snapshot( $id ), 'QR and native customer view leave purchase and financials unchanged' );
+			$this->same( null, DigitalTicket::resolve( 'BC1.' . $b['site'] . '.' . $saved['token'] ), 'foreign Hall hint cannot switch context' );
+			switch_to_blog( $b['site'] );
+			try {
+				$this->same( null, DigitalTicket::resolve( $reference ), 'other Hall cannot resolve original reference' );
+				$this->same( null, DigitalTicket::resolve( 'BC1.' . $b['site'] . '.' . $saved['token'] ), 'rewriting Hall hint cannot move token into other Hall' );
+			} finally { restore_current_blog(); }
+			foreach ( [ 'package_refund', 'cancellation' ] as $cause ) {
+				$void_id = $this->order( $a, 'digital', $path ); $this->confirm( $void_id );
+				$old_reference = DigitalTicket::reference_for_order( $void_id );
+				$this->same( true, null !== DigitalTicket::resolve( $old_reference ), "$cause QR active before native terminal event" );
+				$this->native_void( $void_id, $cause, 'store' === $path );
+				$this->same( null, DigitalTicket::resolve( $old_reference ), "$cause previously displayed QR no longer resolves" );
+				// Model the existing documented failed status UPDATE: the durable marker alone must block reads.
+				$wpdb->update( Migrations::table(), [ 'status' => 'active' ], [ 'order_id' => $void_id ] );
+				$this->same( null, DigitalTicket::resolve( $old_reference ), "$cause marker blocks even when entitlement status is active" );
+				do_action( 'woocommerce_payment_complete', $void_id );
+				$this->same( null, DigitalTicket::reference_for_order( $void_id ), "$cause repeat cannot show or reissue QR" );
+			}
+		}
+		$id = $this->order( $a ); $this->confirm( $id ); $reference = DigitalTicket::reference_for_order( $id );
+		foreach ( [ 'void', 'active' ] as $status ) {
+			$wpdb->update( Migrations::table(), [ 'status' => $status ], [ 'order_id' => $id ] );
+			$this->same( 'active' === $status, null !== DigitalTicket::resolve( $reference ), 'status independently governs QR resolution: ' . $status );
+		}
+		$faces = $this->row( $id )['digital_faces_json'];
+		foreach ( [ 'null', '{}', '{"1":0}', '{"1":"5"}', 'bad' ] as $invalid ) {
+			$wpdb->update( Migrations::table(), [ 'digital_faces_json' => $invalid ], [ 'order_id' => $id ] );
+			$this->same( null, DigitalTicket::resolve( $reference ), 'invalid entitlement snapshot never resolves as zero/active' );
+		}
+		$wpdb->update( Migrations::table(), [ 'digital_faces_json' => $faces ], [ 'order_id' => $id ] );
+		$fail = static function ( $sql ) { return str_starts_with( $sql, 'SELECT e.*,t.token' ) ? 'SELECT * FROM bc_fixture_unreadable_qr' : $sql; };
+		$quiet = $wpdb->suppress_errors( true ); add_filter( 'query', $fail );
+		try { $this->same( null, DigitalTicket::resolve( $reference ), 'unreadable QR dependency fails closed' ); }
+		finally { remove_filter( 'query', $fail ); $wpdb->suppress_errors( $quiet ); }
+		// Interleave two real deliveries at the ticket insert, not a service mock.
+		$id = $this->order( $a ); $nested = false;
+		$race = static function ( $sql ) use ( $id, &$nested ) {
+			if ( ! $nested && str_starts_with( $sql, 'INSERT INTO `' . Migrations::tickets_table() . '`' ) ) { $nested = true; do_action( 'woocommerce_payment_complete', $id ); }
+			return $sql;
+		};
+		add_filter( 'query', $race );
+		try { $this->confirm( $id ); } finally { remove_filter( 'query', $race ); }
+		$this->same( true, $nested, 'interleaved payment wins ticket insertion' );
+		$this->same( '1', $wpdb->get_var( $wpdb->prepare( 'SELECT COUNT(*) FROM %i WHERE entitlement_id=%d', Migrations::tickets_table(), (int) $this->row( $id )['entitlement_id'] ) ), 'unique entitlement key permits exactly one ticket' );
+		$this->same( true, null !== DigitalTicket::reference_for_order( $id ), 'duplicate-key loser reuses winning ticket' );
+		$id = $this->order( $a ); $before = $this->order_snapshot( $id );
+		$fail = static function ( $sql ) { return str_starts_with( $sql, 'INSERT INTO `' . Migrations::tickets_table() . '`' ) ? 'SELECT * FROM bc_fixture_failed_qr_insert' : $sql; };
+		add_filter( 'query', $fail );
+		try { $this->confirm( $id ); } finally { remove_filter( 'query', $fail ); }
+		$this->same( null, DigitalTicket::reference_for_order( $id ), 'failed QR insert does not invent a reference' );
+		$this->same( $before, $this->order_snapshot( $id ), 'failed QR insert does not change paid order or money' );
+		do_action( 'woocommerce_payment_complete', $id );
+		$this->same( true, null !== DigitalTicket::reference_for_order( $id ), 'explicit payment event redelivery can retry failed ticket insert without payment' );
+		$this->same( $other_before, $this->hall_snapshot( $b['site'] ), 'QR issue/view/resolve/refund tests do not mutate other Hall' );
+	}
+
+	private function qr_block_view( int $id, string $reference ): void {
+		global $wp_query;
+		$this->same( 0, get_current_user_id(), 'Order Confirmation block viewer is genuinely signed out' );
+		$this->same( true, WP_Block_Type_Registry::get_instance()->is_registered( 'woocommerce/order-confirmation-totals' ), 'installed Woo Order Confirmation Totals block is registered' );
+		$order = wc_get_order( $id ); $before = $this->order_snapshot( $id );
+		$this->same( 'store-api', $order->get_created_via(), 'block view uses actual Store API checkout order' );
+		$this->same( true, $order->is_paid(), 'block view order is natively payment-confirmed' );
+		$template = file_get_contents( WC()->plugin_path() . '/templates/templates/blockified/order-confirmation.html' );
+		$get = $_GET; $post = $_POST; $vars = $wp_query->query_vars;
+		$customer = WC()->session->get( 'customer' ); $draft = WC()->session->get( 'store_api_draft_order' );
+		$created = $order->get_date_created();
+		try {
+			$_GET = [ 'key' => $order->get_order_key() ]; $_POST = [];
+			$wp_query->set( 'order-received', $id );
+			WC()->session->set( 'customer', [] );
+			$this->same( 0, (int) $draft, 'native offline BACS flow cleared draft session; block session-only authorization is not claimed' );
+			$html = do_blocks( $template );
+			$this->same( true, str_contains( $html, 'wc-block-order-confirmation-totals__table' ), 'actual block template renders authorized guest order totals' );
+			$this->same( 1, substr_count( $html, 'data-bc-ticket="' . $reference . '"' ), 'block guest within grace period sees exactly one QR' );
+			// Age only this disposable order so the real native permission branches run.
+			$order->set_date_created( time() - 20 * MINUTE_IN_SECONDS ); $order->save();
+			WC()->session->set( 'store_api_draft_order', null );
+			$denied = do_blocks( $template );
+			$this->same( false, str_contains( $denied, 'wc-block-order-confirmation-totals__table' ), 'fresh guest with key alone cannot see aged order totals' );
+			$this->same( false, str_contains( $denied, $reference ) || str_contains( $denied, 'data-bc-ticket' ), 'unauthorized block guest receives no QR or reference' );
+			foreach ( [ 'wc_verify_email', 'wc_create_account' ] as $action ) {
+				$_POST = [ 'email' => $order->get_billing_email(), '_wpnonce' => wp_create_nonce( $action ) ];
+				$html = do_blocks( $template );
+				$this->same( true, str_contains( $html, 'wc-block-order-confirmation-totals__table' ), "$action native block verifies guest email" );
+				$this->same( 1, substr_count( $html, 'data-bc-ticket="' . $reference . '"' ), "$action block-verified guest sees same QR" );
+			}
+			$artifact = getenv( 'BC_QR_ARTIFACT_DIR' );
+			if ( $artifact ) {
+				$directory = realpath( $artifact );
+				if ( ! $directory || ! str_starts_with( $directory, '/private/tmp/bc-qr-test.' ) || ! is_dir( $directory ) ) { throw new RuntimeException( 'QR artifact directory guard refused.' ); }
+				// The browser/decoder harness now receives actual block-template output,
+				// not the classic shortcode view used by the initial QR verification.
+				file_put_contents( $directory . '/order.html', $html );
+				file_put_contents( $directory . '/reference.txt', $reference );
+				file_put_contents( $directory . '/unauthorized.html', $denied );
+			}
+			foreach ( [ 'wrong-key', 'missing-key', 'wrong-email', 'invalid-nonce' ] as $case ) {
+				$_GET = [ 'key' => $order->get_order_key() ]; $_POST = [ 'email' => $order->get_billing_email(), '_wpnonce' => wp_create_nonce( 'wc_verify_email' ) ];
+				if ( 'wrong-key' === $case ) { $_GET['key'] = 'invalid'; }
+				if ( 'missing-key' === $case ) { unset( $_GET['key'] ); }
+				if ( 'wrong-email' === $case ) { $_POST['email'] = 'stranger@example.invalid'; }
+				if ( 'invalid-nonce' === $case ) { $_POST['_wpnonce'] = 'invalid'; }
+				$html = do_blocks( $template );
+				$this->same( false, str_contains( $html, 'wc-block-order-confirmation-totals__table' ), "$case block guest receives no totals" );
+				$this->same( false, str_contains( $html, $reference ) || str_contains( $html, 'data-bc-ticket' ), "$case block guest receives no QR/reference" );
+			}
+		} finally {
+			$order->set_date_created( $created ); $order->save();
+			$_GET = $get; $_POST = $post; $wp_query->query_vars = $vars;
+			WC()->session->set( 'customer', $customer ); WC()->session->set( 'store_api_draft_order', $draft );
+		}
+		$this->same( $reference, DigitalTicket::reference_for_order( $id ), 'block views reuse the same saved ticket' );
+		$this->same( $before, $this->order_snapshot( $id ), 'block views preserve order facts, lines and financial amounts' );
+	}
+
 	private function unknown_and_excluded( array $a, array $b ): void {
 		foreach ( [ 'classic', 'store' ] as $path ) {
 			foreach ( [ 'paper', 'merch' ] as $kind ) {
 				$id = $this->order( $a, $kind, $path ); $before = $this->order_snapshot( $id ); $errors = count( $this->errors );
 				$this->confirm( $id );
 				$this->same( null, $this->row( $id ), "$path $kind produces no digital entitlement" );
+				$this->same( null, DigitalTicket::reference_for_order( $id ), "$path $kind produces no QR" );
+				$get = $_GET; $_GET['key'] = wc_get_order( $id )->get_order_key();
+				try { ob_start(); CustomerTicket::render( wc_get_order( $id ) ); $html = ob_get_clean(); }
+				finally { $_GET = $get; }
+				$this->same( '', $html, "$path $kind customer view renders no QR" );
 				$this->same( $errors, count( $this->errors ), "$path $kind is not an unknown-totals error" );
 				$this->same( $before, $this->order_snapshot( $id ), "$path $kind order unchanged" );
 			}
 			$id = $this->order( $a, 'digital', $path, true );
 			$this->error( $id, 'bc_entitlement_zero_total_out_of_scope' );
 			$this->same( null, $this->row( $id ), "$path zero-dollar payment_complete explicitly excluded" );
+			$this->same( null, DigitalTicket::reference_for_order( $id ), "$path zero-dollar checkout has no QR" );
 		}
 		$game = array_key_first( $a['faces'] );
 		foreach ( [ null, [], 'bad', [ $game => 0 ], [ $game => '0' ], [ $game => '6' ], [ $game => -1 ], [ $game => 1.5 ], [ $game => true ], [ 0 => 6 ], [ 'bad' => 6 ], [ '01' => 6 ] ] as $index => $totals ) {
@@ -130,6 +309,7 @@ final class DigitalEntitlementSnapshotTest {
 			$order->update_meta_data( 'bc_purchase', $facts ); $order->save(); $before = $this->order_snapshot( $id );
 			$this->confirm( $id ); $this->error( $id, 'bc_entitlement_totals_unknown' );
 			$this->same( null, $this->row( $id ), "missing/malformed totals $index create no record" );
+			$this->same( null, DigitalTicket::reference_for_order( $id ), "missing/malformed totals $index create no QR" );
 			$this->same( $before, $this->order_snapshot( $id ), "refused snapshot $index leaves persisted order untouched" );
 		}
 		foreach ( [ 'missing_summary', 'foreign_hall', 'bad_link', 'wrong_quantity', 'paper_with_faces', 'digital_empty', 'admin_origin' ] as $case ) {
@@ -151,12 +331,14 @@ final class DigitalEntitlementSnapshotTest {
 			$order->save(); $before = $this->order_snapshot( $id ); $this->confirm( $id );
 			$code = match ( $case ) { 'paper_with_faces', 'digital_empty' => 'bc_entitlement_totals_unknown', 'admin_origin' => 'bc_entitlement_order_origin_unsupported', default => 'bc_entitlement_saved_facts_invalid' };
 			$this->error( $id, $code ); $this->same( null, $this->row( $id ), "$case fails closed" );
+			$this->same( null, DigitalTicket::reference_for_order( $id ), "$case cannot issue a QR" );
 			$this->same( $before, $this->order_snapshot( $id ), "$case leaves order facts and money untouched" );
 		}
 		foreach ( [ 'pending', 'failed', 'cancelled', 'checkout-draft' ] as $status ) {
 			$id = $this->order( $a ); $order = wc_get_order( $id ); $order->set_status( $status ); $order->save();
 			do_action( 'woocommerce_payment_complete', $id ); $this->error( $id, 'bc_entitlement_payment_unconfirmed' );
 			$this->same( null, $this->row( $id ), "$status spoofed event cannot snapshot unpaid order" );
+			$this->same( null, DigitalTicket::reference_for_order( $id ), "$status spoofed event cannot issue QR" );
 		}
 		$id = $this->order( $a ); wc_get_order( $id )->update_status( 'processing' );
 		$this->same( null, $this->row( $id ), 'paid-looking status alone never activates snapshot' );
@@ -201,6 +383,7 @@ final class DigitalEntitlementSnapshotTest {
 		$this->same( false, is_wp_error( ( new BingoPlayProductService() )->updateFacesPerUnit( $a['first_play'], 40 ) ), 'later authoritative Catalog edit succeeds' );
 		wp_set_current_user( 0 );
 		$this->confirm( $id ); $row = $this->row( $id );
+		$reference = DigitalTicket::reference_for_order( $id );
 		$this->same( $facts['digital_faces_by_game_type'], json_decode( $row['digital_faces_json'], true ), 'first payment confirmation copies historical totals after Catalog edit' );
 		$reads = [];
 		$watch = static function ( $sql ) use ( &$reads ) { if ( preg_match( '/\b(?:SELECT|SHOW)\b.*bingo_(?:play_products|packages|package_components|game_types|sessions)/is', $sql ) ) { $reads[] = $sql; } return $sql; };
@@ -208,6 +391,8 @@ final class DigitalEntitlementSnapshotTest {
 		try { do_action( 'woocommerce_payment_complete', $id ); } finally { remove_filter( 'query', $watch ); }
 		$this->same( [], $reads, 'snapshot event does not read mutable Catalog or Session state' );
 		$this->same( $row, $this->row( $id ), 'later Catalog edit and duplicate leave existing snapshot byte-identical' );
+		$this->same( $reference, DigitalTicket::reference_for_order( $id ), 'later Catalog edits never rotate QR' );
+		$this->same( $facts['digital_faces_by_game_type'], DigitalTicket::resolve( $reference )['digital_faces_by_game_type'], 'QR resolves saved totals despite changed Catalog' );
 		$order = wc_get_order( $id ); $facts['digital_faces_by_game_type'][ array_key_first( $a['faces'] ) ]++;
 		$order->update_meta_data( 'bc_purchase', $facts ); $order->save();
 		do_action( 'woocommerce_payment_complete', $id ); $this->error( $id, 'bc_entitlement_snapshot_conflict' );
@@ -230,8 +415,8 @@ final class DigitalEntitlementSnapshotTest {
 		$wpdb->query( $wpdb->prepare( 'DROP TABLE %i', Migrations::voids_table() ) );
 		update_option( Migrations::VERSION_OPTION, 1 );
 		$this->same( true, Migrations::migrate_current_site(), 'schema-v1 upgrade creates indexed void marker table' );
-		$this->same( 2, get_option( Migrations::VERSION_OPTION ), 'schema-v2 marker version persisted' );
-		$this->same( true, Migrations::migrate_current_site(), 'schema-v2 upgrade is repeatable' );
+		$this->same( Migrations::DB_VERSION, get_option( Migrations::VERSION_OPTION ), 'current marker/ticket schema version persisted' );
+		$this->same( true, Migrations::migrate_current_site(), 'current upgrade is repeatable' );
 		$this->same( $before, $wpdb->get_results( $wpdb->prepare( 'SELECT * FROM %i ORDER BY order_id', Migrations::table() ), ARRAY_A ), 'upgrade preserves all paid snapshot fields' );
 	}
 
@@ -257,6 +442,7 @@ final class DigitalEntitlementSnapshotTest {
 					wc_get_order( $id )->payment_complete( 'native-repeat' );
 					$this->same( $row, $this->row( $id ), "$label late and repeated payment cannot create/reactivate entitlement" );
 					$this->same( $marker, $this->marker( $id ), "$label repeated payment preserves terminal marker" );
+					$this->same( null, DigitalTicket::reference_for_order( $id ), "$label late/repeated payment cannot issue or show QR" );
 					$this->same( $before, $this->order_snapshot( $id ), "$label lines, saved facts, amounts, coupons, taxes untouched" );
 				}
 			}
@@ -363,6 +549,7 @@ final class DigitalEntitlementSnapshotTest {
 				$paid_row['status'] = 'void';
 				$this->same( $paid_row, $row, 'saved cancellation voids snapshot created by earlier callback; all other fields unchanged' );
 				$this->same( 'cancellation', $marker['cause'] ?? null, 'saved cancellation retained despite current paid status' );
+				$this->same( null, DigitalTicket::reference_for_order( $id ), 'earlier nested payment cannot leave a usable QR after cancellation observer' );
 				do_action( 'woocommerce_payment_complete', $id ); wc_get_order( $id )->payment_complete( 'fixture-repeat' );
 				$this->same( $paid_row, $this->row( $id ), 'repeat payment cannot reactivate earlier-callback cancellation' );
 				$this->same( $marker, $this->marker( $id ), 'repeat payment preserves cancellation evidence' );
@@ -427,14 +614,18 @@ final class DigitalEntitlementSnapshotTest {
 	private function voiding( array $a, array $b ): void {
 		global $wpdb;
 		$this->enter( $b['site'] ); $b_id = $this->order( $b ); $this->confirm( $b_id );
+		$b_reference = DigitalTicket::reference_for_order( $b_id );
 		$this->enter( $a['site'] ); $b_before = $this->hall_snapshot( $b['site'] );
 		$this->same( true, null !== $this->row( $b_id ), 'void isolation includes colliding Woo order IDs with active snapshots' );
+		$this->same( null, DigitalTicket::resolve( $b_reference ), 'other Hall ticket cannot resolve with colliding order/entitlement IDs' );
+		$this->same( true, $b_reference !== DigitalTicket::reference_for_order( $b_id ), 'colliding local IDs have distinct stable QR references' );
 		$gateway = new EntitlementFixtureRefundGateway(); WC()->payment_gateways()->payment_gateways[] = $gateway;
 		$errors = count( $this->void_errors );
 		foreach ( [ 'classic', 'store' ] as $path ) {
 			foreach ( [ 'whole-package', 'whole-order', 'merchandise', 'addon-only', 'partial', 'amount-only', 'gateway-failure', 'cancel', 'status-only-refunded' ] as $case ) {
 				$id = $this->order( $a, 'hybrid', $path ); $this->confirm( $id );
 				$order = wc_get_order( $id ); $row = $this->row( $id ); $before = $this->order_snapshot( $id );
+				$reference = DigitalTicket::reference_for_order( $id );
 				$this->same( true, (float) $order->get_discount_total() > 0 && (float) $order->get_total_tax() > 0, 'void fixture includes coupons and tax' );
 				wp_set_current_user( $this->admin );
 				if ( 'cancel' === $case ) {
@@ -460,6 +651,7 @@ final class DigitalEntitlementSnapshotTest {
 					$this->same( $accepted ? 1 : 0, count( wc_get_order( $id )->get_refunds() ), "$case persisted native refund count" );
 					if ( in_array( $case, [ 'whole-package', 'whole-order' ], true ) ) { $row['status'] = 'void'; }
 					$this->same( $row, $this->row( $id ), "$case exact snapshot/state after native result" );
+					$this->same( 'active' === $row['status'], null !== DigitalTicket::resolve( $reference ), "$case QR reflects terminal state; merchandise/refusal leaves it usable" );
 					if ( $accepted ) {
 						$this->same( true, $result->get_refunded_payment(), 'successful offline-gateway refund flag persisted' );
 						do_action( 'woocommerce_refund_created', $result->get_id(), [ 'order_id' => $id, 'refund_payment' => true ] );

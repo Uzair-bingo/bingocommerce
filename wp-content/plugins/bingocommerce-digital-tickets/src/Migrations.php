@@ -10,7 +10,7 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
 
 /** Plugin-owned schema. No payment callback performs DDL or creates defaults. */
 final class Migrations {
-	public const DB_VERSION = 2;
+	public const DB_VERSION = 3;
 	public const VERSION_OPTION = 'bc_digital_tickets_db_version';
 	public const SWEEP_OPTION = 'bc_digital_tickets_network_migration_sweep_version';
 
@@ -22,6 +22,11 @@ final class Migrations {
 	public static function voids_table(): string {
 		global $wpdb;
 		return $wpdb->prefix . 'bingo_entitlement_voids';
+	}
+
+	public static function tickets_table(): string {
+		global $wpdb;
+		return $wpdb->prefix . 'bingo_tickets';
 	}
 
 	public static function is_hall(): bool {
@@ -93,6 +98,14 @@ final class Migrations {
 	PRIMARY KEY  (order_id),
 	KEY session_id (session_id)
 ) ENGINE=InnoDB {$collation};" );
+		$tickets = self::tickets_table();
+		dbDelta( "CREATE TABLE {$tickets} (
+	entitlement_id bigint(20) unsigned NOT NULL,
+	token char(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+	issued_at datetime NOT NULL,
+	PRIMARY KEY  (entitlement_id),
+	UNIQUE KEY token_unique (token)
+) ENGINE=InnoDB {$collation};" );
 		$result = self::verify_current_site_schema();
 		if ( is_wp_error( $result ) ) { return $result; }
 		update_option( self::VERSION_OPTION, self::DB_VERSION, false );
@@ -110,13 +123,17 @@ final class Migrations {
 			'digital_faces_json' => '/^longtext$/', 'status' => '/^varchar\(16\)$/', 'confirmed_at' => '/^datetime$/',
 		], [ 'PRIMARY' => [ [ 'entitlement_id', 0, null ] ], 'order_unique' => [ [ 'order_id', 0, null ] ], 'session_status' => [ [ 'session_id', 1, null ], [ 'status', 1, null ] ] ] );
 		if ( is_wp_error( $result ) ) { return $result; }
-		return self::verify_table( self::voids_table(), [
+		$result = self::verify_table( self::voids_table(), [
 			'order_id' => $bigint, 'session_id' => $bigint, 'package_id' => $bigint, 'selection_id' => '/^char\(36\)$/',
 			'cause' => '/^varchar\(16\)$/', 'refund_id' => $bigint, 'voided_at' => '/^datetime$/',
 		], [ 'PRIMARY' => [ [ 'order_id', 0, null ] ], 'session_id' => [ [ 'session_id', 1, null ] ] ] );
+		if ( is_wp_error( $result ) ) { return $result; }
+		return self::verify_table( self::tickets_table(), [
+			'entitlement_id' => $bigint, 'token' => '/^char\(64\)$/', 'issued_at' => '/^datetime$/',
+		], [ 'PRIMARY' => [ [ 'entitlement_id', 0, null ] ], 'token_unique' => [ [ 'token', 0, null ] ] ], '' );
 	}
 
-	private static function verify_table( string $table, array $patterns, array $required_indexes ): true|\WP_Error {
+	private static function verify_table( string $table, array $patterns, array $required_indexes, string $auto_increment = 'entitlement_id' ): true|\WP_Error {
 		global $wpdb;
 		$status = $wpdb->get_row( $wpdb->prepare( 'SHOW TABLE STATUS LIKE %s', $wpdb->esc_like( $table ) ), ARRAY_A );
 		if ( '' !== $wpdb->last_error || ! is_array( $status ) || 'InnoDB' !== $status['Engine'] || ! str_starts_with( $status['Collation'], 'utf8mb4_' ) ) { return self::error(); }
@@ -126,9 +143,11 @@ final class Migrations {
 		foreach ( $patterns as $name => $pattern ) {
 			$column = $columns[ $name ] ?? [];
 			if ( ! preg_match( $pattern, $column['Type'] ?? '' ) || 'NO' !== ( $column['Null'] ?? null )
-				|| ( 'entitlement_id' === $name ? 'auto_increment' : '' ) !== ( $column['Extra'] ?? null ) ) { return self::error(); }
+				|| ( $auto_increment === $name ? 'auto_increment' : '' ) !== ( $column['Extra'] ?? null ) ) { return self::error(); }
 		}
-		if ( 'ascii_bin' !== $columns['selection_id']['Collation'] ) { return self::error(); }
+		foreach ( [ 'selection_id', 'token' ] as $binary ) {
+			if ( isset( $patterns[ $binary ] ) && 'ascii_bin' !== $columns[ $binary ]['Collation'] ) { return self::error(); }
+		}
 		$indexes = $wpdb->get_results( $wpdb->prepare( 'SHOW INDEX FROM %i', $table ), ARRAY_A );
 		if ( '' !== $wpdb->last_error || ! is_array( $indexes ) ) { return self::error(); }
 		$actual = [];

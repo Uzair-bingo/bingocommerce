@@ -525,6 +525,120 @@ history have no automatic reconciliation/backfill here. These and the refund-pat
 launch boundaries; no entitlement is reactivated and no recovery payment or
 refund should be sent to repair storage. QR and Android remain unimplemented.
 
+### Online QR reference increment (BR-044 / ADR-030, 2026-09-28)
+
+Digital Tickets schema v3 adds the per-Hall `bingo_tickets` table, keyed by
+`entitlement_id`, with a unique binary `token CHAR(64)` and UTC `issued_at`.
+The entitlement's existing unique order index makes this one ticket per order,
+not one per line or Game Type. Migration is versioned, verified and idempotent;
+it neither backfills tickets nor changes snapshots, markers or Woo orders.
+Only disposable fixture Halls were migrated during development.
+
+`DigitalTicket::on_payment_complete` runs at priority 20, after the existing
+priority-10 snapshot observer. It requires a saved active digital entitlement,
+no terminal marker, positive-total confirmed online order, valid saved purchase
+facts/current order links and an exact match to the saved digital-face map.
+It never reads today's Catalog or Session records. Paper, merchandise, pending
+payment, unknown/invalid facts, the excluded zero-total path, void snapshots
+and marked orders issue nothing. Hybrid's single reference covers only the
+saved digital map, never its Paper components or independent merchandise.
+
+The QR payload is `BC1.<WordPress Hall site ID>.<256-bit random hex token>`.
+The site hint must equal the already-established current Hall: it never selects
+or switches tenant context. No faces, prices, customer details, order key or
+order ID are encoded. The token is generated with `random_bytes(32)`, kept
+recoverable in the private Hall table so repeated customer views display the
+same QR, and must be treated as a bearer secret in database backups/debugging.
+Hash-only storage would not support that redisplay without another recoverable
+secret. No external QR service, public image URL or token logging is added.
+This versioned opaque reference is not an Android API/redemption contract.
+
+Issuance is insert-only. A single conditional `INSERT ... SELECT` checks active
+status and absence of a marker; the unique entitlement key arbitrates repeated
+or interleaved deliveries. The loser reads the winner rather than rotating a
+token. A post-insert read checks eligibility again. Storage failure leaves Woo
+payment unchanged; an explicit event redelivery can retry without another
+charge. No automatic recovery worker or order-view backfill is introduced.
+
+`DigitalTicket::reference_for_order()` and `resolve()` are internal, read-only
+boundaries, not public endpoints or authorization. Every read joins the current
+Hall's entitlement and marker tables, requires `status = active` AND no marker
+for that order, and validates the snapshot/map. Unreadable dependencies return
+no reference/result. A marker blocks resolution even if its status update
+failed and the snapshot still says active. Issued rows remain unchanged after
+refund/cancellation; previously displayed QR pixels cannot be recalled, but
+the reference no longer resolves as active after the terminal marker is saved.
+
+`CustomerTicket` renders through `woocommerce_order_details_after_order_table`
+(Woo 11.0.1 `templates/order/order-details.php:140`; the Order Confirmation
+Totals block also dispatches this hook after its permission check). It reloads
+the order in the current Hall and independently requires a logged-in owner's
+`view_order` capability or the correct guest order key plus Woo's email
+verification policy. A guest user ID of zero alone is never ownership. Order
+views only read an existing ticket. A small plugin script uses the installed
+Woo `assets/js/jquery-qrcode/jquery.qrcode.min.js` encoder (MIT) to draw a local
+black/white canvas at integer scale with a four-module quiet zone. No theme,
+third-party plugin, external service or QR image endpoint is added. JavaScript
+is required; the reference alone is not a browser destination or redeem action.
+
+The Order Confirmation block follow-up reproduced a guest verification mismatch:
+the native block accepted `_wpnonce` for `wc_verify_email` or `wc_create_account`
+and displayed totals, but the QR renderer recognized only the classic
+`check_submission` form field. `CustomerTicket::can_view()` now accepts those
+two native block nonce actions as well, before passing the sanitized email to
+Woo's verification helper. The correct current-Hall guest order key remains
+mandatory; no payment, ticket, entitlement or refund behavior changes.
+
+**Email gap, verified with actual native customer email template rendering:**
+`WC_Order::payment_complete()` saves paid status before firing
+`woocommerce_payment_complete` (`includes/class-wc-order.php:137–188`). The
+save dispatches status-transition notifications; the ordinary synchronous
+`WC_Emails` path (`includes/class-wc-emails.php:96–148`) renders the processing
+email before the entitlement/ticket observers. Both classic and Store API
+fixtures observed `customer_processing_order` with no ticket, followed by a
+ticket after payment completion. Therefore this increment adds no email QR,
+does not reorder payment/email events and sends no separate message. Deferred
+emails or later resends/status emails can run after issuance, but safe email
+image delivery/integration is still unfinished; the browser canvas cannot
+execute in email. Existing Woo emails remain unchanged.
+
+Tests extend `tests/digital-entitlement-snapshot.php` with real classic/Store
+API guest orders, exclusions, repeat/interleaved
+issuance, failed/unreadable storage, malformed snapshots, later Catalog edits,
+native refunds/cancellation before and after issuance, independent merchandise,
+coupons/tax, unchanged financials and colliding local IDs. The initial 1,220-case
+run tested the classic shortcode order view for both checkout origins; it only
+inspected the block hook and did **not** test block rendering. The follow-up
+renders the installed `templates/templates/blockified/order-confirmation.html`
+via native `do_blocks()`/registered Woo blocks against a paid Store API order
+with user ID zero. It checks immediate access, an aged order verified by each
+native block nonce action, and denied missing/wrong keys, unverified expired
+access, wrong email and invalid nonce. The corrected pre-fix suite reproduced
+two failures; after the nonce-field fix all 1,243 assertions passed. Views reuse
+the ticket and preserve saved order facts/financial amounts. BACS clears the
+draft-order session ID, so the separate block session-only authorization branch
+is **not** established by this fixture and is not claimed as verified.
+
+Optional
+`BC_QR_ARTIFACT_DIR` exports only a disposable fixture view to a guarded temporary
+directory. The final artifact now comes from the actual block template, with a
+separate unauthorized result. `tests/qr-render.cjs` renders both outputs with
+installed local scripts in network-blocked headless Chrome; the authorized view
+has one scannable QR, the unauthorized view neither QR nor reference.
+`tests/qr-decode.swift` independently decodes the PNG with macOS Vision and
+compares the exact payload. This proves native PHP block permissions/rendering
+and browser rendering of their output, not a live HTTP/browser checkout or
+real-gateway end-to-end flow.
+
+The preceding lifecycle timing/coverage limits still apply: an early callback
+can briefly see active state before the cancellation observer saves its marker;
+these tests establish post-observer convergence, not parallel-process/crash
+safety. No public lookup/redemption API, atomic device binding/accumulation,
+in-store/POS activation, offline use, reactivation, missed-event reconciliation,
+historical backfill, or zero-total policy is implemented. Future redemption must
+coordinate its mutation with terminal evidence, not rely on a previously read
+or displayed QR. Provider-dashboard/status-only refund gaps remain unchanged.
+
 ## Verification and next boundary
 
 Run `BC_TEST_DB=bingocommerce_state_recon php tests/customer-cart-increment-1.php`.
@@ -546,9 +660,9 @@ and checks persistent-fixture Hall preservation and disposable-Hall cleanup.
 Not a complete purchase/launch implementation: WooCommerce retains its native
 payment retry flow. Isolated retries with unchanged inputs preserved the saved
 purchase facts; changed-input retries were not verified. Refund integration
-limits above, lifecycle/snapshot failure recovery and QR
-issuance/activation remain separate work. The narrow positive-total online
-payment-complete snapshot boundary, existing-entitlement voiding and durable
+limits above, lifecycle/snapshot failure recovery, QR email delivery and Android
+redemption remain separate work. The narrow positive-total online
+payment-complete snapshot/QR boundary, existing-entitlement voiding and durable
 refund/cancellation-before-entitlement markers are implemented above; they do
 not complete the digital entitlement lifecycle.
 Configuration writers/UI also remain

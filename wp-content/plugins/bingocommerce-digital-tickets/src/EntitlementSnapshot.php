@@ -99,7 +99,7 @@ final class EntitlementSnapshot {
 	}
 
 	/** Check the saved contract and current order links, without mutable Catalog reads. */
-	private static function valid_facts( \WC_Order $order, mixed $facts ): bool {
+	public static function valid_facts( \WC_Order $order, mixed $facts ): bool {
 		if ( ! is_array( $facts ) || 1 !== ( $facts['version'] ?? null ) || get_current_blog_id() !== ( $facts['site_id'] ?? null )
 			|| ! is_string( $facts['selection_id'] ?? null ) || ! wp_is_uuid( $facts['selection_id'], 4 )
 			|| ! self::positive( $facts['session_id'] ?? null ) || ! self::positive( $facts['package_id'] ?? null ) || ! self::positive( $facts['wc_product_id'] ?? null )
