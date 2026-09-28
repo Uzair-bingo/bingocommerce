@@ -260,9 +260,20 @@ deferred.
   configuration, malformed values or unreadable settings block digital
   selections only. An absent Hall override means no override. Paper-only
   selections and ordinary merchandise remain unaffected. No automatic 300
-  initialization or configuration writer/UI is included. Validate current
+  initialization is included. Validate current
   digital totals both when adding a selection and at final classic and Store
   API checkout; no earlier cart approval is authoritative. (BR-082)
+- BR-064 configuration screens are implemented separately from the read-only
+  resolver. Platform Admin saves the network maximum through Network Admin;
+  an authorized Hall Manager saves or explicitly removes only their current
+  Hall's override through Hall administration. Both require the existing
+  capabilities/Hall context, POST and WordPress nonce validation. Save accepts
+  only canonical positive integers within the runtime integer range; invalid
+  submissions preserve existing values. Empty input never means removal.
+  Screens show saved values and the current effective ceiling; storing a Hall
+  override above the platform maximum never raises the effective limit or causes
+  that stored override to be rewritten after a platform decrease. No default
+  maximum, Session capacity or purchase-rule change is introduced.
 
 ## Session Domain
 - Within the single authoritative Bingo Innovation Portal environment, Portal

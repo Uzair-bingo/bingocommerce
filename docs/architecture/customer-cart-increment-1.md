@@ -696,5 +696,6 @@ redemption remain separate work. The narrow positive-total online
 payment-complete snapshot/QR boundary, existing-entitlement voiding and durable
 refund/cancellation-before-entitlement markers are implemented above; they do
 not complete the digital entitlement lifecycle.
-Configuration writers/UI also remain
-unimplemented; configuration authority stays with BR-064.
+BR-064's authorized configuration screens/writers are now implemented separately
+in Catalog; see `catalog-session-persistence-design.md` §6. They do not change
+this cart/checkout contract or initialize a default maximum.

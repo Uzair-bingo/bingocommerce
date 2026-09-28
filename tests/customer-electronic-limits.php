@@ -1,7 +1,7 @@
 <?php
 
 /**
- * BR-038/BR-042/BR-082, real Woo cart and final checkout validation, signed out.
+ * BR-064 settings plus BR-038/BR-042/BR-082 guest cart/final checkout validation.
  * BC_TEST_DB=bingocommerce_state_recon php tests/customer-electronic-limits.php
  * Disposable token-owned Halls only; restore the fixture network option on exit.
  */
@@ -10,9 +10,14 @@ if ( 'cli' !== PHP_SAPI || 'bingocommerce_state_recon' !== getenv( 'BC_TEST_DB' 
 }
 putenv( 'BC_FIXTURE_WOOCOMMERCE=1' );
 require __DIR__ . '/fixtures/wordpress-bootstrap.php';
+require_once ABSPATH . 'wp-admin/includes/plugin.php';
+require_once ABSPATH . 'wp-admin/includes/screen.php';
+require_once ABSPATH . 'wp-admin/includes/class-wp-screen.php';
+require_once ABSPATH . 'wp-admin/includes/template.php';
 
 use BingoCommerce\Catalog\BingoPlayProductService;
 use BingoCommerce\Catalog\ElectronicLimit;
+use BingoCommerce\Catalog\ElectronicLimitSettings;
 use BingoCommerce\Catalog\GameTypeService;
 use BingoCommerce\Catalog\Migrations as CatalogMigrations;
 use BingoCommerce\Catalog\PackageAddonService;
@@ -26,12 +31,15 @@ use Automattic\WooCommerce\StoreApi\Exceptions\RouteException;
 
 final class CustomerElectronicLimitsTest {
 	private array $sites = [];
+	private array $users = [];
 	private int $admin;
 	private string $token;
 	private int $passes = 0;
 	private int $failures = 0;
 
 	public function run(): void {
+		// Keep native denials observable without letting wp_die bypass fixture cleanup.
+		add_filter( 'wp_die_handler', static fn() => static function ( $message ) { throw new RuntimeException( 'Native settings denial: ' . wp_strip_all_tags( (string) $message ) ); } );
 		$this->admin = (int) username_exists( 'fixture_admin' );
 		$this->token = wp_generate_uuid4();
 		$missing = new stdClass();
@@ -49,6 +57,7 @@ final class CustomerElectronicLimitsTest {
 			$this->settings( $a );
 			$this->stale_and_unreadable( $a );
 			$this->isolation( $a, $b );
+			$this->settings_administration( $a, $b );
 			$this->same( 0, get_current_user_id(), 'all customer cases remain signed out' );
 		} catch ( Throwable $e ) {
 			++$this->failures;
@@ -62,6 +71,221 @@ final class CustomerElectronicLimitsTest {
 		foreach ( $baseline as $site => $before ) { $this->same( $before, $this->snapshot( $site ), "persistent fixture Hall {$site} unchanged" ); }
 		printf( "Electronic limits: %d passed, %d failed.\n", $this->passes, $this->failures );
 		exit( $this->failures ? 1 : 0 );
+	}
+
+	private function settings_administration( array $a, array $b ): void {
+		global $wpdb;
+		$old_screen = $GLOBALS['current_screen'] ?? null;
+		$old_method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+		$old_post = $_POST;
+		try {
+			wp_set_current_user( $this->admin );
+			WC_Install::create_roles(); \BingoCommerce\Core\Roles::sync_current_site();
+			$actors = [];
+			foreach ( [ 'manager' => 'bc_hall_manager', 'operator' => 'bc_game_operator', 'customer' => 'subscriber', 'wp_admin' => 'administrator', 'shop_manager' => 'shop_manager' ] as $label => $role ) {
+				$id = wp_insert_user( [ 'user_login' => 'limit-' . $label . '-' . wp_generate_uuid4(), 'user_pass' => wp_generate_password( 32 ), 'role' => '' ] );
+				if ( is_wp_error( $id ) ) { throw new RuntimeException( 'Settings fixture actor creation failed.' ); }
+				$this->users[] = $id; $actors[ $label ] = $id; update_user_meta( $id, 'bc_faces_test_owner', $this->token );
+				$this->settings_grant( $a['site'], $id, $role );
+			}
+			$this->same( 10, has_action( 'network_admin_menu', [ ElectronicLimitSettings::class, 'network_menu' ] ), 'network settings menu registered' );
+			$this->same( 10, has_action( 'admin_menu', [ ElectronicLimitSettings::class, 'hall_menu' ] ), 'Hall settings menu registered' );
+			$this->configure( null ); set_current_screen( 'dashboard-network' );
+			ElectronicLimitSettings::network_menu();
+			$this->same( 10, has_action( get_plugin_page_hookname( ElectronicLimitSettings::PAGE, 'settings.php' ), [ ElectronicLimitSettings::class, 'render_network' ] ), 'Network Settings submenu routes to guarded screen' );
+			$html = $this->settings_screen( true );
+			$this->ok( str_contains( $html, 'Not configured' ) && str_contains( $html, 'Unavailable' ), 'network page clearly shows missing configuration' );
+			$this->same( false, get_site_option( ElectronicLimit::PLATFORM_OPTION, false ), 'opening network settings creates no 300 or other default' );
+			$this->ok( ! str_contains( $html, 'value="remove"' ), 'network page offers no remove action' );
+			$this->same( true, $this->settings_submit( true, [ 'limit' => '1' ] ), 'Super Admin saves platform minimum' );
+			$this->same( '1', (string) get_site_option( ElectronicLimit::PLATFORM_OPTION ), 'platform minimum persisted' );
+			$this->same( true, $this->settings_submit( true, [ 'limit' => (string) PHP_INT_MAX ] ), 'maximum supported integer accepted' );
+			$this->same( true, $this->settings_submit( true, [ 'limit' => '48' ] ), 'platform maximum saved' );
+			$this->same( true, $this->settings_submit( true, [ 'limit' => '48' ] ), 'unchanged save succeeds without default initialization' );
+			$this->settings_form_save( true, 'save', '48' );
+			$invalid = [ 0, '0', '', null, -1, '-1', 1.5, '1.5', '1e3', '048', '+48', ' 48 ', "48\n", [], true, (string) PHP_INT_MAX . '0', '9223372036854775808', '<b>48</b>' ];
+			foreach ( $invalid as $value ) {
+				$this->error( 'bc_electronic_settings_value', $this->settings_submit( true, [ 'limit' => $value ] ), 'invalid platform input rejected: ' . wp_json_encode( $value ) );
+				$this->same( '48', (string) get_site_option( ElectronicLimit::PLATFORM_OPTION ), 'invalid platform submission preserves stored maximum' );
+			}
+			$this->error( 'bc_electronic_settings_request', $this->settings_submit( true, [ 'bc_limit_action' => 'remove' ] ), 'network maximum cannot be removed by Hall action' );
+			foreach ( array_merge( [ 0 ], array_values( $actors ) ) as $actor ) {
+				wp_set_current_user( $actor );
+				$this->error( 'bc_electronic_settings_denied', $this->settings_submit( true ), 'guest/local role cannot save network setting: ' . $actor );
+				$this->same( '48', (string) get_site_option( ElectronicLimit::PLATFORM_OPTION ), 'denied network save preserves value' );
+				$this->settings_denied_screen( true );
+			}
+			set_current_screen( 'dashboard' ); wp_set_current_user( $actors['manager'] );
+			$this->same( true, current_user_can( 'bc_manage_hall_settings' ), 'owned Hall Manager has existing settings capability' );
+			ElectronicLimitSettings::hall_menu();
+			$this->same( 10, has_action( get_plugin_page_hookname( ElectronicLimitSettings::PAGE, 'woocommerce' ), [ ElectronicLimitSettings::class, 'render_hall' ] ), 'WooCommerce Hall submenu routes to guarded screen' );
+			$html = $this->settings_screen( false );
+			$this->ok( str_contains( $html, 'Absent — use platform maximum' ) && str_contains( $html, 'Effective Hall limit' ), 'Hall screen labels absent override and effective value' );
+			$this->same( false, get_option( ElectronicLimit::HALL_OPTION, false ), 'Hall GET does not create an override' );
+			$b_before = $this->snapshot( $b['site'] );
+			$this->same( true, $this->settings_submit( false, [ 'limit' => '1' ] ), 'authorized Hall Manager saves minimum override' );
+			$this->same( 1, ElectronicLimit::effective_limit(), 'saved Hall minimum takes effect' );
+			$this->same( true, $this->settings_submit( false, [ 'limit' => '99' ] ), 'Hall may store override above platform without clamping' );
+			$this->settings_form_save( false, 'save', '99' );
+			$this->same( 48, ElectronicLimit::effective_limit(), 'higher stored override is dynamically bounded' );
+			$this->settings_override_notice();
+			foreach ( $invalid as $value ) {
+				$this->error( 'bc_electronic_settings_value', $this->settings_submit( false, [ 'limit' => $value ] ), 'invalid Hall input rejected: ' . wp_json_encode( $value ) );
+				$this->same( '99', (string) get_option( ElectronicLimit::HALL_OPTION ), 'invalid Hall submission preserves override' );
+			}
+			foreach ( [ true, false ] as $network ) {
+				wp_set_current_user( $network ? $this->admin : $actors['manager'] ); set_current_screen( $network ? 'dashboard-network' : 'dashboard' );
+				foreach ( [ '', 'invalid', [] ] as $nonce ) { $this->error( 'bc_electronic_settings_nonce', $this->settings_submit( $network, [ '_wpnonce' => $nonce ] ), 'missing/invalid nonce refused' ); }
+				$this->error( 'bc_electronic_settings_request', $this->settings_submit( $network, [], 'GET' ), 'GET cannot save' );
+				$this->error( 'bc_electronic_settings_request', $this->settings_submit( $network, [], 'PUT' ), 'non-POST cannot save' );
+				foreach ( [ 'site_id', 'blog_id', 'hall_id', 'network_id', 'actor_user_id' ] as $key ) {
+					$this->error( 'bc_electronic_settings_request', $this->settings_submit( $network, [ $key => $b['site'] ] ), 'submitted identity/scope rejected: ' . $key );
+				}
+			}
+			foreach ( [ 0, $actors['operator'], $actors['customer'], $actors['wp_admin'], $actors['shop_manager'] ] as $actor ) {
+				wp_set_current_user( $actor );
+				$this->error( 'bc_electronic_settings_denied', $this->settings_submit( false ), 'guest/non-manager cannot save Hall override' );
+				$this->error( 'bc_electronic_settings_denied', $this->settings_submit( false, [ 'bc_limit_action' => 'remove' ] ), 'guest/non-manager cannot remove Hall override' );
+				$this->settings_denied_screen( false );
+			}
+			wp_set_current_user( $actors['manager'] ); $nonce_a = $this->settings_nonce( false );
+			switch_to_blog( $b['site'] );
+			try { $this->error( 'bc_electronic_settings_denied', $this->settings_submit( false ), 'Hall A Manager has no Hall B authority' ); }
+			finally { restore_current_blog(); }
+			$this->same( $b_before, $this->snapshot( $b['site'] ), 'Hall A settings requests leave every Hall B table byte-identical' );
+			wp_set_current_user( $this->admin );
+			$this->settings_grant( $b['site'], $actors['manager'], 'bc_hall_manager' );
+			wp_set_current_user( $actors['manager'] ); switch_to_blog( $b['site'] );
+			try {
+				$this->error( 'bc_electronic_settings_nonce', $this->settings_submit( false, [ '_wpnonce' => $nonce_a ] ), 'multi-Hall Manager cannot reuse Hall A nonce in B' );
+				$this->same( true, $this->settings_submit( false, [ 'limit' => '17' ] ), 'fresh Hall B form saves only B' );
+				$this->same( 17, ElectronicLimit::effective_limit(), 'Hall B effective override is independent' );
+			} finally { restore_current_blog(); }
+			$this->same( '99', (string) get_option( ElectronicLimit::HALL_OPTION ), 'Hall A override untouched by B save' );
+			$this->same( true, $this->settings_submit( false, [ 'bc_limit_action' => 'remove' ] ), 'explicit Hall removal succeeds' );
+			$this->settings_form_save( false, 'remove' );
+			$this->same( false, get_option( ElectronicLimit::HALL_OPTION, false ), 'removal deletes option rather than storing zero/blank' );
+			$this->same( 48, ElectronicLimit::effective_limit(), 'absent override inherits platform' );
+			$this->same( true, $this->settings_submit( false, [ 'bc_limit_action' => 'remove' ] ), 'repeated removal harmless' );
+			$this->same( true, $this->settings_submit( false, [ 'limit' => '99' ] ), 'override restored for lowering test' );
+			// UI rendering escapes corrupt stored data and does not silently repair it.
+			update_option( ElectronicLimit::HALL_OPTION, '<script>bad</script>' );
+			$html = $this->settings_screen( false );
+			$this->ok( str_contains( $html, '&lt;script&gt;bad&lt;/script&gt;' ) && ! str_contains( $html, '<script>bad</script>' ) && str_contains( $html, 'Unavailable' ), 'invalid saved value escaped and effective limit unavailable' );
+			$this->same( '<script>bad</script>', get_option( ElectronicLimit::HALL_OPTION ), 'render leaves malformed saved value unchanged' );
+			$this->same( true, $this->settings_submit( false, [ 'limit' => '99' ] ), 'authorized correction repairs malformed override' );
+			foreach ( [ false, true ] as $network ) {
+				wp_set_current_user( $network ? $this->admin : $actors['manager'] ); set_current_screen( $network ? 'dashboard-network' : 'dashboard' );
+				$table = $network ? $wpdb->sitemeta : $wpdb->options;
+				foreach ( [ 'SELECT', 'UPDATE' ] as $statement ) {
+					$fail = static fn( $sql ) => str_starts_with( $sql, $statement . ' ' ) && str_contains( $sql, '`' . $table . '`' ) ? 'SELECT * FROM bc_fixture_missing_limit_setting' : $sql;
+					$quiet = $wpdb->suppress_errors( true ); add_filter( 'query', $fail );
+					try { $this->error( 'bc_electronic_settings_storage', $this->settings_submit( $network ), 'unreadable/failed settings storage never claims success' ); }
+					finally { remove_filter( 'query', $fail ); $wpdb->suppress_errors( $quiet ); }
+					$this->same( $network ? '48' : '99', (string) ( $network ? get_site_option( ElectronicLimit::PLATFORM_OPTION ) : get_option( ElectronicLimit::HALL_OPTION ) ), 'failed storage leaves previous setting intact' );
+				}
+			}
+			wp_set_current_user( 0 ); $this->clear();
+			$this->ok( is_string( CustomerCart::add( $this->selection( $a, 'digital' ) ) ), 'guest adds 36 faces under admin-configured 48 limit' );
+			$this->checkout_paths( true, 'admin-configured original limit' );
+			wp_set_current_user( $this->admin ); set_current_screen( 'dashboard-network' );
+			$this->settings_form_save( true, 'save', '35' );
+			set_current_screen( 'dashboard' ); wp_set_current_user( $actors['manager'] );
+			$html = $this->settings_screen( false );
+			$this->ok( str_contains( $html, '<td>99</td>' ) && str_contains( $html, '<td>35</td>' ), 'Hall screen shows unchanged saved 99 and effective 35' );
+			$this->ok( str_contains( $html, 'Your Hall override is saved as 99, but the platform maximum is 35. This Hall is currently limited to 35 digital faces per Game Type in a customer selection.' ), 'later visit notice uses newly lowered platform value without rewriting override' );
+			$this->same( '99', (string) get_option( ElectronicLimit::HALL_OPTION ), 'lower platform never rewrites saved override' );
+			wp_set_current_user( 0 );
+			$this->checkout_paths( false, 'admin lowered platform under an existing digital cart' );
+			$this->clear();
+			$this->error( 'bc_electronic_limit_exceeded', CustomerCart::add( $this->selection( $a, 'digital' ) ), 'new digital add also sees saved lower platform' );
+			$this->ok( is_string( CustomerCart::add( $this->selection( $a, 'paper' ) ) ), 'Paper unaffected by lower setting' );
+			$this->ok( is_string( WC()->cart->add_to_cart( $a['merch'], 10 ) ), 'merchandise unaffected by lower setting' );
+			$this->checkout_paths( true, 'Paper and merchandise after admin platform reduction' );
+			$this->clear();
+			wp_set_current_user( $this->admin ); set_current_screen( 'dashboard' );
+			$this->same( true, $this->settings_submit( false, [ 'limit' => '37' ] ), 'Platform Admin can configure current Hall' );
+			$this->error( 'bc_electronic_settings_denied', $this->settings_submit( true ), 'network writer unavailable in Hall admin context' );
+			set_current_screen( 'dashboard-network' );
+			$this->error( 'bc_electronic_settings_denied', $this->settings_submit( false ), 'Hall writer unavailable in Network Admin context' );
+			switch_to_blog( get_main_site_id() ); set_current_screen( 'dashboard' );
+			try { $this->error( 'bc_electronic_settings_denied', $this->settings_submit( false ), 'main site is not a Hall' ); }
+			finally { restore_current_blog(); }
+		} finally {
+			$GLOBALS['current_screen'] = $old_screen; $_SERVER['REQUEST_METHOD'] = $old_method; $_POST = $old_post; wp_set_current_user( 0 );
+		}
+	}
+
+	private function settings_grant( int $site, int $user, string $role ): void {
+		global $wpdb;
+		if ( $site <= 4 || ! in_array( $site, $this->sites, true ) || $this->token !== get_blog_option( $site, 'bc_faces_test_owner' )
+			|| ! in_array( $user, $this->users, true ) || $this->token !== get_user_meta( $user, 'bc_faces_test_owner', true ) ) { throw new RuntimeException( 'Settings role fixture ownership refused.' ); }
+		// Same owned-user setup as package-addons-admin.php; do not disable the staff writer guard.
+		$key = $wpdb->get_blog_prefix( $site ) . 'capabilities';
+		$wpdb->delete( $wpdb->usermeta, [ 'user_id' => $user, 'meta_key' => $key ] );
+		if ( 1 !== $wpdb->insert( $wpdb->usermeta, [ 'user_id' => $user, 'meta_key' => $key, 'meta_value' => serialize( [ $role => true ] ) ] ) ) { throw new RuntimeException( 'Settings role fixture failed.' ); }
+		clean_user_cache( $user );
+	}
+
+	private function settings_nonce( bool $network ): string {
+		return wp_create_nonce( 'bingocommerce_electronic_limit:' . ( $network ? 'network:' . get_current_network_id() : 'hall:' . get_current_blog_id() ) );
+	}
+	private function settings_form_save( bool $network, string $action, ?string $value = null ): string {
+		$dom = new DOMDocument(); @$dom->loadHTML( $this->settings_screen( $network ), LIBXML_NONET );
+		$forms = ( new DOMXPath( $dom ) )->query( '//form[input[@name="bc_limit_action" and @value="' . $action . '"]]' );
+		$this->same( 1, $forms->length, 'native settings screen renders the expected form' );
+		if ( 1 !== $forms->length ) { throw new RuntimeException( 'Settings form missing.' ); }
+		$posted = [];
+		foreach ( $forms->item( 0 )->getElementsByTagName( 'input' ) as $input ) {
+			if ( $input->hasAttribute( 'name' ) ) { $posted[ $input->getAttribute( 'name' ) ] = $input->getAttribute( 'value' ); }
+		}
+		if ( null !== $value ) { $posted['limit'] = $value; }
+		$_SERVER['REQUEST_METHOD'] = 'POST'; $_POST = wp_slash( $posted ); ob_start();
+		try { $network ? ElectronicLimitSettings::render_network() : ElectronicLimitSettings::render_hall(); $html = ob_get_contents(); }
+		finally { ob_end_clean(); $_POST = []; }
+		$this->ok( str_contains( $html, 'notice-success' ), 'posted native form passes nonce and reports a confirmed save' );
+		$this->same( $value, $network ? get_site_option( ElectronicLimit::PLATFORM_OPTION, null ) : get_option( ElectronicLimit::HALL_OPTION, null ), 'form round trip persists exact value or removes override' );
+		return $html;
+	}
+	private function settings_override_notice(): void {
+		$platform = get_site_option( ElectronicLimit::PLATFORM_OPTION );
+		$override = get_option( ElectronicLimit::HALL_OPTION );
+		try {
+			$this->configure( '300' );
+			foreach ( [ '350', '300', '250' ] as $value ) {
+				$above = '350' === $value;
+				$post = $this->settings_form_save( false, 'save', $value );
+				$get = $this->settings_screen( false );
+				$expected = 'Your Hall override is saved as 350, but the platform maximum is 300. This Hall is currently limited to 300 digital faces per Game Type in a customer selection.';
+				foreach ( [ 'after save' => $post, 'later visit' => $get ] as $when => $html ) {
+					$this->same( $above ? 1 : 0, substr_count( $html, 'Your Hall override is saved as ' ), "override $value $when shows notice only above platform" );
+					if ( $above ) { $this->ok( str_contains( $html, $expected ) && str_contains( $html, 'notice notice-info' ), "$when renders exact notice with actual saved and effective values" ); }
+				}
+				$this->same( $value, get_option( ElectronicLimit::HALL_OPTION ), 'notice rendering never clamps the saved override' );
+				$this->same( min( 300, (int) $value ), ElectronicLimit::effective_limit(), 'notice leaves existing effective-limit calculation unchanged' );
+			}
+			foreach ( [ [ '300', null ], [ '300', 'bad' ], [ '0', '350' ], [ null, '350' ] ] as [ $maximum, $hall ] ) {
+				$this->configure( $maximum, $hall );
+				$this->same( false, str_contains( $this->settings_screen( false ), 'Your Hall override is saved as ' ), 'absent or invalid configuration never displays a valid-limit notice' );
+			}
+		} finally { $this->configure( $platform, $override ); }
+	}
+	private function settings_submit( bool $network, array $values = [], string $method = 'POST' ): mixed {
+		$_SERVER['REQUEST_METHOD'] = $method;
+		return ElectronicLimitSettings::handle_request( array_replace( [ '_wpnonce' => $this->settings_nonce( $network ), 'bc_limit_action' => 'save', 'limit' => '12' ], $values ), $network );
+	}
+	private function settings_screen( bool $network ): string {
+		$_SERVER['REQUEST_METHOD'] = 'GET'; ob_start();
+		try { $network ? ElectronicLimitSettings::render_network() : ElectronicLimitSettings::render_hall(); return ob_get_contents(); }
+		finally { ob_end_clean(); }
+	}
+	private function settings_denied_screen( bool $network ): void {
+		$handler = static fn() => static function () { throw new RuntimeException( 'fixture-settings-denied' ); };
+		add_filter( 'wp_die_handler', $handler ); $denied = false;
+		try { $this->settings_screen( $network ); }
+		catch ( RuntimeException $error ) { $denied = 'fixture-settings-denied' === $error->getMessage(); }
+		finally { remove_filter( 'wp_die_handler', $handler ); }
+		$this->same( true, $denied, 'unauthorized settings page access denied' );
 	}
 
 	private function contributions( array $f ): void {
@@ -305,6 +529,17 @@ final class CustomerElectronicLimitsTest {
 		if ( WC()->session ) { WC()->session->destroy_session(); remove_action( 'shutdown', [ WC()->session, 'save_data' ], 20 ); }
 		while ( ms_is_switched() ) { restore_current_blog(); }
 		wp_set_current_user( $this->admin );
+		foreach ( $this->users as $user ) {
+			if ( $this->token !== get_user_meta( $user, 'bc_faces_test_owner', true ) ) { throw new RuntimeException( 'Settings actor cleanup ownership refused.' ); }
+			foreach ( $this->sites as $site ) {
+				if ( $site <= 4 || $this->token !== get_blog_option( $site, 'bc_faces_test_owner' ) ) { throw new RuntimeException( 'Settings role cleanup ownership refused.' ); }
+				$wpdb->delete( $wpdb->usermeta, [ 'user_id' => $user, 'meta_key' => $wpdb->get_blog_prefix( $site ) . 'capabilities' ] );
+			}
+			clean_user_cache( $user );
+			wpmu_delete_user( $user );
+			$this->same( false, get_userdata( $user ), 'owned disposable settings actor deleted' );
+			$this->same( [], get_user_meta( $user ), 'owned settings actor leaves no orphan metadata' );
+		}
 		foreach ( $this->sites as $site ) {
 			if ( $site <= 4 || $this->token !== get_blog_option( $site, 'bc_faces_test_owner' ) ) { throw new RuntimeException( 'Cleanup ownership guard refused.' ); }
 			$prefix = $wpdb->get_blog_prefix( $site );

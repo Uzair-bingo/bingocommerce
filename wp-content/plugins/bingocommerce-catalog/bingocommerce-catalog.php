@@ -32,6 +32,7 @@ require_once BINGOCOMMERCE_CATALOG_PATH . 'src/PackageService.php';
 require_once BINGOCOMMERCE_CATALOG_PATH . 'src/PackageAddonService.php';
 require_once BINGOCOMMERCE_CATALOG_PATH . 'src/CustomerCartCatalog.php';
 require_once BINGOCOMMERCE_CATALOG_PATH . 'src/ElectronicLimit.php';
+require_once BINGOCOMMERCE_CATALOG_PATH . 'src/ElectronicLimitSettings.php';
 require_once BINGOCOMMERCE_CATALOG_PATH . 'src/GameTypeAdmin.php';
 require_once BINGOCOMMERCE_CATALOG_PATH . 'src/PlayProductAdmin.php';
 require_once BINGOCOMMERCE_CATALOG_PATH . 'src/PackageAdmin.php';

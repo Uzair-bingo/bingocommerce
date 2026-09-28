@@ -3081,6 +3081,56 @@
   limits remain unfinished. No real Hall, fixture ownership guard, schema or
   Woo source was changed. Five modified files and one new test worker remain
   unstaged/uncommitted; no push or deployment.
+- **[2026-09-28] BR-064 electronic-limit administration — implemented, isolated-verified:**
+  Started clean on `feature/portal-sync` at
+  `d6d685f75657934219bce5e589e926abef29990e`, with an empty index.
+  Catalog now registers Electronic Limits under Network Admin → Settings and
+  current-Hall WooCommerce administration. Platform saves require native Super
+  Admin and `manage_network_options`; Hall saves/removal require the existing
+  Hall context and `bc_manage_hall_settings` or Super Admin. Same-page POSTs
+  recheck authority and context-bound WordPress nonces and reject submitted
+  tenant/actor IDs. No capabilities or role guards were changed.
+  Saves accept canonical positive whole numbers through `PHP_INT_MAX`, using
+  native network/site option APIs and fresh readback. Invalid submissions do
+  not change stored values. Explicit Hall removal deletes the option; blank
+  input cannot remove it. Screens show saved values separately from the current
+  effective ceiling. No implicit 300, migration, clamp/rewrite of a saved Hall
+  override, counter or cached effective limit was introduced. The existing
+  `ElectronicLimit` resolver, face aggregation and purchase hooks are unchanged.
+  Serial isolated `bingocommerce_state_recon` verification passed:
+  electronic/settings **651/651**, cart **140/140**, order/refund/retry with
+  Digital Tickets loaded **1,098/1,098**, entitlement/QR **1,330/1,330** —
+  **3,219 passed, 0 failed**, all final runs exit 0. Coverage includes native
+  rendered form POSTs/nonces, submenu registration, authorized/rejected roles,
+  invalid and failed-storage saves, main/network/Hall boundaries, two-Hall
+  isolation, removal, and a platform decrease from 48 to 35 while a Hall keeps
+  override 99. Both checkout paths reject the existing 36-face guest cart;
+  new digital adds also fail while Paper and merchandise remain valid.
+  Four changed/new PHP files pass syntax checks; `git diff --check` passes.
+  Persistent fixture Halls 2/3/4 remain unchanged and final-run disposable Halls,
+  users and user metadata were removed. An initial harness `wp_die` interrupted
+  cleanup because native staff-role guards rejected fixture role assignment;
+  the existing ownership-checked fixture pattern fixed setup without weakening
+  those guards. Its owned leftovers were removed. The pre-interruption network
+  setting was not logged, so the isolated fixture maximum was retained at 48;
+  subsequent runs restored that baseline rather than guessing its earlier value.
+  These are native PHP admin rendering/controller tests, not live browser/admin
+  deployment verification. No real Hall, payment, retry, refund, entitlement,
+  QR or storefront behavior changed. Seven modified files and one new settings
+  class remain unstaged/uncommitted; no push or deployment.
+- **[2026-09-28] BR-064 higher-override notice follow-up — isolated-verified:**
+  Preserved the existing uncommitted settings work at `d6d685f` on
+  `feature/portal-sync`. The Hall settings page now persistently explains when
+  a valid saved override exceeds the valid platform maximum, using actual saved,
+  platform and effective values. The notice appears after save and on later
+  visits, not for equal/lower, absent or invalid values. Higher saves remain
+  allowed; no resolver or purchase-rule changes were made. The full focused
+  electronic/settings suite passed **679/679** on `bingocommerce_state_recon`,
+  including exact 350/300 wording and a later platform decrease. Configuration
+  was restored, disposable Halls/users were removed, and persistent fixture
+  Halls 2/3/4 remained unchanged. Changed PHP syntax and `git diff --check` pass.
+  Only the settings renderer, focused tests and this status were amended in
+  this follow-up; all existing work remains unstaged/uncommitted.
 - No Hall Staff Management work currently in progress.
 - Package Increment 1 and the legacy Session Increment 1 remain COMPLETE and
   are recorded under Done. Package Add-ons Increment 1 is approved by
@@ -3169,9 +3219,10 @@ Everything below is tracked work that is NOT a blocker to that demo.
    BR-081 customer cart enforcement, BR-082 electronic checkout validation and
    BR-083 order recording are implemented. Customer selection screens and
    existing-order payment/retry enforcement remain outstanding.
-4. Redemption accumulation (BR-045) and authorized configuration writers/UI
-   (BR-064). BR-082 implements the read-only effective-limit resolver and
-   electronic validation at cart addition and final classic/Store API checkout;
+4. Redemption accumulation (BR-045). BR-064 authorized configuration screens
+   and save/removal actions are implemented and isolated-tested. BR-082 keeps
+   the read-only effective-limit resolver and electronic validation at cart
+   addition and final classic/Store API checkout;
    BR-083 adds exact order facts; existing-order payment/retry remains separate.
 5. QR email delivery, Android redemption (ADR-030) and remaining lifecycle
    reconciliation. The first positive-total online QR/customer-order-view

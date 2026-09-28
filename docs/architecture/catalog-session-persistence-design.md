@@ -1211,8 +1211,37 @@ Hall override is distinct from an unreadable one. Catalog reads the current
 Hall's network `sitemeta` row and per-site `options` row through parameterized
 `$wpdb` SELECTs, checking errors and duplicate network rows. This avoids both
 stale option-cache values and option APIs treating a failed read as absence.
-It neither repairs settings nor persists an effective limit. BR-064 continues
-to govern any future configuration writer.
+It neither repairs settings nor persists an effective limit.
+
+BR-064 settings administration is now implemented by Catalog's
+`ElectronicLimitSettings`, separately from the unchanged purchase resolver:
+
+- Network Admin → Settings → Electronic Limits requires native Super Admin
+  authority (BR-026) and `manage_network_options`. It saves only the current
+  network's `bc_platform_electronic_maximum`; there is no remove/default action.
+- Current Hall → WooCommerce → Electronic Limits requires
+  `HallContext::is_hall()` and `bc_manage_hall_settings` (or Super Admin).
+  Network Admin and the main site are not Hall settings contexts. It saves only
+  the current site's override, or deletes that option through a separate,
+  explicit Remove action. No Hall switcher or submitted tenant ID is accepted.
+- Both same-page save boundaries recheck authentication, context, capability,
+  POST method and a native WordPress nonce bound to the network or Hall. Only
+  canonical positive integers within `PHP_INT_MAX` are accepted; zero, blank,
+  negative, decimal, exponent, padded, overflow and non-scalar inputs leave the
+  existing setting unchanged. Clearing the input is not removal.
+- Native WordPress option APIs perform writes/cache invalidation. Fresh,
+  parameterized reads distinguish absence from unreadable/duplicate storage,
+  verify the write, and show the actual saved platform/override values. The
+  Hall screen calls the existing resolver for its separately labelled effective
+  limit. A stored override above the platform ceiling is retained, never clamped
+  or rewritten; a later lower ceiling immediately bounds digital validation.
+
+No default, migration, counter, effective-limit cache or purchase-rule change
+is introduced. Missing/invalid settings remain visible; only an authorized
+explicit save/removal corrects them. Isolated tests cover real rendered forms,
+role/nonce/context rejection, storage failures, two-Hall isolation, removal and
+both checkout validation paths after a platform reduction. They do not claim
+live browser/network-admin deployment verification.
 
 ## 7. Plugin and Migration Ownership
 
@@ -1228,7 +1257,8 @@ Owns:
 - WooCommerce product-link validation and BR-032/BR-065 projections.
 - Package composition plus implemented add-on price, quantity, lifecycle and
   compatibility validation.
-- Hall override configuration and the effective-limit resolver.
+- BR-064 network maximum and Hall override settings screens/writers, plus the
+  read-only effective-limit resolver.
 - Starter WooCommerce Product/Bingo Play Product copy logic owned by Catalog
   when that deferred mechanism exists; ADR-042 MVP runs no starter copy.
   Game Types instead synchronize under ADR-035.
@@ -1259,8 +1289,6 @@ Owns:
 
 Owns:
 
-- Platform Admin mutation and network-scope initialization/versioning of the
-  platform electronic maximum option.
 - Under ADR-042: actual WordPress Multisite site creation, WooCommerce/site
   initialization, triggering existing per-site BingoCommerce migrations and
   role provisioning, and returning a structured setup result to
