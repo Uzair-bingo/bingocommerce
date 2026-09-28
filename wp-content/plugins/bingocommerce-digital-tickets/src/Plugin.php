@@ -23,7 +23,7 @@ final class Plugin {
 		// an unavailable snapshot boundary, not silently reinterpret it as Paper.
 		add_action( 'woocommerce_payment_complete', [ EntitlementSnapshot::class, 'on_payment_complete' ], 10 );
 		add_action( 'bingocommerce_package_refunded', [ EntitlementVoiding::class, 'on_package_refunded' ], 10, 3 );
-		add_action( 'woocommerce_order_status_cancelled', [ EntitlementVoiding::class, 'on_cancelled' ], 10 );
+		add_action( 'woocommerce_order_status_cancelled', [ EntitlementVoiding::class, 'on_cancelled' ], 10, 3 );
 		add_action( 'admin_init', [ Migrations::class, 'maybe_migrate_current_site' ] );
 		add_action( 'network_admin_menu', [ Migrations::class, 'maybe_migrate_network' ], 7 );
 		add_action( 'wp_initialize_site', [ Migrations::class, 'provision_new_site' ], 50 );

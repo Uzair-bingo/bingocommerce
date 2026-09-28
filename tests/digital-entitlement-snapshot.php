@@ -59,7 +59,7 @@ final class DigitalEntitlementSnapshotTest {
 			switch_to_blog( $a['site'] );
 			Migrations::maybe_migrate_current_site();
 			$this->same( true, Migrations::verify_current_site_schema(), 'existing disposable Hall migrated and verified' );
-			$this->same( 1, get_option( Migrations::VERSION_OPTION ), 'per-plugin Hall schema version' );
+			$this->same( Migrations::DB_VERSION, get_option( Migrations::VERSION_OPTION ), 'per-plugin Hall schema version' );
 			$this->same( true, Migrations::migrate_current_site(), 'migration is idempotent' );
 			restore_current_blog();
 			$b = $this->fixture( 'b' ); // Normal wp_initialize_site provisioning.
@@ -87,9 +87,12 @@ final class DigitalEntitlementSnapshotTest {
 				}
 			}
 			$this->same( [], $this->errors, 'normal paid Digital/Hybrid cases have no snapshot errors' );
+			$this->upgrade( $a );
 			$this->unknown_and_excluded( $a, $b );
 			$this->storage_failures( $a );
 			$this->voiding( $a, $b );
+			$this->event_ordering( $a, $b );
+			$this->earlier_cancellation_payment( $a, $b );
 			$this->history( $a );
 			$this->isolation( $a, $b );
 			$this->same( 0, get_current_user_id(), 'all purchase cases run genuinely signed out' );
@@ -218,6 +221,195 @@ final class DigitalEntitlementSnapshotTest {
 		$this->same( 'void', $this->row( $id )['status'], 'event never reactivates a future void record' );
 	}
 
+	private function upgrade( array $a ): void {
+		global $wpdb;
+		if ( $a['site'] !== get_current_blog_id() || $this->token !== get_option( 'bc_entitlement_test_owner' ) ) { throw new RuntimeException( 'Upgrade fixture ownership guard refused.' ); }
+		$before = $wpdb->get_results( $wpdb->prepare( 'SELECT * FROM %i ORDER BY order_id', Migrations::table() ), ARRAY_A );
+		$this->same( 4, count( $before ), 'upgrade starts with populated schema-v1 entitlement table' );
+		$this->same( '0', $wpdb->get_var( $wpdb->prepare( 'SELECT COUNT(*) FROM %i', Migrations::voids_table() ) ), 'upgrade fixture has no markers to discard' );
+		$wpdb->query( $wpdb->prepare( 'DROP TABLE %i', Migrations::voids_table() ) );
+		update_option( Migrations::VERSION_OPTION, 1 );
+		$this->same( true, Migrations::migrate_current_site(), 'schema-v1 upgrade creates indexed void marker table' );
+		$this->same( 2, get_option( Migrations::VERSION_OPTION ), 'schema-v2 marker version persisted' );
+		$this->same( true, Migrations::migrate_current_site(), 'schema-v2 upgrade is repeatable' );
+		$this->same( $before, $wpdb->get_results( $wpdb->prepare( 'SELECT * FROM %i ORDER BY order_id', Migrations::table() ), ARRAY_A ), 'upgrade preserves all paid snapshot fields' );
+	}
+
+	private function event_ordering( array $a, array $b ): void {
+		$b_before = $this->hall_snapshot( $b['site'] );
+		$errors = count( $this->errors ); $void_errors = count( $this->void_errors );
+		foreach ( [ 'classic', 'store' ] as $path ) {
+			foreach ( [ 'package_refund', 'cancellation' ] as $cause ) {
+				foreach ( [ false, true ] as $payment_first ) {
+					$label = "$path $cause " . ( $payment_first ? 'payment first' : 'void first' );
+					$id = $this->order( $a, 'hybrid', $path ); $before = $this->order_snapshot( $id );
+					if ( $payment_first ) { $this->confirm( $id ); }
+					$row = $this->row( $id ); $this->native_void( $id, $cause, 'store' === $path );
+					$marker = $this->marker( $id ); $facts = wc_get_order( $id )->get_meta( 'bc_purchase', true );
+					foreach ( [ 'session_id', 'package_id', 'selection_id' ] as $key ) { $this->same( (string) $facts[ $key ], $marker[ $key ] ?? null, "$label marker exact $key" ); }
+					$this->same( $cause, $marker['cause'] ?? null, "$label durable terminal cause" );
+					$this->same( [], array_intersect( [ 'digital_faces_json', 'confirmed_at' ], array_keys( $marker ?? [] ) ), 'marker invents neither digital faces nor payment confirmation' );
+					if ( null !== $row ) { $row['status'] = 'void'; }
+					$this->same( $row, $this->row( $id ), "$label snapshot absent or unchanged except void status" );
+					// Woo may accept payment from cancelled/on-hold. Observe it; never alter that behavior.
+					$this->confirm( $id );
+					do_action( 'woocommerce_payment_complete', $id );
+					wc_get_order( $id )->payment_complete( 'native-repeat' );
+					$this->same( $row, $this->row( $id ), "$label late and repeated payment cannot create/reactivate entitlement" );
+					$this->same( $marker, $this->marker( $id ), "$label repeated payment preserves terminal marker" );
+					$this->same( $before, $this->order_snapshot( $id ), "$label lines, saved facts, amounts, coupons, taxes untouched" );
+				}
+			}
+			foreach ( [ 'merchandise', 'rejected' ] as $case ) {
+				$id = $this->order( $a, 'digital', $path ); $before = $this->order_snapshot( $id );
+				$lines = $this->refund_lines( wc_get_order( $id ), 'rejected' === $case );
+				if ( 'rejected' === $case ) { $key = array_key_last( $lines ); $lines = [ $key => $lines[ $key ] ]; }
+				wp_set_current_user( $this->admin );
+				try { $refund = $this->refund( $id, $lines, false, 'store' === $path ); }
+				finally { wp_set_current_user( 0 ); }
+				$this->same( 'merchandise' === $case, $refund instanceof WC_Order_Refund, "$path $case native refund result before payment" );
+				$this->same( null, $this->marker( $id ), "$path $case cannot block future entitlement" );
+				$this->confirm( $id );
+				$this->same( 'active', $this->row( $id )['status'] ?? null, "$path $case later payment still creates active entitlement" );
+				$this->same( $before, $this->order_snapshot( $id ), "$path $case preserves original purchase and amounts" );
+			}
+		}
+		// Controlled interleavings use real Woo events, not mocks of our observers.
+		foreach ( [ 'package_refund', 'cancellation' ] as $cause ) {
+			foreach ( [ 'snapshot_insert', 'marker_insert' ] as $pause ) {
+				$id = $this->order( $a ); $before = $this->order_snapshot( $id ); $nested = false;
+				$table = 'snapshot_insert' === $pause ? Migrations::table() : Migrations::voids_table();
+				$race = function ( $sql ) use ( $id, $cause, $pause, $table, &$nested ) {
+					if ( ! $nested && str_starts_with( $sql, 'INSERT INTO `' . $table . '`' ) ) {
+						$nested = true;
+						if ( 'snapshot_insert' === $pause ) { $this->native_void( $id, $cause ); }
+						else { $this->confirm( $id ); }
+					}
+					return $sql;
+				};
+				add_filter( 'query', $race );
+				try {
+					if ( 'snapshot_insert' === $pause ) {
+						$this->same( true, wc_get_order( $id )->payment_complete( 'fixture-interleaved' ), 'native payment call succeeds during interleaving' );
+						$this->same( 'cancellation' === $cause ? 'cancelled' : 'processing', wc_get_order( $id )->get_status(), 'nested native status change is not overwritten by entitlement observers' );
+					}
+					else { $this->native_void( $id, $cause ); }
+				} finally { remove_filter( 'query', $race ); }
+				$this->same( true, $nested, "$cause interleaves at $pause" );
+				$row = $this->row( $id ); $marker = $this->marker( $id );
+				$this->same( 'void', $row['status'] ?? null, "$cause $pause converges to void after both observers finish" );
+				$this->same( $a['faces'], json_decode( $row['digital_faces_json'] ?? '', true ), 'interleaving retains exact saved digital snapshot' );
+				$this->same( $cause, $marker['cause'] ?? null, 'interleaving retains terminal evidence' );
+				// Cancellation during snapshot insertion can leave Woo cancelled; native payment may resume it.
+				$this->confirm( $id ); do_action( 'woocommerce_payment_complete', $id );
+				$this->same( $row, $this->row( $id ), 'interleaved repeated payment cannot reactivate' );
+				$this->same( $marker, $this->marker( $id ), 'interleaved repeated payment cannot overwrite marker' );
+				$this->same( $before, $this->order_snapshot( $id ), 'interleaving leaves Woo purchase/financial record untouched' );
+			}
+		}
+		$this->same( $errors, count( $this->errors ), 'ordered and interleaved events have no snapshot failures' );
+		$this->same( $void_errors, count( $this->void_errors ), 'ordered and interleaved events have no void failures' );
+		foreach ( [ null, [ array_key_first( $a['faces'] ) => 0 ] ] as $totals ) {
+			$id = $this->order( $a ); $order = wc_get_order( $id ); $facts = $order->get_meta( 'bc_purchase', true );
+			if ( null === $totals ) { unset( $facts['digital_faces_by_game_type'] ); }
+			else { $facts['digital_faces_by_game_type'] = $totals; }
+			$order->update_meta_data( 'bc_purchase', $facts ); $order->save(); $before = $this->order_snapshot( $id );
+			$this->native_void( $id, 'cancellation' ); $this->confirm( $id ); do_action( 'woocommerce_payment_complete', $id );
+			$this->same( null, $this->row( $id ), 'unknown saved faces remain absent, never an empty or fabricated snapshot' );
+			$this->same( 'cancellation', $this->marker( $id )['cause'] ?? null, 'terminal marker needs identity, not invented face totals' );
+			$this->same( $before, $this->order_snapshot( $id ), 'unknown saved totals preserved as-is' );
+		}
+		// A marker read error must not be interpreted as absence/permission to activate.
+		global $wpdb;
+		$id = $this->order( $a ); $this->native_void( $id, 'cancellation' ); $marker = $this->marker( $id );
+		$fail = static function ( $sql ) { return str_starts_with( $sql, 'SELECT * FROM `' . Migrations::voids_table() . '` WHERE order_id' ) ? 'SELECT * FROM bc_fixture_absent_marker_table' : $sql; };
+		$quiet = $wpdb->suppress_errors( true ); add_filter( 'query', $fail );
+		try { $this->confirm( $id ); }
+		finally { remove_filter( 'query', $fail ); $wpdb->suppress_errors( $quiet ); }
+		$this->error( $id, 'bc_entitlement_void_failed' );
+		$this->same( null, $this->row( $id ), 'unreadable terminal evidence fails closed without an entitlement' );
+		do_action( 'woocommerce_payment_complete', $id );
+		$this->same( null, $this->row( $id ), 'redelivery after read recovery stays blocked' );
+		$this->same( $marker, $this->marker( $id ), 'read failure and redelivery leave original marker intact' );
+		$this->same( $b_before, $this->hall_snapshot( $b['site'] ), 'all event orderings leave other Hall byte-identical' );
+	}
+
+	private function earlier_cancellation_payment( array $a, array $b ): void {
+		$b_before = $this->hall_snapshot( $b['site'] ); $errors = count( $this->void_errors );
+		foreach ( [ 'classic', 'store' ] as $path ) {
+			foreach ( [ 'reloaded', 'event-object' ] as $source ) {
+				$id = $this->order( $a, 'hybrid', $path ); $before = $this->order_snapshot( $id );
+				$this->same( null, $this->row( $id ), "$path $source starts without entitlement" );
+				$this->same( null, $this->marker( $id ), "$path $source starts without marker" );
+				$calls = 0; $paid_row = null; $transition_seen = null;
+				$early = function ( $order_id, $event_order, $transition ) use ( $id, $source, &$calls, &$paid_row, &$transition_seen ): void {
+					if ( $id !== (int) $order_id ) { return; }
+					++$calls; $transition_seen = $transition;
+					$this->same( 'cancelled', wc_get_order( $id )->get_status(), 'cancellation persisted before priority-5 callback' );
+					$paying_order = 'event-object' === $source ? $event_order : wc_get_order( $id );
+					$this->same( true, $paying_order->payment_complete( 'fixture-early-payment' ), 'earlier callback uses successful native payment_complete' );
+					$paid_row = $this->row( $id );
+					$this->same( 'active', $paid_row['status'] ?? null, 'payment created active snapshot before cancellation observer' );
+					$this->same( null, $this->marker( $id ), 'cancellation marker not yet written at earlier callback' );
+				};
+				add_action( 'woocommerce_order_status_cancelled', $early, 5, 3 );
+				try { $this->native_void( $id, 'cancellation' ); }
+				finally { remove_action( 'woocommerce_order_status_cancelled', $early, 5 ); }
+				$this->same( 1, $calls, 'temporary earlier callback ran once' );
+				$this->same( 'cancelled', $transition_seen['to'] ?? null, 'original transition remains cancellation after nested payment' );
+				$this->same( 'processing', wc_get_order( $id )->get_status(), 'native nested payment status remains unchanged' );
+				$row = $this->row( $id ); $marker = $this->marker( $id );
+				printf( "EARLY CANCELLATION %s %s: entitlement=%s marker=%s\n", $path, $source, $row['status'] ?? 'absent', $marker['cause'] ?? 'absent' );
+				$paid_row['status'] = 'void';
+				$this->same( $paid_row, $row, 'saved cancellation voids snapshot created by earlier callback; all other fields unchanged' );
+				$this->same( 'cancellation', $marker['cause'] ?? null, 'saved cancellation retained despite current paid status' );
+				do_action( 'woocommerce_payment_complete', $id ); wc_get_order( $id )->payment_complete( 'fixture-repeat' );
+				$this->same( $paid_row, $this->row( $id ), 'repeat payment cannot reactivate earlier-callback cancellation' );
+				$this->same( $marker, $this->marker( $id ), 'repeat payment preserves cancellation evidence' );
+				$this->same( $before, $this->order_snapshot( $id ), 'earlier-callback cancellation leaves purchase facts and financials untouched' );
+			}
+		}
+		$this->same( $errors, count( $this->void_errors ), 'saved cancellation remains valid evidence after earlier callback payment' );
+		// Consuming transition evidence must not accept an ID-only/malformed signal,
+		// another Hall's object, or an unsaved cancellation status.
+		foreach ( [ 'id-only', 'wrong-transition', 'wrong-id', 'foreign-facts', 'unsaved-status', 'failed-save' ] as $case ) {
+			$id = $this->order( $a ); $this->confirm( $id ); $row = $this->row( $id ); $before = $this->order_snapshot( $id );
+			// Woo order cloning is shallow: read separate metadata before deliberately corrupting fixture input.
+			$event_order = clone wc_get_order( $id ); $event_order->read_meta_data( true );
+			$transition = [ 'from' => 'processing', 'to' => 'cancelled' ];
+			if ( 'wrong-transition' === $case ) { $transition['to'] = 'processing'; }
+			if ( 'wrong-id' === $case ) { $event_order->set_id( $id + 1000 ); }
+			if ( 'foreign-facts' === $case ) { $facts = $event_order->get_meta( 'bc_purchase', true ); $facts['site_id'] = $b['site']; $event_order->update_meta_data( 'bc_purchase', $facts ); }
+			if ( 'unsaved-status' === $case ) { $event_order->set_status( 'cancelled' ); }
+			if ( 'failed-save' === $case ) {
+				$fail = static function ( $order ) use ( $id ): void { if ( $order->get_id() === $id && $order->has_status( 'cancelled' ) ) { throw new RuntimeException( 'Fixture refused cancellation persistence.' ); } };
+				add_action( 'woocommerce_before_order_object_save', $fail );
+				try { $event_order->update_status( 'cancelled' ); }
+				finally { remove_action( 'woocommerce_before_order_object_save', $fail ); }
+			} elseif ( 'id-only' === $case ) { do_action( 'woocommerce_order_status_cancelled', $id ); }
+			else { do_action( 'woocommerce_order_status_cancelled', $id, $event_order, $transition ); }
+			$this->same( null, $this->marker( $id ), "$case cannot manufacture cancellation evidence" );
+			$this->same( $row, $this->row( $id ), "$case leaves original entitlement unchanged" );
+			$this->same( 'processing', wc_get_order( $id )->get_status(), "$case leaves saved Woo status unchanged" );
+			$this->same( $before, $this->order_snapshot( $id ), "$case leaves saved purchase/financial record unchanged" );
+			$this->same( [ 'bc_entitlement_void_failed', $id, $a['site'] ], end( $this->void_errors ), "$case reports current-Hall evidence failure" );
+		}
+		$this->same( $b_before, $this->hall_snapshot( $b['site'] ), 'earlier-callback cancellation leaves other Hall byte-identical' );
+	}
+
+	private function native_void( int $id, string $cause, bool $rest = false ): void {
+		wp_set_current_user( $this->admin );
+		try {
+			if ( 'cancellation' === $cause ) {
+				$this->same( true, wc_get_order( $id )->update_status( 'cancelled' ), 'native saved cancellation succeeds' );
+			} else {
+				$refund = $this->refund( $id, $this->refund_lines( wc_get_order( $id ), true ), false, $rest );
+				$this->same( true, $refund instanceof WC_Order_Refund, 'native manual whole-Package refund succeeds without money transport' );
+				$this->same( 1, count( wc_get_order( $id )->get_refunds() ), 'native whole-Package refund persists' );
+			}
+		} finally { wp_set_current_user( 0 ); }
+	}
+
 	private function isolation( array $a, array $b ): void {
 		$this->enter( $b['site'] ); $a_before = $this->hall_snapshot( $a['site'] );
 		$this->same( true, Migrations::verify_current_site_schema(), 'new Hall automatically provisioned' );
@@ -307,7 +499,8 @@ final class DigitalEntitlementSnapshotTest {
 		foreach ( [ 'paper', 'merch', 'digital' ] as $kind ) {
 			$id = $this->order( $a, $kind ); // No payment for Digital: specifically no existing entitlement.
 			wc_get_order( $id )->update_status( 'cancelled' );
-			$this->same( null, $this->row( $id ), "$kind cancellation never creates a row or tombstone" );
+			$this->same( null, $this->row( $id ), "$kind cancellation never invents an entitlement" );
+			$this->same( 'digital' === $kind, null !== $this->marker( $id ), "$kind cancellation records a marker only for a digital selection" );
 		}
 		// A missing snapshot on an otherwise valid paid order must not be invented by refund.
 		$id = $this->order( $a ); $this->confirm( $id );
@@ -315,6 +508,7 @@ final class DigitalEntitlementSnapshotTest {
 		wp_set_current_user( $this->admin ); $result = $this->refund( $id, $this->refund_lines( wc_get_order( $id ), true ) ); wp_set_current_user( 0 );
 		$this->same( true, $result instanceof WC_Order_Refund, 'valid refund without an entitlement remains allowed' );
 		$this->same( null, $this->row( $id ), 'refund never backfills missing entitlement' );
+		$this->same( 'package_refund', $this->marker( $id )['cause'] ?? null, 'refund records block despite missing paid snapshot' );
 		// Identity mismatch does not target another Hall or another selection.
 		foreach ( [ 'site_id', 'package_id', 'selection_id' ] as $field ) {
 			$id = $this->order( $a ); $this->confirm( $id ); $row = $this->row( $id ); $order = wc_get_order( $id ); $facts = $order->get_meta( 'bc_purchase', true );
@@ -370,6 +564,12 @@ final class DigitalEntitlementSnapshotTest {
 		global $wpdb;
 		$row = $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM %i WHERE order_id = %d', Migrations::table(), $id ), ARRAY_A );
 		if ( '' !== $wpdb->last_error ) { throw new RuntimeException( 'Entitlement readback failed.' ); }
+		return $row;
+	}
+	private function marker( int $id ): ?array {
+		global $wpdb;
+		$row = $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM %i WHERE order_id = %d', Migrations::voids_table(), $id ), ARRAY_A );
+		if ( '' !== $wpdb->last_error ) { throw new RuntimeException( 'Void marker readback failed.' ); }
 		return $row;
 	}
 

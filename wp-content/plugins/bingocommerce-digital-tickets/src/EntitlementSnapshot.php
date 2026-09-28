@@ -49,6 +49,12 @@ final class EntitlementSnapshot {
 		if ( (float) $order->get_total( 'edit' ) <= 0 ) { return self::error( 'bc_entitlement_zero_total_out_of_scope' ); }
 		if ( ! $order->is_paid() || ! $order->get_date_paid( 'edit' ) || '' === $order->get_payment_method( 'edit' ) ) { return self::error( 'bc_entitlement_payment_unconfirmed' ); }
 		if ( ! self::valid_facts( $order, $facts ) ) { return self::error( 'bc_entitlement_saved_facts_invalid' ); }
+		if ( 'paper' !== $facts['package_type'] ) {
+			$schema = Migrations::verify_current_site_schema();
+			if ( is_wp_error( $schema ) ) { return $schema; }
+			$blocked = EntitlementVoiding::enforce_block( $order_id, $facts );
+			if ( false !== $blocked ) { return $blocked; }
+		}
 		$faces = $facts['digital_faces_by_game_type'] ?? null;
 		if ( ! is_array( $faces ) ) { return self::error( 'bc_entitlement_totals_unknown' ); }
 		foreach ( $faces as $game_type => $total ) {
@@ -59,8 +65,6 @@ final class EntitlementSnapshot {
 		ksort( $faces, SORT_NUMERIC );
 		$json = wp_json_encode( $faces, JSON_FORCE_OBJECT );
 		if ( false === $json ) { return self::error( 'bc_entitlement_totals_unknown' ); }
-		$schema = Migrations::verify_current_site_schema();
-		if ( is_wp_error( $schema ) ) { return $schema; }
 		global $wpdb;
 		$table = Migrations::table();
 		$expected = [
@@ -83,10 +87,14 @@ final class EntitlementSnapshot {
 			$existing = $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM %i WHERE order_id = %d', $table, $order_id ), ARRAY_A );
 			if ( '' !== $wpdb->last_error || ! is_array( $existing ) ) { return self::error( 'bc_entitlement_unavailable' ); }
 		}
+		// A refund/cancellation may have recorded its marker after our first read
+		// but before this insert. Re-read after insertion and converge to void.
+		$blocked = EntitlementVoiding::enforce_block( $order_id, $facts );
+		if ( false !== $blocked ) { return $blocked; }
 		foreach ( $expected as $key => $value ) {
 			if ( (string) ( $existing[ $key ] ?? '' ) !== $value ) { return self::error( 'bc_entitlement_snapshot_conflict' ); }
 		}
-		// Never rewrite the timestamp, snapshot or status, including a future void.
+		// Never rewrite snapshot data or reactivate a void record.
 		return true;
 	}
 

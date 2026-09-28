@@ -270,9 +270,10 @@ never run by payment events. No real-Hall activation/migration was performed.
 
 A single prepared insert writes the whole snapshot; `UNIQUE(order_id)` is the
 concurrent-delivery arbiter. Readback recognizes a matching winning insert.
-There is no UPDATE, REPLACE or upsert: repeats never overwrite totals, identity,
-confirmation time or state, including a future void state. Conflicting saved
-facts report `bc_entitlement_snapshot_conflict`, leaving the original intact.
+Snapshot insertion uses no UPDATE, REPLACE or upsert: repeats never overwrite
+totals, identity or confirmation time, or reactivate a void. The follow-ups
+below may change only status to void. Conflicting saved facts report
+`bc_entitlement_snapshot_conflict`, leaving the original intact.
 
 Paper with an explicit empty saved map, and unmarked ordinary merchandise,
 create no entitlement. Missing, empty-for-Digital/Hybrid, zero, negative,
@@ -300,9 +301,9 @@ verification before customer-facing digital launch.
 
 **QR issuance remains unfinished.** This record is not a QR or redemption
 implementation. Future QR state must reference the Hall-local entitlement ID.
-The follow-up below implements BR-046 voiding for existing records only;
-refund/cancel-before-late-confirmation races still require later lifecycle
-integration. Payment and retry behavior remain unchanged.
+The follow-ups below implement BR-046 existing-record voiding and durable
+refund/cancellation markers that block later snapshot creation. Payment and
+retry behavior remain unchanged; the timing/recovery limits are stated below.
 
 Focused verification:
 `BC_TEST_DB=bingocommerce_state_recon php tests/digital-entitlement-snapshot.php`.
@@ -413,10 +414,11 @@ gateway refunds are both supported; no custom refund processor is introduced.
 
 Cancellation uses `woocommerce_order_status_cancelled`, emitted by
 `WC_Order::status_transition()` after `WC_Order::save()` persists the change
-(`includes/class-wc-order.php:283–287, 433–463`). The observer reloads the order
-in the current Hall and requires the persisted `cancelled` status, rather than
-trusting a supplied order object or the event name alone. It does not cancel an
-order, refund money, intercept checkout, or modify payment/retry behavior.
+(`includes/class-wc-order.php:283–287, 433–463`). The original observer required
+the reloaded current-Hall order still to be `cancelled`. The ordering follow-up
+below retains the native transition evidence even when an earlier callback
+changes that current status. It does not cancel an order, refund money,
+intercept checkout, or modify payment/retry behavior.
 
 `DigitalTickets\EntitlementVoiding` matches an **existing** Hall-local row by
 order ID and saved `bc_purchase` Hall, Session, Package and selection identity.
@@ -442,9 +444,9 @@ existing-refund rewrites, and arbitrary order/item/refund-history changes are
 not supported reconciliation paths. Invalid identity links or unavailable
 storage require review rather than guessing another entitlement. Events
 missed while plugins are unavailable are not automatically reconciled. A
-refund/cancellation before any entitlement exists (including a concurrent late
-snapshot insertion) is outside this existing-record slice; no future-payment
-blocking record is created. Refund deletion, order reopening and repeat payment
+refund/cancellation before any entitlement exists was outside this original
+existing-record slice; the next follow-up adds future-payment blocking.
+Refund deletion, order reopening and repeat payment
 events do not restore a void entitlement. QR issuance, Android state/usage
 revocation and lifecycle reconciliation remain unfinished.
 
@@ -457,6 +459,71 @@ noncharging gateway's success/failure, coupons/tax, repeated events, Catalog
 archival, unchanged snapshots/order financials, missing entitlements, identity
 mismatches, storage-failure redelivery, and colliding Hall-local order/domain
 IDs. Existing native AJAX/REST/refund guard regressions run separately.
+
+### Refund/cancellation before entitlement follow-up (BR-046, 2026-09-27)
+
+Digital Tickets schema v2 adds the Hall-local indexed table
+`$wpdb->prefix . 'bingo_entitlement_voids'`, without changing the paid snapshot
+table. Its primary key is `order_id`; the row saves `session_id`, `package_id`,
+binary `selection_id`, first `cause` (`package_refund` or `cancellation`),
+`refund_id` (zero for cancellation), and UTC `voided_at`, with a Session index.
+This is terminal evidence, **not an entitlement**: no face totals, payment
+timestamp or invented historical snapshot. The existing versioned migration
+creates/verifies the new table; no migration runs inside payment/refund events.
+
+The same validated native-refund notification and saved-cancellation observer
+now insert this marker even if the Digital/Hybrid entitlement is absent, using
+the saved current-Hall order identity. First-write/readback and the primary key
+make repeats harmless without overwriting the cause/time/identity. Paper-only
+and merchandise-only orders get no marker; merchandise-only, refused and
+failed-gateway refunds do not notify the observer. Missing/malformed saved
+digital totals stay unknown: a valid identity may be blocked without fabricating
+faces. Any existing snapshot still changes only from `active` to `void`.
+
+The payment observer checks the marker before insertion and again afterwards.
+A prior marker prevents insertion; a marker arriving between the reads causes
+the just-inserted snapshot to become void. The void observer also enforces the
+marker after writing it, covering payment insertion before the marker write.
+Neither order reopening, refund deletion nor repeated payment clears a marker.
+No Woo order, payment/retry path, refund processing or financial value is changed.
+Unreadable/mismatched terminal evidence fails closed and reports diagnostics.
+
+The cancellation listener accepts Woo's three native event arguments. It
+checks `transition.to = cancelled`, a distinct nonempty `from`, the event
+object's order ID, no pending unsaved status change, and exact equality of its
+purchase facts with the reloaded current-Hall order. It then records the
+cancellation even if nested native payment has changed the current status (or
+the same event object) to `processing`. The transition array is retained by
+`WC_Order::status_transition()` across callbacks. An ID-only redelivery still
+requires the persisted order to be cancelled; malformed transitions, mismatched
+Hall/order facts and unsaved status changes cannot supply this evidence.
+
+The earlier-callback regression adds a temporary priority-5
+`woocommerce_order_status_cancelled` listener, calls native `payment_complete()`
+before Digital Tickets' priority-10 observer, and removes it in `finally`.
+Before the fix, all four classic/Store API × reloaded/event-object cases left an
+active entitlement without a marker, including after another payment event.
+Afterwards all four retain a cancellation marker and the identical snapshot
+except `status = void`, while Woo remains paid/processing. Original lines,
+facts, amounts, discounts and taxes are unchanged. ID-only/malformed/foreign-Hall
+evidence and a failed native cancellation save are also checked.
+
+The focused suite uses real guest classic/Store API orders, native manual and
+noncharging-gateway refunds, and native cancellation. It verifies both event
+orders, repeated payment, multiple linked add-ons, independent merchandise,
+coupons/taxes, schema-v1 upgrade preservation, unknown saved totals, read failure
+and Hall isolation. Query-filter sentinels interleave the real Woo calls at both
+inserts; they prove convergence after both successful observers return, **not
+parallel-process or crash safety**. A transient active row can exist until the
+cancellation observer records/enforces its marker, or between snapshot insert
+and its second marker check. Future QR/redemption consumers must coordinate
+with lifecycle writes and honor terminal evidence, not read snapshot status
+alone. The earlier-callback race is verified, not arbitrary concurrent Woo
+writes or combined persistence failures and reentrant callbacks. Missed hooks,
+failed marker writes/process termination and pre-upgrade refund/cancellation
+history have no automatic reconciliation/backfill here. These and the refund-path limits above remain
+launch boundaries; no entitlement is reactivated and no recovery payment or
+refund should be sent to repair storage. QR and Android remain unimplemented.
 
 ## Verification and next boundary
 
@@ -481,8 +548,8 @@ payment retry flow. Isolated retries with unchanged inputs preserved the saved
 purchase facts; changed-input retries were not verified. Refund integration
 limits above, lifecycle/snapshot failure recovery and QR
 issuance/activation remain separate work. The narrow positive-total online
-payment-complete snapshot boundary and existing-entitlement refund/cancellation
-voiding are implemented above; they do not complete the digital entitlement
-lifecycle.
+payment-complete snapshot boundary, existing-entitlement voiding and durable
+refund/cancellation-before-entitlement markers are implemented above; they do
+not complete the digital entitlement lifecycle.
 Configuration writers/UI also remain
 unimplemented; configuration authority stays with BR-064.

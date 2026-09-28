@@ -2926,6 +2926,53 @@
   failures require operational review. QR/Android, payment, retries, checkout
   and storefront are unchanged. No real-Hall data/migration, plugin activation,
   stage, commit, push or deployment was performed.
+- **[2026-09-27] BR-046 refund/cancellation before entitlement — implemented and isolated-verified:**
+  Started clean on `feature/portal-sync` at `a00dc03`. The earlier observer
+  returned when no entitlement existed, losing the terminal event before a
+  later payment-complete delivery. Digital Tickets schema v2 now records an
+  insert-only, Hall-local indexed `bingo_entitlement_voids` marker using saved
+  order/Session/Package/selection identity and first cause/refund/time. It
+  invents neither digital totals nor a paid snapshot. The existing validated
+  native whole-Package refund and saved-cancellation listeners record the marker
+  before enforcing the existing status-only void. The payment observer checks
+  it before and after snapshot insertion. Repeated delivery cannot clear the
+  marker or reactivate/overwrite a snapshot. Paper/merchandise and rejected or
+  merchandise-only refunds do not acquire a digital block. Unknown saved face
+  totals remain unknown; unreadable marker evidence fails closed.
+  The requested earlier-priority cancellation callback race was reproduced
+  before its fix: **960 passed, 13 failed**, with all four classic/Store API ×
+  reloaded/event-object cases leaving `active` without a marker after native
+  payment and again after repeated payment. The observer now receives all three
+  native cancellation arguments and retains the original transition after a
+  nested payment changes current status. It verifies the event order ID,
+  transition target/from, absence of unsaved status, and exact saved purchase
+  facts in the current Hall. ID-only delivery still requires saved cancellation.
+  All four cases now leave `void` plus a cancellation marker, with Woo still
+  processing and the original snapshot/facts/financial values unchanged.
+  Negative cases cover ID-only/malformed/wrong-order/foreign-Hall/unsaved
+  evidence and a failed cancellation save. The synthetic foreign-Hall object
+  reloads its metadata because Woo order clones share mutable metadata objects.
+  Serial `bingocommerce_state_recon` results with Digital Tickets loaded:
+  entitlement/snapshot/voiding **1,033/1,033**, order recording/native refunds and
+  retries **1,098/1,098**, cart **140/140**, electronic limits **437/437**:
+  **2,708 passed, 0 failed**, all exit 0. Both event orders use real guest
+  classic/Store API orders and native refund/cancellation, including repeated
+  payment events, mixed merchandise, two add-ons, coupons/tax and unchanged
+  financials. Controlled insert interleavings converge to void. Schema-v1
+  upgrade preserves populated snapshots. Disposable Halls/tables were cleaned,
+  persistent fixture Halls 2/3/4 stayed unchanged and fixture settings were
+  restored. Expected Hall Staff guard/diagnostic-failure messages appeared.
+  All five changed PHP files pass syntax; `git diff --check` passes.
+  **Timing limits:** no independent-process/crash-safety proof; a transient
+  active row can exist before the cancellation observer or post-insert marker
+  check. Future QR/redemption must coordinate lifecycle writes and honor terminal
+  evidence. The earlier-callback case is now covered; arbitrary concurrent Woo
+  writes, combined persistence failures/reentrant callbacks, failed/missed
+  marker writes and pre-upgrade history remain outside this proof. No backfill is
+  added. Earlier provider/direct-gateway/status-only refund limits remain.
+  No payment, retry, refund processor, QR, Android or storefront changes; no
+  real-Hall data/migration, stage, commit, push or deployment. Seven modified
+  files remain unstaged for review.
 - No Hall Staff Management work currently in progress.
 - Package Increment 1 and the legacy Session Increment 1 remain COMPLETE and
   are recorded under Done. Package Add-ons Increment 1 is approved by

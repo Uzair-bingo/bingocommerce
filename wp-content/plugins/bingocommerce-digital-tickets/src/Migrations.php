@@ -10,13 +10,18 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
 
 /** Plugin-owned schema. No payment callback performs DDL or creates defaults. */
 final class Migrations {
-	public const DB_VERSION = 1;
+	public const DB_VERSION = 2;
 	public const VERSION_OPTION = 'bc_digital_tickets_db_version';
 	public const SWEEP_OPTION = 'bc_digital_tickets_network_migration_sweep_version';
 
 	public static function table(): string {
 		global $wpdb;
 		return $wpdb->prefix . 'bingo_entitlements';
+	}
+
+	public static function voids_table(): string {
+		global $wpdb;
+		return $wpdb->prefix . 'bingo_entitlement_voids';
 	}
 
 	public static function is_hall(): bool {
@@ -76,6 +81,18 @@ final class Migrations {
 	UNIQUE KEY order_unique (order_id),
 	KEY session_status (session_id,status)
 ) ENGINE=InnoDB {$collation};" );
+		$voids = self::voids_table();
+		dbDelta( "CREATE TABLE {$voids} (
+	order_id bigint(20) unsigned NOT NULL,
+	session_id bigint(20) unsigned NOT NULL,
+	package_id bigint(20) unsigned NOT NULL,
+	selection_id char(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+	cause varchar(16) NOT NULL,
+	refund_id bigint(20) unsigned NOT NULL,
+	voided_at datetime NOT NULL,
+	PRIMARY KEY  (order_id),
+	KEY session_id (session_id)
+) ENGINE=InnoDB {$collation};" );
 		$result = self::verify_current_site_schema();
 		if ( is_wp_error( $result ) ) { return $result; }
 		update_option( self::VERSION_OPTION, self::DB_VERSION, false );
@@ -86,19 +103,27 @@ final class Migrations {
 	/** Check the unique arbiter, complete row structure and storage engine before use. */
 	public static function verify_current_site_schema(): true|\WP_Error {
 		if ( ! self::is_hall() ) { return self::error(); }
+		$bigint = '/^bigint(?:\(20\))? unsigned$/';
+		$result = self::verify_table( self::table(), [
+			'entitlement_id' => $bigint, 'order_id' => $bigint, 'session_id' => $bigint, 'package_id' => $bigint,
+			'selection_id' => '/^char\(36\)$/', 'snapshot_version' => '/^smallint(?:\(5\))? unsigned$/',
+			'digital_faces_json' => '/^longtext$/', 'status' => '/^varchar\(16\)$/', 'confirmed_at' => '/^datetime$/',
+		], [ 'PRIMARY' => [ [ 'entitlement_id', 0, null ] ], 'order_unique' => [ [ 'order_id', 0, null ] ], 'session_status' => [ [ 'session_id', 1, null ], [ 'status', 1, null ] ] ] );
+		if ( is_wp_error( $result ) ) { return $result; }
+		return self::verify_table( self::voids_table(), [
+			'order_id' => $bigint, 'session_id' => $bigint, 'package_id' => $bigint, 'selection_id' => '/^char\(36\)$/',
+			'cause' => '/^varchar\(16\)$/', 'refund_id' => $bigint, 'voided_at' => '/^datetime$/',
+		], [ 'PRIMARY' => [ [ 'order_id', 0, null ] ], 'session_id' => [ [ 'session_id', 1, null ] ] ] );
+	}
+
+	private static function verify_table( string $table, array $patterns, array $required_indexes ): true|\WP_Error {
 		global $wpdb;
-		$table = self::table();
 		$status = $wpdb->get_row( $wpdb->prepare( 'SHOW TABLE STATUS LIKE %s', $wpdb->esc_like( $table ) ), ARRAY_A );
 		if ( '' !== $wpdb->last_error || ! is_array( $status ) || 'InnoDB' !== $status['Engine'] || ! str_starts_with( $status['Collation'], 'utf8mb4_' ) ) { return self::error(); }
 		$columns = $wpdb->get_results( $wpdb->prepare( 'SHOW FULL COLUMNS FROM %i', $table ), ARRAY_A );
 		if ( '' !== $wpdb->last_error || ! is_array( $columns ) ) { return self::error(); }
 		$columns = array_column( $columns, null, 'Field' );
-		foreach ( [ 'entitlement_id', 'order_id', 'session_id', 'package_id', 'selection_id', 'snapshot_version', 'digital_faces_json', 'status', 'confirmed_at' ] as $name ) {
-			$pattern = match ( $name ) {
-				'selection_id' => '/^char\(36\)$/', 'snapshot_version' => '/^smallint(?:\(5\))? unsigned$/',
-				'digital_faces_json' => '/^longtext$/', 'status' => '/^varchar\(16\)$/', 'confirmed_at' => '/^datetime$/',
-				default => '/^bigint(?:\(20\))? unsigned$/',
-			};
+		foreach ( $patterns as $name => $pattern ) {
 			$column = $columns[ $name ] ?? [];
 			if ( ! preg_match( $pattern, $column['Type'] ?? '' ) || 'NO' !== ( $column['Null'] ?? null )
 				|| ( 'entitlement_id' === $name ? 'auto_increment' : '' ) !== ( $column['Extra'] ?? null ) ) { return self::error(); }
@@ -110,7 +135,7 @@ final class Migrations {
 		foreach ( $indexes as $index ) {
 			$actual[ $index['Key_name'] ][ (int) $index['Seq_in_index'] ] = [ $index['Column_name'], (int) $index['Non_unique'], $index['Sub_part'] ];
 		}
-		foreach ( [ 'PRIMARY' => [ [ 'entitlement_id', 0, null ] ], 'order_unique' => [ [ 'order_id', 0, null ] ], 'session_status' => [ [ 'session_id', 1, null ], [ 'status', 1, null ] ] ] as $key => $expected ) {
+		foreach ( $required_indexes as $key => $expected ) {
 			$found = $actual[ $key ] ?? []; ksort( $found );
 			if ( array_values( $found ) !== $expected ) { return self::error(); }
 		}
