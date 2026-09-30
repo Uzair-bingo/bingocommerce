@@ -3432,7 +3432,26 @@ Everything below is tracked work that is NOT a blocker to that demo.
 ## Environment Notes
 - **Local:** macOS (arm64), PHP 8.4.24, MySQL 9.5, Apache
 - **WordPress:** 7.0.x Multisite subdomain; table prefix `bc_`
-- **Halls:** Sunrise (2), Tampa (3), Orlando test hall (4) (Local)
+- **Halls:** six disposable local Hall sites — Sunrise (2), Tampa (3), Orlando
+  (4, blogname "Orland Bingo Hall"), Disposable Ecommerce 20260914 (868), Star
+  Bingo Hall (869) and Texas Hall (870); 2, 868, 869 and 870 are Portal-mapped
+  (read-only check, 2026-09-29). WooCommerce "Coming soon" (store pages only) is
+  on for every Hall, so signed-out visitors see WooCommerce's Coming soon page
+  on store pages.
+- **Storefront theme (local test configuration, 2026-09-29):** BingoThemev1 is
+  network-enabled alongside Twenty Twenty-Five. It was activated on the
+  designated test Halls Star Bingo Hall (869) and Orlando (4) for the ADR-045
+  checks. It is also active on Sunrise (2), activated through wp-admin by a
+  separate signed-in Super Admin session at 11:38:03 EDT on 2026-09-29 (access
+  log); the user reports they think they activated it, so this is likely
+  user-initiated but not conclusively confirmed. It was not part of the
+  scripted test changes and Sunrise was left unchanged. Tampa, 868 and 870
+  remain on Twenty Twenty-Five.
+- **Digital Tickets (local configuration):** `bingocommerce-digital-tickets`
+  is `Network: true` and is **not** network-activated here; no Hall has its
+  schema version or tables, and no Hall has orders. Its implemented QR view is
+  therefore inactive locally; its suites run in the isolated
+  `bingocommerce_state_recon` fixture, which loads the plugin directly.
 - **Commerce:** WooCommerce network-active, HPOS on
 - **Local mail:** SMTP configured and verified for WordPress staff invitation/password setup testing
 - **Custom code:** `wp-content/plugins/bingocommerce-core/`,
@@ -3458,27 +3477,34 @@ Everything below is tracked work that is NOT a blocker to that demo.
   too — in `ProvisioningRestController`, `ProvisioningOrchestrator`,
   `PlatformGateway`, `ProvisioningResponse`, `ProvisioningAudit` and the new
   network-only `wp-content/plugins/bingocommerce-platform/`.
-  `bingocommerce-platform` is **not** network-activated on this local
-  environment. The Portal Global
+  `bingocommerce-platform` is network-active on this local environment
+  (read-only check of `active_sitewide_plugins`, 2026-09-29; earlier entries
+  recorded it as inactive). The Portal Global
   Admin Enable, Suspend, Re-enable and Retry Ecommerce controls are
   implemented and tested in the Laravel Portal repository. A
   user-performed local-development Open Store → Suspend → Re-enable
   workflow passed against one mapped WordPress multisite test site, and
   re-enable reused the same site. SSO does not exist.
   **`bingocommerce-portal-integration` is network-active on this local
-  environment** — and `bingocommerce-platform`, as stated above, is not — and the
+  environment** — as is `bingocommerce-platform`, as stated above — and the
   ADR-036 Portal constants are configured in the git-ignored `wp-config.php` for
   ongoing manual synchronization; both are local test-environment state, not a
   deployment. `bingocommerce-portal-integration` also carries
   `ProvisioningMigrations` and
-  `HallCommerceState` (Commerce-state persistence, migration NOT applied here;
-  `ProvisioningMigrations::DB_VERSION` is now **2**, carrying the ADR-042
-  operations table, but no migration has been run against this database, so the
-  recorded `bc_portal_provisioning_db_version` option is still absent and
-  neither provisioning table exists here) and `HallCommerceAccess` /
-  `HallCommerceGate` (Commerce access enforcement). The gate IS registered on `plugins_loaded`; every development
-  Hall is a legacy Hall (no state table, no `bc_portal_provisioning_db_version`,
-  no `bc_commerce_managed`), so it allows every one of them
+  `HallCommerceState` (Commerce-state persistence;
+  `ProvisioningMigrations::DB_VERSION` is **2**, carrying the ADR-042
+  operations table) and `HallCommerceAccess` / `HallCommerceGate` (Commerce
+  access enforcement). Earlier entries recorded the provisioning migration as
+  not applied here and every development Hall as legacy. A read-only check on
+  2026-09-30 found otherwise: the network option
+  `bc_portal_provisioning_db_version` = `2`; `bc_bingo_hall_commerce_state` and
+  `bc_bingo_portal_provisioning_operations` both exist (created
+  2026-09-14 12:01:43) with three rows each; Halls 868, 869 and 870 carry the
+  `bc_commerce_managed` marker and an `operational` Commerce state; the main
+  site (1) and Halls 2–4 have neither. The gate IS registered on
+  `plugins_loaded`; it allows Halls 2–4 as legacy (`HallCommerceAccess`
+  `legacy`) and 868–870 by their `operational` state, so all six Halls are
+  currently allowed
 - **Catalog schema:** current repository per-site `bc_catalog_db_version` = **6**
   (`bingo_game_types`, `bingo_play_products`, `bingo_packages`,
   `bingo_package_components`, `bingo_package_addons`); v6 adds only the approved
@@ -3500,8 +3526,9 @@ Everything below is tracked work that is NOT a blocker to that demo.
   targeted reconciliation. Slice 3 implements Package administration UI and
   request handling. The BR-081 customer cart backend and BR-082 electronic-limit
   checks at cart addition and classic/Store API checkout are implemented; the
-  customer storefront theme and selection screens remain pending. No real Hall
-  migration or deployment is claimed.
+  BingoThemev1 storefront foundation and core Store Details are implemented
+  (ADR-045 / BR-084) and the customer selection screens remain pending. No real
+  Hall migration or deployment is claimed.
 - **Rule for AI agents:** Read `AGENTS.md`, `docs/architecture/plugin-architecture.md`, and this file before coding. Do not re-scaffold Multisite, WooCommerce, or core bootstrap.
 
 ### Current checkpoint — user-reported commit `2f886fc` (2026-09-28)
@@ -3512,3 +3539,219 @@ screen also reports when a saved override exceeds the platform maximum and
 shows the actual saved and effective values. This records repository state only;
 it does not claim production deployment or restoration/verification of live
 Hall database values.
+
+### Current checkpoint — BingoThemev1 foundation + Store Details, branch `bingotheme`, uncommitted (2026-09-29)
+
+**Implemented code (ADR-045 / BR-084).**
+- `wp-content/themes/bingocommerce-bingothemev1/`: classic PHP theme
+  "BingoThemev1" with fixed header/footer, native custom logo, `primary`
+  (two levels) and `footer` (one level) menu locations, account link, live
+  cart count, Store Details display, accessible off-canvas mobile menu, and
+  native WooCommerce output with no WooCommerce template overrides (wrapper and
+  sidebar swapped through hooks only). No `theme.json`, block templates,
+  template parts, editor styles, widget areas or WooCommerce product-grid/image
+  defaults. Inter and Baloo 2 Latin variable WOFF2 files are bundled from
+  `@fontsource-variable/inter@5.3.0` and `@fontsource-variable/baloo-2@5.3.0`
+  with their OFL licence files. The front page is a first-slice foundation only:
+  Hall name, Shop link and Store Details contact; no Session, Package or
+  merchandising sections.
+- `bingocommerce-core`: `StoreDetails` (per-site `bc_store_details`, validation,
+  `tel:` link with leading `+` kept, read-only `bingocommerce_store_details`
+  filter) and `StoreDetailsAdmin` (Appearance → Store Details, existing
+  `bc_manage_hall_settings`, Hall-scoped nonce, allow-listed POST,
+  all-or-nothing validation, per-field messages). Registered in `Plugin.php`.
+- `tests/store-details.php`: isolated-fixture harness.
+
+**Tests actually run.** `BC_TEST_DB=bingocommerce_state_recon php
+tests/store-details.php` → **204 passed, 0 failed** (validation matrix, optional
+blanks, trimming, `tel:` links, escaping, nonce/request refusal, Hall Manager
+and Super Admin allowed, Game Operator/subscriber/site administrator/guest
+denied, WooCommerce address and `blogname` untouched, malformed storage
+reported not repaired, Hall A/Hall B isolation and nonce non-reuse, persistent
+fixture Halls byte-identical). Regression: `tests/customer-electronic-limits.php`
+→ **679 passed, 0 failed**. `php -l` clean on all changed PHP.
+
+**Local browser/environment checks actually run (Star Bingo Hall 869, Orlando 4).**
+Desktop 1280, tablet 768 and mobile 375 layouts without horizontal overflow;
+keyboard order, skip link, visible focus, desktop dropdown via keyboard, mobile
+menu open/Escape/focus return; test Hall Manager saw Appearance → Themes
+(active theme only), Patterns, Customize (Site Identity logo only, Menus,
+WooCommerce), Fonts, Menus and Store Details, with no Editor/Design, Widgets,
+Additional CSS or colour/header controls, and Site Editor template routes
+reported unsupported; Store Details validation errors and save; logo and menu
+edits rendered; Orlando showed none of 869's details; the header cart count
+updated without a page reload after the shop-archive AJAX add and after Cart
+block increase, decrease and removal; the product-page Add to cart used
+WooCommerce's normal form submission and page reload, after which the count
+showed the new total; WooCommerce notices visible, including the existing
+BR-081 refusal when a Package is added from its native product page. (That
+pass listed Appearance → Fonts but did not establish what it could change; see
+the correction pass below.)
+Theme activation, switch back to Twenty Twenty-Five and re-activation were
+compared value-by-value: only theme bookkeeping changed (`template`,
+`stylesheet`, `current_theme`, `theme_switched`, `sidebars_widgets` layout,
+both themes' `theme_mods_*`, and the network theme-pattern cache); logo, menu,
+Store Details, products, Catalog/Session rows, users and other Halls were
+preserved. WooCommerce email colours and catalog settings did not change.
+
+**Intentional local test changes (not deployment).** BingoThemev1
+network-enabled; activated on 869 and 4. Test network users
+`bingotheme-test-manager` (Hall Manager on 869 and 4 through
+`HallStaffService`, audit rows recorded) and `bingotheme-test-customer`
+(customer on 869 and 4). Test product 32 "BingoThemev1 test merchandise
+(review only)" on 869. On 869 the test Hall Manager saved Store Details,
+created menu "Main menu (test)" (primary location) and selected existing media
+17 as the logo. `woocommerce_private_link` was set to `yes` on 869 and 4 for
+signed-out checks and restored to `no`. A temporary child menu item used for
+the dropdown check was removed.
+
+**Deferred, not passed.** Digital-ticket order/QR browser checks (plugin not
+network-active locally; no orders). Automatic BingoThemev1 assignment for new
+Halls (required before the storefront is complete) and rollout to existing
+Halls. Session → Package → add-on screens, customer listing reads and Bingo
+cart-line labels. Native product screens and the empty-cart "New in store"
+block still show Add to cart for Package and Play Product shells, which BR-081
+backend enforcement refuses; the shopping-screen slice must present Bingo
+products through the approved flow. A theme preview image (`screenshot.png`,
+1024×1024) was added by the user on 2026-09-30; WordPress displays theme
+previews at 1200×900, so a square image is cropped on the Themes screen.
+
+### Correction pass — BingoThemev1 slice review items, branch `bingotheme`, uncommitted (2026-09-30)
+
+**Fixed.**
+- *Hall-specific Store Details in the theme:* `Template::details()` kept a
+  static copy without a site key, so after `switch_to_blog()` it returned the
+  first Hall's details (reproduced by the new regression test before the fix).
+  The cache was removed; the core filter already reads an autoloaded per-site
+  option.
+- *Narrow-phone header:* reproduced in the browser before the fix. A 600×80
+  (7.5:1) logo with a saved phone pushed the menu button to 334px at a 320px
+  viewport; a long Hall name with no logo stayed on one line and pushed all
+  four controls past 470px at 320px and to 623px at 375px. The logo may now
+  shrink (images scale proportionally; a long name wraps to at most two lines
+  in the header and fully in the footer) while phone, account, cart and menu
+  keep their size, with an 8px gap and 36px controls at 360px and below.
+- *Hall Manager fonts/styles:* a prohibited change was possible. WordPress
+  7.0.3 renders user global styles over this classic theme (read-only
+  in-memory probe on 869), writes map to `edit_theme_options`, and a Star Bingo
+  Hall Manager's Appearance → Fonts visit saved that Hall's global styles on
+  2026-09-29 (`POST /wp/v2/global-styles/38`; only Font Library font
+  availability was saved — Cardo and WooCommerce's Inter — no theme styles).
+  New core `StorefrontStyleGuard`: on Hall sites only Super Admins may edit,
+  delete or publish `wp_global_styles`. No role or `edit_theme_options` change.
+  Star's existing post 38 content was left as saved.
+- *Documentation:* product-page Add to cart described as a form submission
+  with reload; provisioning/legacy Environment Notes corrected from a dated
+  read-only check; core-ownership wording acknowledges ADR-045; requirements
+  no longer call the implemented Enable/Suspend/Re-enable path future work;
+  ADR-045/BR-084 record the style guard; Sunrise recorded as likely
+  user-initiated.
+
+**Tests actually run (isolated `bingocommerce_state_recon` fixture).**
+New `tests/bingothemev1-storefront.php` → **41 passed, 0 failed** (12 of its
+checks failed against the pre-fix code, confirming it covers both defects:
+real theme helper Hall A → B → A in one request and blank on the main site;
+Hall Manager global-styles edit/delete refused, REST update and font
+activation 403, read allowed, storefront stylesheet unaffected, Super Admin
+still allowed, Game Operator and other-Hall Manager refused, Hall Manager keeps
+`edit_theme_options`, Customizer and page editing). Regression:
+`store-details` 204/0, `customer-electronic-limits` 679/0,
+`package-addons-admin` 350/0, `customer-cart-increment-1` 140/0,
+`setup-readiness` 199/199, `portal-sync-admin` exit 0 with 469 passes and no
+failures. `hall-commerce-access` did not run: its harness guard stops before
+any mutation because this fixture already has Hall-mapping schema (fixture
+precondition, unrelated to this change). `php -l` and `git diff --check` clean.
+
+**Browser checks actually run (Star 869, Orlando 4).** 320px and 375px header
+cases above, before and after the fix; keyboard order and mobile menu
+open/Escape/focus return at 320px; footer wrapping; tablet 768px and desktop
+1280px spot checks with no overlap or overflow. As the test Hall Manager on
+869: the Fonts screen loads but its edit-context global-styles read and a real
+save attempt return 403 `rest_cannot_edit`; Menus shows the Hall's menu with
+Save available; the Customizer shows only Site Identity (logo), Menus and
+WooCommerce; the Sample Page opens in the block editor as editable with no
+error notices (nothing saved).
+
+**Temporary environment changes and restoration.** Orlando's `blogname` was
+temporarily set to a long name and a phone-only `bc_store_details` was added
+for the header check; the exact originals ("Orland Bingo Hall", option absent)
+were restored and a value-level comparison showed no remaining option
+difference. The wide-logo case used an in-browser image swap only (no Hall
+data changed). `woocommerce_private_link` remains `yes` on 869 and 4 at the
+user's request for manual testing; it is to be restored to `no` after the user
+confirms testing is finished.
+
+**User-reported manual results (not run by the agent).** Star Bingo Hall
+Store Details saved and displayed correctly; Sunrise displayed none of Star's
+details; an ordinary product appeared on Star's Shop page; ordinary-product
+add, quantity increase/decrease, removal and the header count returning to 0
+worked; checkout showed matching quantities and totals; checkout showed no
+payment methods because none is configured, so payment and completed-order
+behaviour remain unverified; direct Paper/Digital Bingo product adds were
+refused. The Session → Package → add-on screens remain pending, and those
+refusals must not be "fixed" by bypassing backend validation.
+
+**Still deferred.** Payment setup, Digital Tickets activation/table creation,
+order/QR verification, automatic theme assignment for new Halls, and the
+customer selection screens.
+
+### User-requested footer and contact changes, branch `bingotheme`, uncommitted (2026-09-30)
+
+- **Social icons:** only networks with a saved URL are shown; with none saved,
+  no icon row is rendered (replaces the earlier inert `#` links; BR-084
+  updated). The Store Details help text now says a blank link hides its icon.
+- **Contact layout** (front-page "Visit us" and footer): the address is one
+  line (parts joined with commas), then phone and email share the next line.
+  Verified in the browser on Star: one line each at 1280px, 768px and 375px;
+  at 320px phone and email still share a line, but Star's 42-character
+  address wraps its last word ("Canada") because it is wider than the screen
+  at a readable size.
+- **Privacy Policy / Terms of Service:** native Footer menu only (user
+  decision). The location is now labelled "Footer links, bottom right (e.g.
+  Privacy Policy, Terms of Service)"; Hall Managers set each link's text, URL
+  and order in Appearance → Menus. Links sit at the right of the copyright
+  line on desktop and tablet and are centred below it on phones. Verified with
+  a temporary two-link footer menu on Star, which was then deleted and Star's
+  saved theme settings restored exactly (value-level comparison: no remaining
+  difference on the site).
+- **Tests actually run:** `tests/bingothemev1-storefront.php` extended →
+  **52 passed, 0 failed** (icons only for saved links, no `#` placeholders,
+  address row before a single phone/email row, nothing rendered without Store
+  Details); `tests/store-details.php` 204/0.
+
+### Foundation cleanup — Fonts menu, core wording, homepage rule, branch `bingotheme`, uncommitted (2026-09-30)
+
+- **Fonts menu:** WordPress 7.0.3 registers Appearance → Fonts as
+  `$submenu['themes.php'][9]` (`font-library.php`, `edit_theme_options`;
+  `wp-admin/menu.php:240`), and the Themes screen builds its action buttons
+  from the same submenu. Core's `StorefrontStyleGuard` now also calls
+  `remove_submenu_page( 'themes.php', 'font-library.php' )` on `admin_menu`
+  (priority 999) for the same users whose global-style writes it refuses:
+  everyone except Super Admins, on Hall sites. The server-side refusal is
+  unchanged and still applies to a direct visit of the Fonts page. No role,
+  `edit_theme_options` or core file changed.
+- **Documentation:** `catalog-session-persistence-design.md` core ownership now
+  states ADR-045's Store Details exception and the storefront capability
+  policy; ADR-045, BR-084, requirements, AGENTS.md and plugin architecture
+  record the Fonts removal and the confirmed homepage rule.
+- **Homepage rule recorded (user-confirmed):** Hall Managers may edit homepage
+  text, images and map location; they cannot move or reorder homepage
+  sections; header/footer structure, theme fonts and colours stay fixed; menu
+  links and their order remain editable separately; the public storefront
+  location is Hall-local and separate from Portal Hall identity and
+  WooCommerce's business/tax address. **Not implemented:** the remaining
+  homepage sections, the map and the homepage editing controls; no section
+  design, map provider or editing mechanism has been chosen.
+- **Tests actually run (isolated fixture):** `bingothemev1-storefront` 59/0
+  (adds: WordPress Fonts registration drift guard; hook registered at 999;
+  Hall Manager loses only Fonts while Themes, Customize, Menus and Store
+  Details stay; Super Admin keeps Fonts; main network site unrestricted),
+  `store-details` 204/0, `customer-electronic-limits` 679/0,
+  `package-addons-admin` 350/0, `customer-cart-increment-1` 140/0,
+  `setup-readiness` 199/199. `php -l` and `git diff --check` clean.
+- **Browser (Star 869, test Hall Manager):** Fonts absent from Appearance and
+  from the Themes-screen buttons; Menus, Customize (logo) and Store Details
+  load with their editing controls; a direct visit to the Fonts page still
+  opens and a real global-styles save from it returns 403 `rest_cannot_edit`.
+  Super Admin keeping Fonts was verified in the fixture only (no Super Admin
+  browser session is available to the agent).

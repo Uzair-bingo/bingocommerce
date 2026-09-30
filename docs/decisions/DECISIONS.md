@@ -6096,6 +6096,76 @@ by construction, never deleted by anything.
   and WooCommerce projection after confirmed commit preserves the authoritative
   Catalog result while making secondary failures visible and safely repairable.
 
+- **ADR-045 — [2026-09-29] — BingoThemev1 Storefront Theme and Hall Public Profile Ownership:**
+
+  **Theme.** The v1 customer storefront is one shared classic PHP theme,
+  display name `BingoThemev1`, folder
+  `wp-content/themes/bingocommerce-bingothemev1/`. The folder slug is permanent
+  because WordPress keys each Hall's saved theme settings (`theme_mods_*`) by it.
+  The header and footer are fixed PHP templates. The theme declares `title-tag`,
+  `custom-logo`, `menus` (`primary`, `footer`), `html5` and `woocommerce`, and
+  deliberately declares no `theme.json`, `block-template-parts`,
+  `editor-styles`, custom header/background, widget areas or WooCommerce
+  product-grid/image-size defaults. With WordPress 7.0.3 and WooCommerce 11.0.1
+  this keeps the Site Editor template screens unavailable to Hall Managers,
+  keeps page-editor block templates unavailable, and prevents activation from
+  rewriting WooCommerce email colours or catalog settings. Colours and fonts are
+  fixed theme CSS; Inter and Baloo 2 are bundled locally (Latin subsets, SIL OFL
+  1.1 licence files included) under family names distinct from WooCommerce's own
+  Coming-soon `Inter` face. WooCommerce shop, product, cart, checkout, account
+  and order output is native: no WooCommerce template overrides; only the outer
+  content wrapper and unused shop sidebar are replaced through hooks, so plugin
+  hooks such as the digital-ticket order view remain in place.
+
+  **Hall public profile (Store Details).** ADR-026 limits
+  `bingocommerce-core` to foundational infrastructure. This entry narrowly
+  clarifies that boundary: core also owns the Hall public storefront profile —
+  the per-site option `bc_store_details` (public address lines, phone, email,
+  Facebook/Instagram/YouTube/TikTok URLs), its Appearance → Store Details screen
+  gated by the existing `bc_manage_hall_settings` capability with a Hall-scoped
+  nonce, and the read-only `bingocommerce_store_details` filter. It is display
+  configuration only: never Catalog, Session, commerce or Portal authority; it
+  never reads or writes WooCommerce's store address (tax/shipping origin),
+  `blogname`, or Portal Hall identity. Core is chosen because this is Hall-level,
+  non-domain configuration every Hall needs, core already owns Hall context, the
+  Hall settings capability and Hall administration screens, and every other
+  plugin owns a domain the profile must stay out of (Catalog, Sessions, Portal
+  identity, network provisioning, digital tickets). No new plugin is introduced.
+  All rendering and escaping stay in the theme. ADR-026's text is unchanged.
+
+  **Fixed colours and fonts: global-styles authorization.** WordPress 7.0.3
+  renders a site's user global styles (`wp_global_styles`: fonts, colours,
+  element/block styles and Font Library activations) on every page, including
+  over this classic theme, and maps writes to them to `edit_theme_options`,
+  which Hall Managers hold for logo and menus. On 2026-09-29 a Star Bingo Hall
+  Manager's Appearance → Fonts visit saved that Hall's global styles through
+  `POST /wp/v2/global-styles/38`. Core's `StorefrontStyleGuard` therefore maps
+  `edit_post`, `delete_post` and `publish_post` on `wp_global_styles` posts
+  (and their revisions) to `do_not_allow` on Hall sites for everyone except
+  Super Admins. It changes no role and leaves reading global styles and every
+  other `edit_theme_options` use (Customizer logo, Menus, page editing)
+  unchanged. The same guard removes the unavailable Appearance → Fonts entry
+  (WordPress 7.0.3 `themes.php` / `font-library.php` submenu, which also drives
+  the Themes-screen button) for those users through the native `admin_menu`
+  hook; Super Admins keep it. The menu removal is presentation only: a direct
+  visit to the Fonts page still opens it and its saves are still refused by the
+  capability mapping. Authorization stays in core; the theme remains
+  presentation only.
+
+  **Not decided here.** Automatic assignment of BingoThemev1 to newly created
+  Halls (required before the storefront is complete), rollout to existing Halls,
+  the Session → Package → add-on selection screens, customer listing reads,
+  Bingo cart-line labels, and the remaining homepage sections, map and the
+  mechanism for Hall Managers to edit homepage text, images and map location
+  (BR-084) are separate follow-up work. BR-022's Phase 2
+  block-theme starter-site template library is unaffected.
+
+  *Rationale:* a classic theme with fixed templates is the native WordPress way
+  to give Hall Managers logo and menu control without Site Editor layout control.
+  Keeping the public profile in core avoids a new plugin and avoids placing
+  display data in a domain plugin or in the theme, where it would be lost on a
+  theme change.
+
 ---
 
 ## Business Rules (BR)
@@ -7835,6 +7905,57 @@ delete_users.
   refund enforcement, entitlement snapshots, QR, configuration UI and storefront
   work remain separate. This adds to BR-052 and BR-073 without rewriting them.
 
+- **BR-084 — [2026-09-29] — v1 Hall Storefront Customization and Store Details (narrows BR-029 for v1):**
+
+  In v1 every Hall uses the shared BingoThemev1 theme (ADR-045). A Hall Manager
+  may change the Hall's logo (native Customizer logo control), the primary and
+  footer menu links and their order (native Menus), the public Store Details,
+  and ordinary page content. The header and footer structure is fixed, and the
+  theme's colours and fonts are fixed in v1, including site-wide WordPress
+  global styles and Font Library activations, which only Platform Admin may
+  change on a Hall (ADR-045). Hall Managers keep their existing
+  operational permissions (Hall Staff users, products, Packages, add-ons,
+  orders, payment gateway configuration) and do not install or activate
+  themes or plugins; required plugins are managed centrally by Platform Admin.
+
+  Homepage (user-confirmed, 2026-09-30): in v1 a Hall Manager may edit the
+  Hall's homepage text, images and map location, but cannot move or reorder
+  homepage sections. Header/footer structure and the theme's fonts and colours
+  remain fixed. Editing menu links and their order is separate from homepage
+  section order and remains allowed. The public storefront location is
+  Hall-local and separate from Portal-owned Hall identity and from
+  WooCommerce's business/tax address. **Not implemented yet:** the current
+  front page is only the first-slice foundation (Hall name, Shop link and Store
+  Details contact); the remaining homepage sections, the map, and the editing
+  controls for homepage text, images and map location do not exist. This entry
+  records the rule only; it does not choose sections, a map provider, a
+  page-builder or editing mechanism, or any homepage design.
+
+  Store Details is one form for the Hall's public address, phone, email and
+  Facebook, Instagram, YouTube and TikTok URLs. Every field is optional and
+  blank fields save. The public address is separate from WooCommerce's
+  business/tax address; saving Store Details never changes that address, the
+  site title or Portal-owned Hall identity. Values are validated server-side
+  and escaped on output. Telephone links keep a leading `+`. Only social
+  networks with a saved URL are shown; an empty field hides its icon (user
+  decision, 2026-09-30, replacing the earlier inert `#` link). Wherever the
+  contact details are shown, the address is one line, followed by a line with
+  the phone and email.
+
+  Privacy Policy and Terms of Service links use the native Footer menu
+  (location "Footer links, bottom right"): Hall Managers set each link's text,
+  URL and order in Appearance → Menus, and the links appear at the right of the
+  copyright line. No separate setting is added (user decision, 2026-09-30).
+
+  BR-029 (fonts, styles and layouts) remains in the log unchanged; this entry
+  narrows it for v1 only. BR-022's Phase 2 block-theme starter-site template
+  library is unaffected. BR-081 is unchanged: its backend enforcement and the
+  saved WooCommerce product settings stay as they are. Native product screens
+  currently still show WooCommerce Add to cart controls for Package and Play
+  Product shells, which the backend refuses; presenting Bingo products through
+  the Session → Package → add-on flow is required work for the later
+  shopping-screen slice, not an accepted finished-storefront behaviour.
+
 ## Still Open / TBD Items (Unresolved)
 
 - ADR-044 Slice 1 implements Catalog v6's `bingo_package_addons` migration,
@@ -7844,9 +7965,13 @@ delete_users.
   Package administration UI and request handling. Subsequent BR-081 implements
   the customer cart backend and resolves BR-066's mechanism deferral; BR-082
   implements electronic-limit validation at cart addition and classic/Store
-  API checkout. Customer storefront presentation and selection screens remain
-  pending. ADR-044 and BR-079 business decisions are unchanged; no real Hall
-  migration, deployment or production readiness is claimed.
+  API checkout. ADR-045/BR-084 add the BingoThemev1 foundation (fixed header
+  and footer, native logo/menus, native WooCommerce output) and core Store
+  Details; the Session → Package → add-on selection screens, customer listing
+  reads, Bingo cart-line labels, automatic theme assignment for new Halls, and
+  the remaining homepage sections, map and homepage editing controls (BR-084)
+  remain pending. ADR-044 and BR-079 business decisions are unchanged; no real
+  Hall migration, deployment or production readiness is claimed.
 - Portal integration details still open after ADR-036 through ADR-042: webhook
   signing, retry, replay and ordering; transitional synchronization conflict
   policy; and SSO protocol/account/tenant mapping. Commerce-schedule recurrence,

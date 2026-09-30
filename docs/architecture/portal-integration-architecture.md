@@ -648,7 +648,10 @@ re-enable reused the same site.
 `bingocommerce-platform` creates/initializes via the decided filter
 `bingocommerce_platform_provision_hall_site` (implemented);
 `bingocommerce-catalog` owns Catalog rules with no MVP starter copy;
-`bingocommerce-core` owns AuditLog/shared infrastructure only.
+`bingocommerce-core` supplies shared roles/capabilities and AuditLog, plus
+ADR-045's Hall Store Details profile and the BR-084 storefront style policy.
+Core does not own Commerce provisioning orchestration or site creation.
+Its shared role provisioning and audit services support that lifecycle.
 
 **Machine authentication** reuses ADR-011 Application Passwords with
 `bc_receive_portal_provisioning` as decided in ADR-042.

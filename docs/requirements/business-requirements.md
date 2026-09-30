@@ -31,16 +31,48 @@ Three roles — do not conflate or merge:
 
 | Role | Scope | Can do | Cannot do |
 |---|---|---|---|
-| **Hall Manager** | One or more owned halls | Products, pricing, inventory, orders, staff, refunds; switch between owned halls from one login | Install plugins, alter network config |
+| **Hall Manager** | One or more owned halls | Products, Packages, add-ons, pricing, inventory, orders, staff, refunds, payment gateway setup; storefront logo, menu links and their order, Store Details, page content, and homepage text, images and map location (homepage controls not yet built); switch between owned halls from one login | Install/activate plugins or themes, alter network config; in v1, rearrange the fixed storefront header/footer, move or reorder homepage sections, or change theme colours/fonts |
 | **Game Operator** | One hall, floor/session only | Scan/redeem digital tickets, look up redemptions, staff-gated ticket reactivation | Pricing, products, billing — zero access |
-| **Platform Admin** | Network-wide | Provision halls, edit/create products in any hall's store, set billing status, manage retention/export | Not assigned to any single hall |
+| **Platform Admin** | Network-wide | Provision halls, edit/create products in any hall's store, set billing status, manage retention/export, manage required plugins centrally | Not assigned to any single hall |
 
-(BR-018, BR-019, BR-020, BR-023, BR-027, BR-029)
+(BR-018, BR-019, BR-020, BR-023, BR-027, BR-029, BR-084)
+
+## Storefront (v1)
+- Every Hall uses the shared BingoThemev1 theme with a fixed header and footer
+  and fixed v1 colours and fonts. Hall Managers change the logo and menus with
+  the native WordPress controls; site-wide global styles and Font Library
+  activations are Platform Admin-only on Halls, and Appearance → Fonts is not
+  offered to Hall Managers. (BR-084, ADR-045)
+- Homepage: Hall Managers may edit their Hall's homepage text, images and map
+  location, but cannot move or reorder homepage sections. Menu links and their
+  order remain editable separately. The public storefront location is
+  Hall-local and separate from Portal-owned Hall identity and WooCommerce's
+  business/tax address. Not implemented yet: the current homepage is the
+  first-slice foundation only; the remaining homepage sections, the map and
+  the homepage editing controls are future work, and no section design,
+  map provider or editing mechanism has been chosen. (BR-084)
+- One Store Details form holds the Hall's public address, phone, email and
+  Facebook, Instagram, YouTube and TikTok links. All fields are optional. The
+  public address is separate from WooCommerce's business/tax address, and
+  Store Details never changes the site title or Portal-owned Hall identity.
+  Telephone links keep a leading `+`. Only social networks with a saved link
+  are shown. Contact details show the address on one line, then phone and
+  email on the next line. (BR-084)
+- Privacy Policy and Terms of Service links are managed in the native Footer
+  menu (Appearance → Menus → "Footer links, bottom right"); Hall Managers
+  choose each link's text and URL, and the links appear at the right of the
+  copyright line. (BR-084)
+- Shop, product, cart, checkout, account and order pages use native
+  WooCommerce output. Presenting Bingo Packages through the Session → Package →
+  add-on flow, rather than native product Add to cart controls that the backend
+  refuses, is required later shopping-screen work. (BR-081, BR-084)
 
 Portal Global Admin is an external Portal authority, not a fourth
-BingoCommerce role. Its ADR-035/BR-075 authority is limited here to the future
-platform-level `Enable BingoCommerce` decision; exact identity/role mapping is
-deferred.
+BingoCommerce role. Its ADR-035/BR-075 authority here is the platform-level
+`Enable BingoCommerce` decision, now implemented as the ADR-042 / BR-076
+Enable, Suspend, Re-enable and Retry Ecommerce path (BingoCommerce machine
+endpoint plus Portal Global Admin controls; not deployed). SSO and exact
+identity/role mapping remain deferred.
 
 ## Customer Accounts
 - Guest checkout is the primary path, no account required. (BR-007)
@@ -208,8 +240,10 @@ deferred.
   extensions, post-commit audit/projection and targeted reconciliation. Slice 3 implements
   Package administration UI and request handling. The customer cart backend
   and electronic-limit validation at cart addition and classic/Store API
-  checkout are implemented; the customer storefront theme and selection
-  screens remain pending. No real Hall migration or deployment is claimed. The
+  checkout are implemented; the BingoThemev1 storefront foundation and Store
+  Details are implemented (BR-084), and the Session → Package → add-on
+  selection screens remain pending. No real Hall migration or deployment is
+  claimed. The
   additive Portal-template and Commerce-schedule tables in Session schema v3 do
   not replace them.
   `bc_product_kind` and `bc_package_relation` remain deterministic WooCommerce

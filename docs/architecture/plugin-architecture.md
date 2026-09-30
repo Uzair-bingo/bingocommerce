@@ -5,7 +5,7 @@ independently activatable and testable.
 
 | Plugin | Responsibility | Depends on |
 |---|---|---|
-| `bingocommerce-core` | Roles & capabilities, tenant context helpers, audit log service, migration framework | WooCommerce (network) |
+| `bingocommerce-core` | Roles & capabilities, tenant context helpers, audit log service, migration framework; Hall public storefront profile (Store Details: per-site `bc_store_details`, Appearance → Store Details screen, read-only `bingocommerce_store_details` filter — ADR-045 narrow clarification of ADR-026); BR-084 `StorefrontStyleGuard` (on Hall sites only Super Admins may edit/delete/publish `wp_global_styles`; the unavailable Appearance → Fonts entry is removed for everyone else) | WooCommerce (network) |
 | `bingocommerce-catalog` | Hall-scoped Game Type replica/domain behavior, Bingo Play Product domain metadata/mapping, Bingo Package definitions/components, ADR-044 Package add-on eligibility/configuration, administration and targeted projection reconciliation, BR-032/BR-065 metadata projections, BR-064 network maximum and Hall override settings screens/writers plus the read-only current-value resolver, starter-product domain logic when that deferred copy exists (ADR-026/ADR-031/ADR-035/ADR-044; add-on schema Slice 1, backend Slice 2 and admin UI Slice 3 implemented; ADR-042 MVP runs no starter copy) | core |
 | `bingocommerce-sessions` | Portal Session-template replica; Commerce schedules with immutable named timezone and structured time; dated occurrence generation/reconciliation; inclusive hall-local 30-day window; centralized current-definition membership; Available for Sale; Package assignment; and customer occurrence-before-Package selection (BR-050–BR-052/BR-063/BR-073/BR-077/BR-078; approved ADR-043) | core, catalog |
 | `bingocommerce-digital-tickets` | Implemented: Hall-local purchase-time entitlement snapshot on successful online payment, refund/cancellation voiding and terminal markers, stable QR reference, guarded customer order-view rendering, and a paid-order email link to that authorized view. Pending: Android scanning/redemption, device binding, and staff reactivation | core, catalog, sessions |
@@ -13,12 +13,20 @@ independently activatable and testable.
 | `bingocommerce-platform` | Actual WordPress Multisite site creation; WooCommerce/site initialization; triggering existing per-site BingoCommerce migrations and role provisioning; returning a structured setup result to the integration orchestrator; billing lifecycle (BR-016); retention/deletion (BR-017); network reporting. Does not own Catalog domain rules. ADR-042 MVP does not trigger starter Product/Play Product copy | core |
 
 Theme: Phase 1 standard storefront in `wp-content/themes/bingocommerce-*`.
-Presentation only — zero business logic (AGENTS.md rule 2).
+Presentation only — zero business logic (AGENTS.md rule 2). The v1 theme is
+`BingoThemev1` in `wp-content/themes/bingocommerce-bingothemev1/` (ADR-045): a
+classic PHP theme with a fixed header/footer, native logo and `primary`/`footer`
+menus, fixed colours and fonts, and native WooCommerce output with no
+WooCommerce template overrides. It reads Store Details only through the core
+`bingocommerce_store_details` filter and renders nothing when core is absent.
 
 Plugin boundaries are locked by ADR-026, narrowed by ADR-035, and extended for
 automatic Commerce enable/suspend by ADR-042:
 `bingocommerce-core` stays foundational/shared infrastructure only — Catalog
-domain behavior must not be added there. `bingocommerce-sessions` owns Session,
+domain behavior must not be added there — with ADR-045's narrow exception for
+the Hall public storefront profile (Store Details: display configuration, not
+domain authority). Its capability policy also includes the BR-084 storefront
+style guard (Hall global-styles writes are Platform Admin-only). `bingocommerce-sessions` owns Session,
 never Catalog entities. `bingocommerce-platform` does not own Catalog domain
 rules; under ADR-042 it performs Multisite/WooCommerce/site initialization and
 returns a structured setup result to `bingocommerce-portal-integration`. The
@@ -35,9 +43,9 @@ Slice 2 implements `PackageAddonService`, the fixed mutation profile,
 lifecycle/medium integrity, post-commit audit/projection and targeted
 reconciliation. Slice 3 implements Package administration UI and request handling;
 the customer cart backend and electronic-limit checks at cart addition and
-classic/Store API checkout are implemented. Customer storefront theme and
-selection screens remain pending. No real Hall migration or deployment is
-claimed. Its two
+classic/Store API checkout are implemented. The BingoThemev1 storefront
+foundation is implemented (ADR-045); customer selection screens remain pending.
+No real Hall migration or deployment is claimed. Its two
 baseline Session tables belong to `bingocommerce-sessions`. Session schema v3
 adds the Portal-template replica and three schedule-definition tables in the
 same plugin without replacing those baseline tables. `bingocommerce-catalog`

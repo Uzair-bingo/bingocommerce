@@ -28,8 +28,8 @@ Request -> hallname.parent-domain.com
         eligible dated Session (exact date + Session name) before selecting
         the Bingo Package
         -> implemented server-side cart validation and electronic-limit checks
-           at cart addition and classic/Store API checkout; storefront/theme
-           selection screens remain pending
+           at cart addition and classic/Store API checkout; BingoThemev1
+           foundation implemented (ADR-045); selection screens remain pending
         -> order records exact Session, Package, add-on links/quantities and
            saved digital-face totals by Game Type; Woo line amounts, discounts
            and taxes remain the financial record (BR-083)
@@ -148,8 +148,9 @@ automatic Enable/Disable. See
   profile, integrity extensions, post-commit audit/projection and targeted
   reconciliation. Slice 3 implements Package administration UI and request
   handling. The customer cart backend and electronic-limit checks at cart
-  addition and classic/Store API checkout are implemented; storefront theme and
-  selection screens remain pending. No real Hall migration, deployment or
+  addition and classic/Store API checkout are implemented; the BingoThemev1
+  storefront foundation is implemented (ADR-045) and the selection screens
+  remain pending. No real Hall migration, deployment or
   production readiness is claimed.
   Game Type, Bingo Play Product, Package, and Session use local
   surrogate domain IDs; Portal `game_types.id` is the trusted cross-

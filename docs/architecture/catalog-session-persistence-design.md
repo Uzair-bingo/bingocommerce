@@ -8,9 +8,9 @@ implements `PackageAddonService`, its fixed transaction profile,
 lifecycle/medium integrity, post-commit audit/projection and targeted
 reconciliation. Slice 3 implements Package administration UI and request
 handling. The customer cart backend and electronic-limit validation at cart
-addition and classic/Store API checkout are implemented; the customer
-storefront theme and selection screens remain pending. No real Hall migration
-or deployment is claimed. The
+addition and classic/Store API checkout are implemented; the BingoThemev1
+storefront foundation is implemented (ADR-045) and the customer selection
+screens remain pending. No real Hall migration or deployment is claimed. The
 additive Session schedule/occurrence model exists under approved ADR-043;
 production deployment is not claimed.
 
@@ -1075,8 +1075,9 @@ Package Admin UI, nonce/controller boundary, checkbox/bulk orchestration,
 regular-price prefill and browser Remove confirmation on the existing Edit
 Package screen. The later BR-081/BR-082 slices implement the customer cart
 backend and electronic-limit validation at cart addition and classic/Store API
-checkout. Customer storefront theme and selection screens remain pending; no
-real Hall migration or deployment is claimed.
+checkout. The BingoThemev1 storefront foundation is implemented (ADR-045);
+customer selection screens remain pending; no real Hall migration or
+deployment is claimed.
 
 The add-on slice extends, but does not replace, the existing Catalog boundaries.
 Eligibility requires an active Package, active Play Product, enabled relationship
@@ -1316,8 +1317,13 @@ multisite test site, and re-enable reused the same site.
 ### `bingocommerce-core`
 
 Owns shared migration infrastructure, tenant context, capabilities, and audit
-infrastructure only. ADR-026 remains in force: Catalog and Session behavior do
-not move into core.
+infrastructure, plus ADR-045's narrow exception: the Hall public storefront
+profile (Store Details — per-site display configuration, not Catalog, Session,
+commerce or Portal authority). Its capability policy includes the BR-084
+`StorefrontStyleGuard`, which limits Hall global-style writes to Super Admins
+and removes the unavailable Appearance → Fonts entry for everyone else on Hall
+sites. ADR-026 remains in force: Catalog and Session behavior do not move into
+core.
 
 Catalog and Session migrations must be idempotent, provision stale existing
 sites only when needed, provision newly created halls automatically, and never

@@ -1,0 +1,12 @@
+/*
+Theme Name: BingoThemev1
+Description: Shared BingoCommerce Hall storefront. Classic PHP theme with a fixed header and footer, fixed v1 colours and fonts, native logo and menu controls, and native WooCommerce output. Presentation only; purchase rules live in the BingoCommerce plugins.
+Author: Bingo Innovation
+Version: 0.1.0
+Requires at least: 7.0
+Requires PHP: 8.4
+Text Domain: bingocommerce-bingothemev1
+License: Proprietary. Bundled fonts: SIL Open Font License 1.1 (see assets/fonts/*/OFL.txt).
+*/
+
+/* Styles live in assets/css/main.css. */

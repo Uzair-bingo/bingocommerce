@@ -16,6 +16,12 @@ final class Plugin {
 		HallStaffWriterGuard::register();
 		HallStaffAdmin::register();
 
+		// ADR-045: Hall public storefront profile; rendering stays in the theme.
+		StoreDetails::register();
+		StoreDetailsAdmin::register();
+		// BR-084: fixed v1 storefront fonts/colours; global-styles writes are Platform Admin only on Halls.
+		StorefrontStyleGuard::register();
+
 		// Priority 5: core-owned schema is applied before any handler that may
 		// come to depend on it. Gated internally by a network schema version,
 		// so a current network costs one cached option read per request.

@@ -70,7 +70,8 @@ can use this same endpoint/cart; this slice adds no frontend request code.
   cart prices are refreshed on load/totals. These are not historical price locks.
 - Store API item extensions expose read-only Session/Package/relationship IDs,
   role and parent key. Backend linkage/order is implemented; visual nesting,
-  labels, theme, calendar and selection screens remain frontend work.
+  labels and selection screens remain frontend work. The BingoThemev1 shell
+  (ADR-045) renders the native cart and checkout but adds no Bingo line labels.
 
 ## Installed WooCommerce integration evidence
 
