@@ -47,10 +47,16 @@ Three roles — do not conflate or merge:
   location, but cannot move or reorder homepage sections. Menu links and their
   order remain editable separately. The public storefront location is
   Hall-local and separate from Portal-owned Hall identity and WooCommerce's
-  business/tax address. Not implemented yet: the current homepage is the
-  first-slice foundation only; the remaining homepage sections, the map and
-  the homepage editing controls are future work, and no section design,
-  map provider or editing mechanism has been chosen. (BR-084)
+  business/tax address. The homepage slider and its Appearance → Homepage
+  controls are implemented under the 2026-09-30 ADR-045 / BR-084 addition:
+  zero to six slides, Hall Media Library images, required headings (80
+  characters), optional supporting text (160), up to two navigation buttons
+  (32-character labels, full HTTP(S) URLs), and two fixed image-framing presets.
+  Invalid submissions preserve saved data. The original banner remains when no
+  usable slides exist. Multiple slides provide accessible six-second autoplay,
+  Pause/Resume, arrows and dots, with reduced-motion support. Map, Shop by
+  Category, Session selection and other homepage sections/controls remain
+  future work; no map provider is chosen. (BR-084)
 - One Store Details form holds the Hall's public address, phone, email and
   Facebook, Instagram, YouTube and TikTok links. All fields are optional. The
   public address is separate from WooCommerce's business/tax address, and

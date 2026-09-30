@@ -249,6 +249,56 @@ address { font-style: normal; }
 .hero__tagline { color: var(--color-text-on-dark); font-size: 18px; }
 .hero__actions { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; margin-top: 28px; }
 
+/* Homepage slider: reference framing, fixed theme tokens, no section-layout controls. */
+.bc-home-slider { position: relative; isolation: isolate; background: var(--color-bg-dark); color: #fff; }
+.bc-home-slider [hidden] { display: none !important; }
+.bc-home-slider__slides { display: grid; }
+.bc-home-slider__slide {
+	grid-area: 1 / 1; position: relative; isolation: isolate; min-width: 0; min-height: 620px;
+	display: flex; align-items: center; padding: 80px 0;
+	opacity: 0; visibility: hidden; transition: opacity .6s var(--ease), visibility 0s .6s;
+}
+.bc-home-slider__slide.is-active { opacity: 1; visibility: visible; z-index: 1; transition-delay: 0s; }
+.bc-home-slider__image { position: absolute; inset: 0; z-index: -1; width: 100%; height: 100%; object-fit: cover; object-position: 90% 75%; }
+.bc-home-slider__image--center { object-position: 50% 40%; }
+.bc-home-slider__content.container { text-align: center; padding-inline: 72px; }
+.bc-home-slider h1 { color: #fff; font-size: clamp(32px, 4.4vw, 52px); line-height: 1.5; margin-bottom: 14px; overflow-wrap: anywhere; }
+.bc-home-slider__text { color: #fff; font-size: 16px; font-weight: 600; margin: 0; overflow-wrap: anywhere; }
+.bc-home-slider h1, .bc-home-slider__text, .bc-home-slider__outline { text-shadow: 0 2px 8px rgba(14,27,60,.45); }
+.bc-home-slider__actions { display: flex; justify-content: center; flex-wrap: wrap; gap: 14px; margin-top: 28px; }
+.bc-home-slider__actions .btn { line-height: 1.5; white-space: normal; overflow-wrap: anywhere; max-width: 100%; }
+.bc-home-slider__actions .btn--light { border-width: 0; }
+.bc-home-slider__outline { background: transparent; color: #fff; border-color: rgba(255,255,255,.7); }
+.bc-home-slider__outline:hover { color: #fff; background: rgba(255,255,255,.15); border-color: #fff; transform: translateY(-2px); }
+.bc-home-slider__arrow {
+	position: absolute; top: 50%; transform: translateY(-50%); z-index: 2;
+	width: 40px; height: 40px; display: grid; place-items: center; padding: 0;
+	background: rgba(255,255,255,.14); border: 1.5px solid rgba(255,255,255,.5); border-radius: var(--radius-sm); color: #fff; cursor: pointer;
+}
+.bc-home-slider__arrow::before { content: ""; position: absolute; width: 44px; height: 44px; }
+.bc-home-slider__arrow:hover { background: rgba(255,255,255,.28); }
+.bc-home-slider__arrow--prev { left: 24px; }
+.bc-home-slider__arrow--next { right: 24px; }
+.bc-home-slider__dots { position: absolute; left: 50%; bottom: 7px; transform: translateX(-50%); z-index: 2; display: flex; }
+.bc-home-slider__dots button { display: grid; place-items: center; width: 44px; height: 44px; border: 0; padding: 0; background: transparent; cursor: pointer; }
+.bc-home-slider__dots button::before { content: ""; width: 8px; height: 8px; border-radius: 999px; background: rgba(255,255,255,.4); transition: width .25s var(--ease); }
+.bc-home-slider__dots button[aria-current]::before { width: 22px; background: #fff; }
+.bc-home-slider__rotation { position: absolute; bottom: 7px; right: 24px; z-index: 2; min-height: 44px; padding: 8px 14px; border: 1px solid rgba(255,255,255,.7); border-radius: var(--radius-sm); background: var(--color-bg-dark); color: #fff; cursor: pointer; }
+@media (max-width: 1024px) {
+	.bc-home-slider__slide { min-height: 560px; }
+}
+@media (max-width: 640px) {
+	.bc-home-slider__slide { min-height: 500px; align-items: flex-start; padding-top: 40px; padding-bottom: 130px; }
+	.bc-home-slider__content.container { padding-inline: 56px; }
+	.bc-home-slider h1 { margin-bottom: 8px; }
+	.bc-home-slider__actions { margin-top: 16px; gap: 10px; }
+	.bc-home-slider__arrow { width: 34px; height: 34px; }
+	.bc-home-slider__arrow--prev { left: 12px; }
+	.bc-home-slider__arrow--next { right: 12px; }
+	.bc-home-slider__dots { bottom: 56px; }
+	.bc-home-slider__rotation { right: 50%; transform: translateX(50%); bottom: 12px; white-space: nowrap; }
+}
+
 .section-heading { text-align: center; max-width: 720px; margin: 0 auto; }
 .section-heading h2 { font-size: clamp(28px, 3.5vw, 40px); margin-bottom: 10px; }
 .visit-section { padding: 88px 0; }

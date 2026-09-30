@@ -6166,6 +6166,54 @@ by construction, never deleted by anything.
   display data in a domain plugin or in the theme, where it would be lost on a
   theme change.
 
+- **ADR-045 / BR-084 addition — [2026-09-30] — Hall Homepage Slider Display Configuration (user-approved):**
+
+  This dated addition extends ADR-045's configuration boundary; the earlier
+  decisions above and BR-084's original checkpoint below remain historical.
+  `bingocommerce-core` owns the Hall-local homepage slider, its validated
+  non-autoloaded `bc_homepage_slider` option (version 1), Appearance → Homepage
+  administration, and the read-only `bingocommerce_homepage_slider` filter.
+  It is display configuration only. Catalog, Session, commerce, Portal identity,
+  WooCommerce store-address and provisioning authority are unchanged.
+
+  The screen contains only slider controls: add, edit, remove and arrange zero
+  to six slides; choose each image through the current Hall's native Media
+  Library; enter a required heading (80 characters), optional plain supporting
+  text (160 characters), and zero to two navigation buttons (32-character
+  label and full HTTP(S) URL of up to 2,048 characters). Label/URL pairs must be
+  complete or both blank. URLs with credentials, unsafe schemes or WordPress /
+  WooCommerce action destinations are refused. Buttons never construct cart
+  items or infer Session identities. Two fixed framing presets reproduce the
+  reference's `90% 75%` and `50% 40%` image positioning. Slide order is editable;
+  homepage section order, header/footer, fonts and colours remain fixed.
+
+  Administration uses the existing `bc_manage_hall_settings` capability and a
+  current-Hall nonce, with Platform Admin access retained. Tenant authority is
+  always the resolved current site, never a submitted Hall ID. Media IDs are
+  resolved in that site's attachment table. Complete payload validation precedes
+  one native option update; invalid or truncated requests preserve saved data.
+  Stored attachment IDs, text, buttons and order remain separate fields. Reads
+  and media resolution follow `switch_to_blog()` without a cross-Hall static
+  cache, and reads never repair storage. No migration or network option exists.
+
+  BingoThemev1 owns rendering/escaping and the slider's scoped CSS and JavaScript.
+  It reproduces the original HTML slider's desktop/mobile layout with responsive
+  cover images and separately rendered text/buttons. Missing/deleted/unresolvable
+  attachments omit their slides and produce an administration warning. With no
+  usable slides, the original Hall-name/tagline/Shop banner remains. A browser
+  image-load failure keeps the text/buttons over the fixed navy background.
+  One usable slide has no navigation or rotation controls. Multiple slides have
+  previous/next, dots, six-second autoplay and a 0.6-second fade, with explicit
+  Pause/Resume. Focus entry and manual navigation stop rotation until Resume;
+  hover and a hidden document temporarily suspend it. Reduced motion disables
+  autoplay and transitions. Keyboard controls, visible focus, inactive-slide
+  exclusion and manual-change announcements are required. Without JavaScript,
+  the first usable slide remains readable and controls stay hidden.
+
+  This slice imports no sample slides/images. Map, Shop by Category, Session
+  selection and all other homepage sections remain separate work. Core's existing
+  Store Details option and administration are unchanged. No deployment is claimed.
+
 ---
 
 ## Business Rules (BR)

@@ -1,0 +1,9 @@
+.bc-homepage { max-width: 900px; }
+.bc-homepage .bc-slide { margin: 24px 0; padding: 20px; background: #fff; border: 1px solid #c3c4c7; }
+.bc-homepage .bc-slide legend { font-size: 18px; font-weight: 600; padding: 0 6px; }
+.bc-homepage .bc-slide label { display: block; font-weight: 600; margin-bottom: 6px; }
+.bc-homepage .bc-slide__tools { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+.bc-homepage .bc-slide__image img { display: block; width: 280px; max-width: 100%; height: auto; margin-bottom: 12px; }
+.bc-homepage .bc-slide__button { border-top: 1px solid #dcdcde; margin-top: 20px; }
+.bc-homepage .bc-slide__error { display: block; color: #b32d2e; margin-top: 6px; }
+.bc-homepage [hidden] { display: none !important; }

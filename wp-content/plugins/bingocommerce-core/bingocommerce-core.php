@@ -36,6 +36,8 @@ require_once BINGOCOMMERCE_CORE_PATH . 'src/HallStaffWriterGuard.php';
 require_once BINGOCOMMERCE_CORE_PATH . 'src/HallStaffAdmin.php';
 require_once BINGOCOMMERCE_CORE_PATH . 'src/StoreDetails.php';
 require_once BINGOCOMMERCE_CORE_PATH . 'src/StoreDetailsAdmin.php';
+require_once BINGOCOMMERCE_CORE_PATH . 'src/HomepageSlider.php';
+require_once BINGOCOMMERCE_CORE_PATH . 'src/HomepageAdmin.php';
 require_once BINGOCOMMERCE_CORE_PATH . 'src/StorefrontStyleGuard.php';
 require_once BINGOCOMMERCE_CORE_PATH . 'src/Plugin.php';
 

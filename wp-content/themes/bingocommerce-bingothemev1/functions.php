@@ -58,6 +58,9 @@ final class Theme {
 
 	public static function assets(): void {
 		wp_enqueue_style( 'bingothemev1', get_theme_file_uri( 'assets/css/main.css' ), [], self::asset_version( 'assets/css/main.css' ) );
+		if ( is_front_page() ) {
+			wp_enqueue_script( 'bingothemev1-homepage-slider', get_theme_file_uri( 'assets/js/homepage-slider.js' ), [], self::asset_version( 'assets/js/homepage-slider.js' ), [ 'in_footer' => true, 'strategy' => 'defer' ] );
+		}
 		wp_enqueue_script(
 			'bingothemev1',
 			get_theme_file_uri( 'assets/js/theme.js' ),

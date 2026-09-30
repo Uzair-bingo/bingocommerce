@@ -3755,3 +3755,54 @@ customer selection screens.
   opens and a real global-styles save from it returns 403 `rest_cannot_edit`.
   Super Admin keeping Fonts was verified in the fixture only (no Super Admin
   browser session is available to the agent).
+
+### Homepage slider — branch `bingotheme`, uncommitted (2026-09-30)
+
+- Implemented the approved slider only. Core owns versioned, non-autoloaded
+  Hall-local `bc_homepage_slider`, the read-only `bingocommerce_homepage_slider`
+  filter and Appearance → Homepage. Existing Hall settings capability, a
+  Hall-specific nonce, strict complete-form validation and current-site media
+  resolution protect saves. Invalid/truncated submissions preserve saved data.
+- Hall Managers can add, remove and arrange up to six slides using native Media
+  Library images, required headings (80 characters), optional supporting text
+  (160), two optional complete label/HTTP(S)-destination pairs (32/2,048), and
+  the two reference framing presets. Buttons only navigate; action URLs are
+  refused. No sample content or images were imported into any existing Hall.
+- BingoThemev1 renders the slider at the original banner position with responsive
+  cover images, separate escaped content, reference desktop/mobile spacing,
+  arrows/dots and six-second autoplay / 0.6-second fade. Pause/Resume, keyboard
+  operation, focus/hover/visibility handling, reduced motion, inactive-slide
+  exclusion and no-JavaScript rendering are included. Small fixed navy text
+  shadows aid readability; chosen Hall artwork still needs contrast review.
+- Zero usable slides retain the original banner; one slide omits controls.
+  Missing/deleted/unresolvable attachments are skipped with admin warnings;
+  browser image-load errors retain content on the navy background. Reads never
+  mutate saved settings. Header, footer, existing contact section, font assets,
+  colour tokens and the header/cart JavaScript are unchanged. Map, categories,
+  Session selection and other homepage sections remain pending.
+- ADR-045 / BR-084 configuration ownership is recorded as a dated addition to
+  DECISIONS.md. Historical decision text was not rewritten. Current requirements,
+  plugin boundaries and AGENTS.md reflect the slider's scope.
+- Verification: guarded `bingocommerce_state_recon` disposable-fixture suites:
+  `homepage-slider.php` 222 passed / 0 failed; `store-details.php` 204 / 0;
+  `bingothemev1-storefront.php` 61 / 0. Includes the actual native WordPress Media
+  Library query handler, overlapping attachment IDs, A → B → A reads, capability
+  and nonce refusal, invalid saves, deletion and zero/one/multiple rendering.
+  Owned Halls/users were cleaned up; persistent fixture Halls were unchanged.
+- `homepage-slider-browser.cjs`: 59 passed / 0 failed in local Chrome, using
+  static PHP fixture output with all browser requests intercepted. Checked six
+  widths (1440/1024/768/640/390/320), long/enlarged text, both crops, autoplay,
+  Pause/Resume, focus, hover, keyboard, document visibility, reduced motion,
+  broken images, no JavaScript, and admin add/remove/reorder. Desktop/mobile
+  screenshots were visually compared with the read-only original HTML using
+  local fonts. The form's media-frame selection uses a test double; the native
+  query handler is independently covered by the PHP fixture.
+- Remaining manual checks: complete native wp-admin Media Library modal flow,
+  actual screen-reader announcements, Safari/Firefox/physical mobile devices,
+  and contrast/cropping for each Hall's chosen artwork. No existing-Hall admin
+  settings were changed for browser testing. No production-readiness claim.
+- PHP syntax (8 changed/new PHP files), JavaScript syntax (3 changed/new scripts)
+  and whitespace checks passed. The complete tracked/new-file diff and test logs
+  are in `/private/tmp/bingocommerce-slider-review/`. No staging, commit, push
+  or deployment was performed; HEAD remains
+  `6c03d2f4fafe73b7fb32ec66efcb975fe00c0233`.

@@ -43,6 +43,7 @@ final class BingoThemeV1StorefrontTest {
 			$a = $this->hall( 'a' ); $b = $this->hall( 'b' );
 			$this->details_follow_site_switches( $a, $b );
 			$this->contact_and_social_output( $a, $b );
+			$this->slider_assets_only_on_front_page();
 			$this->global_styles_are_platform_only( $a, $b );
 			$this->fonts_menu_only_where_saving_is_allowed( $a );
 		} catch ( Throwable $e ) {
@@ -108,6 +109,23 @@ final class BingoThemeV1StorefrontTest {
 		try {
 			$this->same( '', $render( [ Template::class, 'contact' ] ) . $render( [ Template::class, 'social_links' ] ), 'nothing rendered where no Store Details exist' );
 		} finally { restore_current_blog(); }
+	}
+
+	private function slider_assets_only_on_front_page(): void {
+		global $wp_query;
+		$previous = $wp_query;
+		$front = static fn() => 'posts';
+		add_filter( 'pre_option_show_on_front', $front );
+		try {
+			$wp_query = new WP_Query();
+			$wp_query->is_home = false;
+			wp_dequeue_script( 'bingothemev1-homepage-slider' );
+			\BingoCommerce\BingoThemeV1\Theme::assets();
+			$this->same( false, wp_script_is( 'bingothemev1-homepage-slider', 'enqueued' ), 'slider script absent from other pages' );
+			$wp_query->is_home = true;
+			\BingoCommerce\BingoThemeV1\Theme::assets();
+			$this->same( true, wp_script_is( 'bingothemev1-homepage-slider', 'enqueued' ), 'slider script enqueued on front page' );
+		} finally { $wp_query = $previous; remove_filter( 'pre_option_show_on_front', $front ); wp_dequeue_script( 'bingothemev1-homepage-slider' ); }
 	}
 
 	private function global_styles_are_platform_only( int $a, int $b ): void {

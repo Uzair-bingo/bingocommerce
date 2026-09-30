@@ -35,8 +35,8 @@ BingoCommerce is a hosted multi-tenant e-commerce platform for bingo halls, chur
   nonce/controller boundary, bulk-form orchestration, regular-price prefill and
   browser Remove confirmation. The customer cart backend and electronic-limit
   validation at cart addition and classic/Store API checkout are implemented;
-  the BingoThemev1 storefront foundation and core Store Details are implemented
-  (ADR-045 / BR-084), and the Session → Package → add-on selection screens
+  the BingoThemev1 storefront foundation, core Store Details and Hall homepage
+  slider are implemented (ADR-045 / BR-084, slider addition 2026-09-30), and the Session → Package → add-on selection screens
   remain pending. No real Hall migration or deployment is claimed. Add-on prices
   are canonical `DECIMAL(19,2)` values. The new-row UI
   prefill loads the linked product with `\wc_get_product( $wc_product_id )`,
@@ -82,7 +82,7 @@ Custom code lives ONLY in:
 
 ## 4. Roles & Permissions Model
 - **Game Operator:** Floor/session role only. Can scan and redeem digital QR receipts, lookup redemptions, and execute staff-gated ticket reactivations. Zero access to pricing, products, or billing settings.
-- **Hall Manager:** Runs one or more assigned hall stores. Manages products, Packages, add-ons, pricing, inventory, sessions, orders, staff, refunds, payment gateway setup, the optional hall electronic-limit override, and approved storefront customization. In v1 (BR-084 / ADR-045) that customization is the Hall logo, primary/footer menu links and their order, the public Store Details, page content, and homepage text, images and map location (homepage sections, map and their editing controls are not built yet); homepage section order, the shared BingoThemev1 header/footer structure, and its colours and fonts are fixed. Cannot install/upload/switch/activate themes, install or activate plugins, alter network configuration, or set the platform electronic maximum (BR-064).
+- **Hall Manager:** Runs one or more assigned hall stores. Manages products, Packages, add-ons, pricing, inventory, sessions, orders, staff, refunds, payment gateway setup, the optional hall electronic-limit override, and approved storefront customization. In v1 (BR-084 / ADR-045) that customization is the Hall logo, primary/footer menu links and their order, the public Store Details, page content, and homepage text, images and map location (the slider and Appearance → Homepage slider controls are implemented; other homepage sections, map and their editing controls are not built yet); homepage section order, the shared BingoThemev1 header/footer structure, and its colours and fonts are fixed. Cannot install/upload/switch/activate themes, install or activate plugins, alter network configuration, or set the platform electronic maximum (BR-064).
 - **Platform Admin:** Bingo Innovation network-wide administrator. May edit any hall store, manage platform billing status (BR-016), manage starter WooCommerce Products/Bingo Play Products when that deferred mechanism exists (starter Package templates are not a v1 requirement), set the platform electronic-card maximum (BR-038), oversee data retention, and perform **explicit** Network Super Admin / Platform Admin recovery: legacy Hall backfill/enrolment and ownership-unproven orphan-site recovery. Portal Game Types synchronize by Portal ID under ADR-035. Automatic Enable Ecommerce / Disable Ecommerce is **Portal Global Admin-only** via the BingoCommerce machine API (BR-075, BR-076 / ADR-042) and is not initiated by WordPress Platform Admin. The BingoCommerce REST endpoint, orchestrator, provisioning-operation persistence, platform plugin/filter and automatic site-creation path are implemented and tested. The Portal Global Admin Enable, Suspend, Re-enable and Retry Ecommerce controls are implemented and tested. Hall Owner Ecommerce access is read-only; assigned Hall Managers cannot see the Ecommerce section or store URL; mutation remains Global Admin-only. A user-performed local-development Open Store → Suspend → Re-enable workflow passed against one mapped WordPress multisite test site, and re-enable reused the same site. Production deployment is not claimed. The automatic-provisioning MVP creates an empty ready store (no starter Product / Play Product copy).
 
 ---
@@ -116,8 +116,8 @@ Custom code lives ONLY in:
    and targeted reconciliation. Slice 3 implements Package administration UI
    and request handling. The customer cart backend and electronic-limit checks
    at cart addition and classic/Store API checkout are implemented; the
-   BingoThemev1 storefront foundation is implemented (ADR-045) and the
-   customer selection screens remain pending. The
+   BingoThemev1 storefront foundation and Hall homepage slider are implemented
+   (ADR-045, slider addition 2026-09-30); customer selection screens remain pending. The
    current additive Session schema also uses `bingo_portal_session_templates`,
    `bingo_session_schedules`,
    `bingo_session_schedule_dates`, and `bingo_session_schedule_packages` for

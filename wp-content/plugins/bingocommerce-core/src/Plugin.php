@@ -19,6 +19,8 @@ final class Plugin {
 		// ADR-045: Hall public storefront profile; rendering stays in the theme.
 		StoreDetails::register();
 		StoreDetailsAdmin::register();
+		HomepageSlider::register();
+		HomepageAdmin::register();
 		// BR-084: fixed v1 storefront fonts/colours; global-styles writes are Platform Admin only on Halls.
 		StorefrontStyleGuard::register();
 
