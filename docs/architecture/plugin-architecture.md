@@ -7,7 +7,7 @@ independently activatable and testable.
 |---|---|---|
 | `bingocommerce-core` | Roles & capabilities, tenant context helpers, audit log service, migration framework; Hall public storefront profile (Store Details: per-site `bc_store_details`, Appearance → Store Details screen, read-only `bingocommerce_store_details` filter — ADR-045 narrow clarification of ADR-026); Hall homepage slider (`bc_homepage_slider`, Appearance → Homepage, read-only `bingocommerce_homepage_slider` filter — ADR-045 addition 2026-09-30); Hall Shop by Category cards (`bc_homepage_categories`, independent Appearance → Homepage form, read-only `bingocommerce_homepage_categories` — ADR-045 addition 2026-10-01); BR-084 `StorefrontStyleGuard` (on Hall sites only Super Admins may edit/delete/publish `wp_global_styles`; the unavailable Appearance → Fonts entry is removed for everyone else) | WooCommerce (network) |
 | `bingocommerce-catalog` | Hall-scoped Game Type replica/domain behavior, Bingo Play Product domain metadata/mapping, Bingo Package definitions/components, ADR-044 Package add-on eligibility/configuration, administration and targeted projection reconciliation, BR-032/BR-065 metadata projections, BR-064 network maximum and Hall override settings screens/writers plus the read-only current-value resolver, starter-product domain logic when that deferred copy exists (ADR-026/ADR-031/ADR-035/ADR-044; add-on schema Slice 1, backend Slice 2 and admin UI Slice 3 implemented; ADR-042 MVP runs no starter copy) | core |
-| `bingocommerce-sessions` | Portal Session-template replica; Commerce schedules with immutable named timezone and structured time; dated occurrence generation/reconciliation; inclusive hall-local 30-day window; centralized current-definition membership; Available for Sale; Package assignment; and customer occurrence-before-Package selection (BR-050–BR-052/BR-063/BR-073/BR-077/BR-078; approved ADR-043) | core, catalog |
+| `bingocommerce-sessions` | Portal Session-template replica; Commerce schedules with immutable named timezone and structured time; dated occurrence generation/reconciliation; inclusive hall-local 30-day window; centralized current-definition membership; Available for Sale; Package assignment; and customer occurrence-before-Package selection, including the read-only, signed-out-safe homepage Session calendar (`HomepageSessionCalendar`, `bingocommerce_homepage_session_calendar` filter — ADR-045 / BR-084 addition 2026-10-01) (BR-050–BR-052/BR-063/BR-073/BR-077/BR-078/BR-080; approved ADR-043) | core, catalog |
 | `bingocommerce-digital-tickets` | Implemented: Hall-local purchase-time entitlement snapshot on successful online payment, refund/cancellation voiding and terminal markers, stable QR reference, guarded customer order-view rendering, and a paid-order email link to that authorized view. Pending: Android scanning/redemption, device binding, and staff reactivation | core, catalog, sessions |
 | `bingocommerce-portal-integration` | Portal-facing machine endpoint; request authentication/validation; provisioning-operation persistence/sequencing; Portal Hall mapping coordination; HallCommerceState/managed-marker coordination; Portal snapshot synchronization; safe API responses and integration audit attribution (ADR-035–ADR-042) | core |
 | `bingocommerce-platform` | Actual WordPress Multisite site creation; WooCommerce/site initialization; triggering existing per-site BingoCommerce migrations and role provisioning; returning a structured setup result to the integration orchestrator; billing lifecycle (BR-016); retention/deletion (BR-017); network reporting. Does not own Catalog domain rules. ADR-042 MVP does not trigger starter Product/Play Product copy | core |
@@ -36,8 +36,20 @@ versioned, non-autoloaded `bc_homepage_categories` option and its independent
 form use the existing Hall settings capability, a category-specific Hall nonce,
 strict count/completion validation and whole-option replacement. Shared homepage
 text/URL/image policy is reused without changing slider policy. Neither display
-configuration owns WooCommerce taxonomy or product data. Other homepage sections
-and Session selection remain pending.
+configuration owns WooCommerce taxonomy or product data. The homepage Session
+calendar (below Shop by Category, before Visit Us) reads
+`bingocommerce_homepage_session_calendar`: `bingocommerce-sessions` validates the
+unregistered `bc_date`/`bc_session`/`bc_month` GET parameters, builds one
+current-Hall eligibility result per request with the unchanged
+`SessionEligibility::is_sellable()`, derives reachable months and links, and
+reads the selected Session's Packages through `CustomerPackageEligibility` and
+the existing Catalog gateway, then requires a publicly viewable, purchasable
+WooCommerce product. The theme validates the response shape, lays out month
+grids, renders informational Package cards, and adds optional JavaScript that
+only switches already-rendered panels; a missing or unusable provider renders
+"Sessions can't be shown right now." There is no route, rewrite rule, REST/AJAX
+endpoint or Manager control. Other homepage sections, add-on selection and
+purchase actions remain pending.
 
 Plugin boundaries are locked by ADR-026, narrowed by ADR-035, and extended for
 automatic Commerce enable/suspend by ADR-042:
@@ -63,7 +75,9 @@ lifecycle/medium integrity, post-commit audit/projection and targeted
 reconciliation. Slice 3 implements Package administration UI and request handling;
 the customer cart backend and electronic-limit checks at cart addition and
 classic/Store API checkout are implemented. The BingoThemev1 storefront
-foundation is implemented (ADR-045); customer selection screens remain pending.
+foundation is implemented (ADR-045), as is the homepage date → Session →
+informational Package display; add-on selection and purchase actions remain
+pending.
 No real Hall migration or deployment is claimed. Its two
 baseline Session tables belong to `bingocommerce-sessions`. Session schema v3
 adds the Portal-template replica and three schedule-definition tables in the

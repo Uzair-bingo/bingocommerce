@@ -54,8 +54,9 @@ Three roles — do not conflate or merge:
   (32-character labels, full HTTP(S) URLs), and two fixed image-framing presets.
   Invalid submissions preserve saved data. The original banner remains when no
   usable slides exist. Multiple slides provide accessible six-second autoplay,
-  Pause/Resume, arrows and dots, with reduced-motion support. Session selection
-  and other homepage sections/controls remain future work.
+  Pause/Resume, arrows and dots, with reduced-motion support. The homepage
+  Session calendar is described below; other homepage sections and controls
+  remain future work.
   (BR-084)
 - Shop by Category (2026-10-01): implemented immediately below the slider/banner,
   before Visit Us/map. Appearance → Homepage uses native WordPress navigation
@@ -92,6 +93,29 @@ Three roles — do not conflate or merge:
   next uncached render. The full-width iframe is 520px high, or 380px at widths
   of 640px and below, with lazy loading and a Hall-specific accessible title.
   There are no separate map controls, API keys, geocoding or new storage.
+- Homepage Session calendar (2026-10-01): a fixed section below Shop by
+  Category and before Visit Us. Selecting a highlighted date shows that date's
+  eligible dated Sessions (exact date and Session name, with structured start
+  time and saved time zone when the Session has them); selecting a Session shows
+  its assigned, eligible Packages inline below the calendar. Highlighted dates
+  and Session rows come from one current-Hall eligibility result using the
+  existing window, Available for Sale, membership and saved-time-zone rules;
+  past dates and dates without eligible Sessions are greyed out and not
+  interactive, and the visitor's device clock is never used. Every month from the
+  first to the last eligible date is reachable. Navigation uses homepage links
+  (`bc_date`, `bc_session`, `bc_month`); malformed, stale or conflicting
+  selections show a recovery message, a requested date without Sessions keeps its
+  own empty state, and the earliest eligible date is selected automatically only
+  when nothing was requested. If Sessions cannot be read the section shows
+  "Sessions can't be shown right now."; only a successful empty read says none
+  are available. Package cards are informational: authoritative name, image,
+  type and native price for Packages that pass assignment and BR-080
+  eligibility, are publicly published and are purchasable in WooCommerce
+  (Packages hidden from the shop may appear). Eligible Sessions stay visible even
+  when they have no eligible Packages. There are no stock or electronic-limit
+  listing filters, no "What's Included" list, add-on selection or purchase
+  action yet, and no Manager controls. JavaScript is optional.
+  (ADR-045 / BR-084 addition 2026-10-01; BR-052, BR-080)
 - One Store Details form holds the Hall's public address, phone, email and
   Facebook, Instagram, YouTube and TikTok links. All fields are optional. The
   public address is separate from WooCommerce's business/tax address, and
@@ -104,9 +128,10 @@ Three roles — do not conflate or merge:
   choose each link's text and URL, and the links appear at the right of the
   copyright line. (BR-084)
 - Shop, product, cart, checkout, account and order pages use native
-  WooCommerce output. Presenting Bingo Packages through the Session → Package →
-  add-on flow, rather than native product Add to cart controls that the backend
-  refuses, is required later shopping-screen work. (BR-081, BR-084)
+  WooCommerce output. The homepage calendar now presents date → Session →
+  informational Package cards; add-on selection and the purchase action, rather
+  than native product Add to cart controls that the backend refuses, remain
+  required later shopping-screen work. (BR-081, BR-084)
 
 Portal Global Admin is an external Portal authority, not a fourth
 BingoCommerce role. Its ADR-035/BR-075 authority here is the platform-level
@@ -282,9 +307,10 @@ identity/role mapping remain deferred.
   Package administration UI and request handling. The customer cart backend
   and electronic-limit validation at cart addition and classic/Store API
   checkout are implemented; the BingoThemev1 storefront foundation and Store
-  Details are implemented (BR-084), and the Session → Package → add-on
-  selection screens remain pending. No real Hall migration or deployment is
-  claimed. The
+  Details are implemented (BR-084), the homepage date → Session → informational
+  Package display is implemented (ADR-045 / BR-084 addition 2026-10-01), and
+  add-on selection and purchase actions remain pending. No real Hall migration
+  or deployment is claimed. The
   additive Portal-template and Commerce-schedule tables in Session schema v3 do
   not replace them.
   `bc_product_kind` and `bc_package_relation` remain deterministic WooCommerce

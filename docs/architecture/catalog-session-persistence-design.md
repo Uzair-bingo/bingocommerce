@@ -9,8 +9,9 @@ lifecycle/medium integrity, post-commit audit/projection and targeted
 reconciliation. Slice 3 implements Package administration UI and request
 handling. The customer cart backend and electronic-limit validation at cart
 addition and classic/Store API checkout are implemented; the BingoThemev1
-storefront foundation is implemented (ADR-045) and the customer selection
-screens remain pending. No real Hall migration or deployment is claimed. The
+storefront foundation is implemented (ADR-045), as is the homepage date →
+Session → informational Package display; add-on selection and purchase
+actions remain pending. No real Hall migration or deployment is claimed. The
 additive Session schedule/occurrence model exists under approved ADR-043;
 production deployment is not claimed.
 
@@ -477,6 +478,16 @@ occurrence-level `SessionEligibility::is_sellable()` and schedule/occurrence
 assignability. The latter continues to allow a preserved archived component and
 answers whether the occurrence has at least one assignable Package; it is not a
 complete Package purchase validator.
+
+The homepage Session calendar (ADR-045 / BR-084 addition 2026-10-01) is a
+read-only consumer of both predicates, unchanged. One bounded candidate query
+(active, Available for Sale non-zero, a date range that is a superset for every
+saved zone) narrows `bingo_sessions` rows; `is_sellable()` alone decides each
+one, and the calendar's dates and Session rows come from that single result.
+For the Session selected by its server link, each `bingo_session_packages` row
+is checked with `CustomerPackageEligibility::is_available()`, then the linked
+WooCommerce product must be publicly viewable and purchasable. Read failures are
+reported as partial or unavailable results rather than empty lists.
 
 ### 2.8 Implemented Additive Portal/Schedule Model (approved ADR-043)
 

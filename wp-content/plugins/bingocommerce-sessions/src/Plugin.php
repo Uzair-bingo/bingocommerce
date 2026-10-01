@@ -23,6 +23,9 @@ final class Plugin {
 		CustomerCart::register();
 		CustomerOrder::register();
 		CustomerRefund::register();
+		// Likewise the homepage calendar: a missing dependency must read as
+		// "unavailable", never as "no Sessions".
+		HomepageSessionCalendar::register();
 		$missing = self::missing_dependencies();
 
 		if ( [] !== $missing ) {

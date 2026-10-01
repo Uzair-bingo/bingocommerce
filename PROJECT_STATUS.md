@@ -3220,8 +3220,10 @@ Everything below is tracked work that is NOT a blocker to that demo.
    The injected post-commit list-read failure and its recovery-only Retry screen
    are covered by automated tests but have not been browser-tested by the user.
    BR-081 customer cart enforcement, BR-082 electronic checkout validation and
-   BR-083 order recording are implemented. Customer selection screens remain
-   outstanding; payment-retry status is summarized in item 2 above.
+   BR-083 order recording are implemented. The homepage date → Session →
+   informational Package display is implemented (2026-10-01, uncommitted);
+   add-on selection and purchase actions remain outstanding; payment-retry
+   status is summarized in item 2 above.
 4. Redemption accumulation (BR-045). BR-064 authorized configuration screens
    and save/removal actions are implemented and isolated-tested. BR-082 keeps
    the read-only effective-limit resolver and electronic validation at cart
@@ -3527,8 +3529,9 @@ Everything below is tracked work that is NOT a blocker to that demo.
   request handling. The BR-081 customer cart backend and BR-082 electronic-limit
   checks at cart addition and classic/Store API checkout are implemented; the
   BingoThemev1 storefront foundation and core Store Details are implemented
-  (ADR-045 / BR-084) and the customer selection screens remain pending. No real
-  Hall migration or deployment is claimed.
+  (ADR-045 / BR-084), as is the homepage Session calendar with informational
+  Package display (2026-10-01); add-on selection and purchase actions remain
+  pending. No real Hall migration or deployment is claimed.
 - **Rule for AI agents:** Read `AGENTS.md`, `docs/architecture/plugin-architecture.md`, and this file before coding. Do not re-scaffold Multisite, WooCommerce, or core bootstrap.
 
 ### Current checkpoint — user-reported commit `2f886fc` (2026-09-28)
@@ -4046,3 +4049,76 @@ customer selection screens.
   Safari/Firefox, a screen reader and physical devices were not tested. Logs and
   the focused diff are in `/private/tmp/bingocommerce-legacy-background-recovery-review/`.
   All changes remain unstaged/uncommitted; no push or deployment occurred.
+
+### Homepage Session calendar — branch `bingotheme`, uncommitted (2026-10-01)
+
+- Started from clean HEAD `fa0e57e5d64184ae1688d94b22fd6ca01f052176`; implements the
+  reviewed plan and its request/state corrections (ADR-045 / BR-084 addition
+  2026-10-01; BR-052, BR-080). No schema, migration, route, rewrite rule,
+  REST/AJAX endpoint, page, Manager control, sample content or Hall setting.
+- Sessions: new read-only `HomepageSessionCalendar` on the
+  `bingocommerce_homepage_session_calendar` filter, registered before the
+  dependency gate so a missing dependency reads as unavailable. Per request, one
+  bounded candidate query (active, Available for Sale non-zero, server UTC date
+  −2…+32 days, cap 500) and `SessionEligibility::is_sellable()` alone per row;
+  `ok`/`partial`/`unavailable` classification (a `false` plus a `WP_Error` is
+  unavailable). Unregistered `bc_session`/`bc_date`/`bc_month` are validated
+  before resolution exactly as reviewed; reachable months come from verified
+  dates only; MM/DD/YYYY labels and links are built server-side. Packages for the
+  verified Session: `CustomerPackageEligibility::is_available()`, then
+  `is_post_publicly_viewable()` and `WC_Product::is_purchasable()`; catalog-hidden
+  Packages may appear; no stock or electronic-limit listing filter; read failures
+  are partial/unavailable; presentation fields only.
+- BingoThemev1: section below Shop by Category and before Visit Us
+  (`template-parts/homepage-session-calendar.php`, `homepage-session-packages.php`,
+  `inc/session-calendar.php`); reference calendar and Package-card styling on the
+  theme tokens (the selected date uses solid `--color-blue-dark` for white-digit
+  contrast); optional front-page `assets/js/homepage-calendar.js`. A missing,
+  unusable or unavailable provider keeps the heading with "Sessions can’t be
+  shown right now."; omitted on the network main site.
+- Guarded `bingocommerce_state_recon` results: `tests/homepage-session-calendar.php`
+  **340 passed / 0 failed** with `BC_SESSION_CALENDAR_BROWSER=1` (337 / 0
+  without the browser stage), two consecutive identical runs; its browser stage
+  **94 passed / 0 failed** over 38 live php-cgi homepage requests in Chrome 154
+  (Playwright 1.62.1). Regressions: Session availability 564, Session 352,
+  schedules 159, schedule admin 447, reconciliation 271 (all PASS); customer
+  cart 140/0; order recording 1098/0; entitlement snapshot 1330/0; storefront
+  106/0; slider 222/0; categories 316/0; Store Details 204/0; slider browser
+  59/0 and categories browser 255/0 on fresh exports. PHP/JS syntax, whitespace
+  and control-byte checks pass. Disposable Halls/actors were removed and
+  persistent fixture Halls 2/3/4 compared unchanged; no development Hall or
+  media directory was touched.
+- **Pre-existing, not caused by this work:** `tests/customer-electronic-limits.php`
+  reports 611 passed / 68 failed; every failure is a Store API checkout case that
+  reaches the fixture's 418 post-validation sentinel instead of the expected 409.
+  The identical failure set reproduces on an unmodified HEAD copy with the
+  installed WooCommerce 11.1.2 (updated 2026-09-30; earlier evidence is 11.0.1).
+  Not investigated or changed here; recorded as a follow-up.
+- Limits: the php-cgi worker switches to the Hall after the fixture boots, so
+  HallCommerceGate's request decision is not exercised and asset URLs use the
+  fixture network host; browser documents are php-cgi responses routed by
+  Playwright (no web server); fixture media are metadata-only attachments
+  answered with one reference image; the three-month browser Hall uses a
+  synthetic eligibility result with real request parsing, resolution and
+  rendering. WordPress core's canonical redirect turns `?bc_date=` into
+  `?bc_date` and `?bc_date[]=…` into `?bc_date%5B0%5D=…`; both are still
+  rejected. Fixture prices show no currency symbol because WooCommerce's
+  installer is not run there. The Catalog-absent guard is not testable
+  in-process. Safari/Firefox, screen readers, physical devices and live
+  development Halls were not tested.
+- Frontend follow-up (same day, presentation only; backend, request rules and
+  Package behaviour unchanged): (1) any explicit date click, including the
+  selected Session's own date, now clears the Session row's selection and hides
+  the whole Package block; the address becomes the date link's date-only URL and
+  Packages return only via a Session's "View Packages" link. (2) Month arrows
+  re-word a still-visible month-only message from the server-rendered
+  highlighted dates of the month shown (both translated messages are rendered;
+  partial results keep "could be confirmed"); recovery, stale, mismatch and
+  requested-date messages are untouched. (3) Package cards use one column at
+  ≤640px. Re-run: calendar harness **355 / 0** with the browser stage (350 / 0
+  without), browser stage **183 / 0** over 56 php-cgi requests (adds a guarded
+  partial three-month Hall); storefront 106/0, slider 222/0, categories 316/0,
+  Store Details 204/0, slider browser 59/0, categories browser 255/0.
+  `customer-electronic-limits.php` is still 611 / 68 failed, with a failure set
+  identical to the HEAD baseline.
+- Nothing was staged, committed, pushed or deployed.

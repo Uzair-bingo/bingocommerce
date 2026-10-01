@@ -6258,6 +6258,72 @@ by construction, never deleted by anything.
   introduced. Slider, map, Store Details and purchase behavior are unchanged;
   other homepage sections and Session selection remain separate work.
 
+- **ADR-045 / BR-084 addition — [2026-10-01] — Homepage Session Calendar and Informational Package Display (user-approved):**
+
+  This dated addition records the reviewed plan; the entries above remain
+  historical. The Hall homepage gains a fixed Session calendar section
+  immediately below Shop by Category and before Visit Us/map. Selecting a date
+  shows that date's eligible dated Sessions; selecting a Session shows its
+  assigned, eligible Packages inline below the calendar. There is no new page,
+  route, rewrite rule, REST/AJAX endpoint or Manager control.
+
+  **Ownership.** `bingocommerce-sessions` owns the read-only
+  `HomepageSessionCalendar` and the `bingocommerce_homepage_session_calendar`
+  filter: request validation and resolution, one current-Hall eligibility
+  result per request, reachable months, links and the Package read through the
+  existing Catalog gateway. It returns presentation fields only, never writes,
+  audits or caches across requests or Halls, and is callable signed out.
+  BingoThemev1 renders the result and may switch already-rendered panels with
+  optional JavaScript; the theme reads no request input, Session class or table.
+
+  **Eligibility.** `SessionEligibility::is_sellable()` alone decides each
+  Session (`true` = verified eligible), unchanged: the inclusive 30-day window,
+  Available for Sale ON, current-definition membership and each occurrence's
+  saved time zone (legacy rows use the Hall setting). A bounded candidate query
+  only narrows rows by conditions every eligible Session already meets. The
+  calendar's selectable dates and each date's Session rows come from that same
+  result. Classification: no eligibility error is `ok`; at least one verified
+  Session plus an error is `partial`; errors with nothing verified, guard or
+  query failure, or more than 500 candidates is `unavailable`. Only a successful
+  empty `ok` result says that no Sessions are available. Past dates and dates
+  without eligible Sessions are greyed out and not interactive; the device clock
+  is never used, and the today marker (Hall setting) never affects selection.
+  Reachable months run from the first to the last verified eligible date,
+  including intermediate months; unverifiable Sessions never extend the span.
+
+  **Request rules.** Unregistered homepage GET parameters `bc_session`,
+  `bc_date` (`YYYY-MM-DD`) and `bc_month` (`YYYY-MM-01`); registering them as
+  query vars would turn a static front page into the posts index. Every supplied
+  parameter is validated first, an empty value is invalid, and an invalid or
+  unreachable month is never bypassed. Then: a verified `bc_session` (with an
+  exact `bc_date` match when supplied) decides the date and month; otherwise a
+  valid `bc_date` keeps its own month and empty state; otherwise `bc_month`
+  shows a month with nothing selected; the earliest eligible date is selected
+  automatically only when all three are absent. Malformed, stale or conflicting
+  selections show a recovery message with a link to `/#calendar` and select
+  nothing. A missing provider, an unusable response or `unavailable` keeps the
+  section heading with "Sessions can't be shown right now." (omitted only on the
+  network main site).
+
+  **Packages.** Existing assignment plus BR-080 eligibility
+  (`CustomerPackageEligibility::is_available()`), then required public
+  visibility of the linked product (`is_post_publicly_viewable()`,
+  viewer-independent) and WooCommerce `is_purchasable()`. Published, assigned
+  Packages hidden from the general shop may appear. No stock or electronic-limit
+  listing filter is added; cart and checkout enforcement is unchanged.
+  Read failures report `partial` or `unavailable`, never an empty list. An
+  eligible Session with no eligible Packages stays visible and shows "No
+  Packages are currently available for this Session." Cards reuse the reference
+  Package-card styling with authoritative names, images, types and native prices;
+  "What's Included", add-on selection and purchase actions are deferred, with no
+  temporary cart action or dead buttons.
+
+  Not decided here: whether Sessions without eligible Packages should later be
+  hidden or marked, whether stock or electronic limits should ever affect the
+  listing, "What's Included" content, and the add-on and purchase step. No page
+  cache exists today; if one is added, the homepage now carries time-dependent
+  availability.
+
 ---
 
 ## Business Rules (BR)

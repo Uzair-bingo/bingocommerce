@@ -69,9 +69,12 @@ can use this same endpoint/cart; this slice adds no frontend request code.
   of an unavailable child leaves the parent blocked as incomplete. Current valid
   cart prices are refreshed on load/totals. These are not historical price locks.
 - Store API item extensions expose read-only Session/Package/relationship IDs,
-  role and parent key. Backend linkage/order is implemented; visual nesting,
-  labels and selection screens remain frontend work. The BingoThemev1 shell
-  (ADR-045) renders the native cart and checkout but adds no Bingo line labels.
+  role and parent key. Backend linkage/order is implemented. The BingoThemev1
+  homepage calendar now shows date → Session → informational Package cards
+  without any cart action (ADR-045 / BR-084 addition 2026-10-01); add-on
+  selection, the add-to-cart request, visual nesting and labels remain frontend
+  work. The BingoThemev1 shell (ADR-045) renders the native cart and checkout
+  but adds no Bingo line labels.
 
 ## Installed WooCommerce integration evidence
 

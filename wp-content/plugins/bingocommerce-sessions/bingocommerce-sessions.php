@@ -42,6 +42,8 @@ require_once BINGOCOMMERCE_SESSIONS_PATH . 'src/CartSelection.php';
 require_once BINGOCOMMERCE_SESSIONS_PATH . 'src/CustomerCart.php';
 require_once BINGOCOMMERCE_SESSIONS_PATH . 'src/CustomerOrder.php';
 require_once BINGOCOMMERCE_SESSIONS_PATH . 'src/CustomerRefund.php';
+// Read-only homepage calendar: composes the predicates above for the theme.
+require_once BINGOCOMMERCE_SESSIONS_PATH . 'src/HomepageSessionCalendar.php';
 
 /*
  * ADR-043 §7 reconciliation. DatabaseContention and OccurrenceGenerationWriter

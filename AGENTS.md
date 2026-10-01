@@ -36,8 +36,11 @@ BingoCommerce is a hosted multi-tenant e-commerce platform for bingo halls, chur
   browser Remove confirmation. The customer cart backend and electronic-limit
   validation at cart addition and classic/Store API checkout are implemented;
   the BingoThemev1 storefront foundation, core Store Details and Hall homepage
-  slider are implemented (ADR-045 / BR-084, slider addition 2026-09-30), and the Session → Package → add-on selection screens
-  remain pending. No real Hall migration or deployment is claimed. Add-on prices
+  slider are implemented (ADR-045 / BR-084, slider addition 2026-09-30), the
+  homepage Session calendar (date → eligible dated Session → informational
+  Package cards, read-only `HomepageSessionCalendar` in Sessions) is implemented
+  (ADR-045 / BR-084 addition 2026-10-01), and add-on selection and purchase
+  actions remain pending. No real Hall migration or deployment is claimed. Add-on prices
   are canonical `DECIMAL(19,2)` values. The new-row UI
   prefill loads the linked product with `\wc_get_product( $wc_product_id )`,
   requires `\WC_Product`, and reads the unfiltered edit-context string with
@@ -117,7 +120,9 @@ Custom code lives ONLY in:
    and request handling. The customer cart backend and electronic-limit checks
    at cart addition and classic/Store API checkout are implemented; the
    BingoThemev1 storefront foundation and Hall homepage slider are implemented
-   (ADR-045, slider addition 2026-09-30); customer selection screens remain pending. The
+   (ADR-045, slider addition 2026-09-30), as is the homepage Session calendar
+   with informational Package display (addition 2026-10-01); add-on selection
+   and purchase actions remain pending. The
    current additive Session schema also uses `bingo_portal_session_templates`,
    `bingo_session_schedules`,
    `bingo_session_schedule_dates`, and `bingo_session_schedule_packages` for

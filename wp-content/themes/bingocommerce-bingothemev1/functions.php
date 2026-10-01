@@ -20,6 +20,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 require_once __DIR__ . '/inc/template-tags.php';
+require_once __DIR__ . '/inc/session-calendar.php';
 require_once __DIR__ . '/inc/woocommerce.php';
 
 final class Theme {
@@ -60,6 +61,8 @@ final class Theme {
 		wp_enqueue_style( 'bingothemev1', get_theme_file_uri( 'assets/css/main.css' ), [], self::asset_version( 'assets/css/main.css' ) );
 		if ( is_front_page() ) {
 			wp_enqueue_script( 'bingothemev1-homepage-slider', get_theme_file_uri( 'assets/js/homepage-slider.js' ), [], self::asset_version( 'assets/js/homepage-slider.js' ), [ 'in_footer' => true, 'strategy' => 'defer' ] );
+			// Optional: every calendar control is a real link without it.
+			wp_enqueue_script( 'bingothemev1-homepage-calendar', get_theme_file_uri( 'assets/js/homepage-calendar.js' ), [], self::asset_version( 'assets/js/homepage-calendar.js' ), [ 'in_footer' => true, 'strategy' => 'defer' ] );
 		}
 		wp_enqueue_script(
 			'bingothemev1',

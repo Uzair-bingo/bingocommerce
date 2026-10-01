@@ -29,7 +29,10 @@ Request -> hallname.parent-domain.com
         the Bingo Package
         -> implemented server-side cart validation and electronic-limit checks
            at cart addition and classic/Store API checkout; BingoThemev1
-           foundation implemented (ADR-045); selection screens remain pending
+           foundation implemented (ADR-045); the homepage Session calendar
+           (date -> eligible dated Session -> informational Package cards,
+           homepage GET parameters, no new route) is implemented; add-on
+           selection and the purchase action remain pending
         -> order records exact Session, Package, add-on links/quantities and
            saved digital-face totals by Game Type; Woo line amounts, discounts
            and taxes remain the financial record (BR-083)
