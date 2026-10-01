@@ -1,6 +1,6 @@
 <?php
 /**
- * Rendering helpers for the fixed header and footer. Every value is escaped at
+ * Rendering helpers for the fixed storefront. Every value is escaped at
  * output; Store Details arrive as plain strings from the core plugin's read-only
  * `bingocommerce_store_details` filter and are never trusted as markup.
  */
@@ -44,6 +44,22 @@ final class Template {
 		$d        = self::details();
 		$locality = trim( implode( ' ', array_filter( [ trim( implode( ', ', array_filter( [ $d['city'], $d['state'] ] ) ) ), $d['postal_code'] ] ) ) );
 		return array_values( array_filter( [ $d['address_line_1'], $d['address_line_2'], $locality, $d['country'] ] ) );
+	}
+
+	/** Unescaped embed URL from the current Hall's public address; no separate map setting. */
+	public static function map_url(): string {
+		$details = self::details();
+		if ( '' === trim( $details['address_line_1'] ) ) {
+			return '';
+		}
+		$address = [];
+		foreach ( [ 'address_line_1', 'address_line_2', 'city', 'state', 'postal_code', 'country' ] as $key ) {
+			$value = trim( $details[ $key ] );
+			if ( '' !== $value ) {
+				$address[] = $value;
+			}
+		}
+		return 'https://www.google.com/maps?q=' . rawurlencode( implode( ', ', $address ) ) . '&output=embed';
 	}
 
 	public static function has_contact(): bool {

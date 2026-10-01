@@ -79,12 +79,22 @@ $bingothemev1_slides = is_array( $bingothemev1_slides ) ? $bingothemev1_slides :
 </section>
 <?php endif; ?>
 
-<?php if ( Template::has_contact() ) : ?>
-	<section class="visit-section" aria-labelledby="visit-title">
+<?php $bingothemev1_map_url = Template::map_url(); ?>
+<?php if ( Template::has_contact() || '' !== $bingothemev1_map_url ) : ?>
+	<section class="visit-section<?php echo '' !== $bingothemev1_map_url ? ' visit-section--map' : ''; ?>" aria-labelledby="visit-title">
 		<div class="container section-heading">
 			<h2 id="visit-title"><?php esc_html_e( 'Visit us', Theme::TEXT_DOMAIN ); ?></h2>
 			<?php Template::contact(); ?>
 		</div>
+		<?php if ( '' !== $bingothemev1_map_url ) : ?>
+			<div class="visit-map">
+				<iframe src="<?php echo esc_url( $bingothemev1_map_url ); ?>" width="100%" height="100%" loading="lazy"
+					referrerpolicy="no-referrer-when-downgrade" title="<?php
+					/* translators: %s: Hall name. */
+					echo esc_attr( sprintf( __( '%s location', Theme::TEXT_DOMAIN ), get_bloginfo( 'name' ) ) );
+					?>"></iframe>
+			</div>
+		<?php endif; ?>
 	</section>
 <?php endif; ?>
 <?php

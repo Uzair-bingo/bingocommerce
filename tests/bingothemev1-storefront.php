@@ -11,6 +11,9 @@
  *    WordPress would otherwise render over the fixed theme; reads and the rest of
  *    edit_theme_options (menus, Customizer logo) stay available. The unavailable
  *    Appearance -> Fonts entry is removed for them and kept for Super Admins.
+ * 3. Homepage maps use only the current Hall's public address, encoded once;
+ *    missing street addresses/Core omit the map without losing contact links.
+ * Optional BC_MAP_PREVIEW_DIR exports static fixture markup for browser checks.
  * Disposable token-owned Halls and actors only; persistent fixture Halls are compared byte-for-byte.
  */
 if ( 'cli' !== PHP_SAPI || 'bingocommerce_state_recon' !== getenv( 'BC_TEST_DB' ) ) {
@@ -18,6 +21,7 @@ if ( 'cli' !== PHP_SAPI || 'bingocommerce_state_recon' !== getenv( 'BC_TEST_DB' 
 }
 putenv( 'BC_FIXTURE_WOOCOMMERCE=1' );
 require __DIR__ . '/fixtures/wordpress-bootstrap.php';
+$_SERVER['SERVER_NAME'] = BC_FIXTURE_DOMAIN;
 require_once ABSPATH . 'wp-admin/includes/plugin.php';
 // The theme's own bootstrap: Template and Theme exactly as the storefront loads them.
 require_once ABSPATH . 'wp-content/themes/bingocommerce-bingothemev1/functions.php';
@@ -43,6 +47,7 @@ final class BingoThemeV1StorefrontTest {
 			$a = $this->hall( 'a' ); $b = $this->hall( 'b' );
 			$this->details_follow_site_switches( $a, $b );
 			$this->contact_and_social_output( $a, $b );
+			$this->homepage_map( $a, $b );
 			$this->slider_assets_only_on_front_page();
 			$this->global_styles_are_platform_only( $a, $b );
 			$this->fonts_menu_only_where_saving_is_allowed( $a );
@@ -109,6 +114,110 @@ final class BingoThemeV1StorefrontTest {
 		try {
 			$this->same( '', $render( [ Template::class, 'contact' ] ) . $render( [ Template::class, 'social_links' ] ), 'nothing rendered where no Store Details exist' );
 		} finally { restore_current_blog(); }
+	}
+
+	private function homepage_map( int $a, int $b ): void {
+		wp_set_current_user( $this->admin );
+		foreach ( [ [ $a, '1 Alpha Street, Alpha City' ], [ $b, '2 Beta Avenue, Beta City' ], [ $a, '1 Alpha Street, Alpha City' ] ] as [ $site, $address ] ) {
+			switch_to_blog( $site );
+			try {
+				switch_theme( self::THEME );
+				$this->same( 'https://www.google.com/maps?q=' . rawurlencode( $address ) . '&output=embed', Template::map_url(), 'map URL follows current Hall A -> B -> A' );
+				[ $dom, $xpath ] = $this->front_document();
+				$this->same( Template::map_url(), $xpath->evaluate( 'string(//div[@class="visit-map"]/iframe/@src)' ), 'rendered iframe follows current Hall' );
+			} finally { restore_current_blog(); }
+		}
+		$before_b = get_blog_option( $b, StoreDetails::OPTION );
+		switch_to_blog( $a );
+		try {
+			update_option( 'blogname', 'Alpha "North" & Friends' );
+			$values = array_replace( StoreDetails::blank(), [
+				'address_line_1' => '12 Café & King + Queen / 50% Road', 'address_line_2' => 'Suite #2 "East"',
+				'city' => 'Montréal', 'state' => 'QC', 'postal_code' => 'H2X 1Y4', 'country' => 'Canada',
+				'phone' => '+1 (813) 555-0101', 'email' => 'alpha@example.com',
+			] );
+			$validated = StoreDetails::validate( $values );
+			$this->same( [], $validated['errors'], 'special-character address is valid Store Details input' );
+			$this->same( true, StoreDetails::save( $validated['values'] ), 'changed address saved only in owned Hall A' );
+			[ $dom, $xpath ] = $this->front_document();
+			$frame = $xpath->query( '//div[@class="visit-map"]/iframe' )->item( 0 );
+			$this->ok( $frame instanceof DOMElement, 'address edit appears on the next render' );
+			$url = $frame->getAttribute( 'src' );
+			parse_str( (string) parse_url( $url, PHP_URL_QUERY ), $query );
+			$this->same( [ 'q' => '12 Café & King + Queen / 50% Road, Suite #2 "East", Montréal, QC, H2X 1Y4, Canada', 'output' => 'embed' ], $query, 'all six address fields in order; punctuation and UTF-8 encoded exactly once without query injection' );
+			$this->same( 'https://www.google.com/maps', strtok( $url, '?' ), 'fixed HTTPS Google iframe endpoint' );
+			$this->same( 'Alpha "North" & Friends location', $frame->getAttribute( 'title' ), 'Hall name survives title attribute escaping' );
+			$this->same( 'lazy', $frame->getAttribute( 'loading' ), 'map lazy loads' );
+			$this->same( 'no-referrer-when-downgrade', $frame->getAttribute( 'referrerpolicy' ), 'reference referrer policy preserved' );
+			$this->same( '100%', $frame->getAttribute( 'width' ), 'iframe width is responsive' );
+			$this->same( '100%', $frame->getAttribute( 'height' ), 'iframe fills defined wrapper height' );
+			$this->same( 1, $xpath->query( '//section[@aria-labelledby="visit-title"]/div[@class="container section-heading"]/following-sibling::div[@class="visit-map"]' )->length, 'map follows contact outside constrained container' );
+			$this->same( 0, $xpath->query( '//section[@aria-labelledby="visit-title"]/following-sibling::section' )->length, 'map is the last homepage section' );
+			$this->same( 1, $xpath->query( '//section[@class="hero"]' )->length, 'existing empty-slider banner still renders alongside map' );
+			$this->same( 1, $xpath->query( '//section[@aria-labelledby="visit-title"]//a[@href="tel:+18135550101"]' )->length, 'contact phone link preserved with map' );
+			$this->same( 1, $xpath->query( '//section[@aria-labelledby="visit-title"]//a[@href="mailto:alpha@example.com"]' )->length, 'contact email link preserved with map' );
+			$this->export_map_preview( 'map', $dom, $xpath );
+
+			foreach ( [
+				[ [ 'address_line_2' => '', 'state' => '', 'country' => '' ], '12 Café & King + Queen / 50% Road, Montréal, H2X 1Y4' ],
+				[ [ 'address_line_1' => '0', 'city' => '', 'postal_code' => '', 'phone' => '', 'email' => '' ], '0' ],
+			] as [ $changes, $expected ] ) {
+				$values = array_replace( $values, $changes );
+				$this->same( true, StoreDetails::save( $values ), 'owned Hall address variant saved' );
+				parse_str( (string) parse_url( Template::map_url(), PHP_URL_QUERY ), $query );
+				$this->same( $expected, $query['q'], 'blank fields omitted without dropping a nonblank zero or adding separators' );
+				[ $dom, $xpath ] = $this->front_document();
+				$this->same( 1, $xpath->query( '//div[@class="visit-map"]/iframe' )->length, 'nonblank street renders map even without other contact fields' );
+			}
+			foreach ( [
+				'phone/email only' => [ 'phone' => '+1 (813) 555-0101', 'email' => 'alpha@example.com' ],
+				'country only' => [ 'country' => 'Canada' ],
+				'blank street with other address fields' => [ 'address_line_1' => '   ', 'address_line_2' => 'Suite 2', 'city' => 'Alpha', 'country' => 'Canada' ],
+				'no details' => [],
+			] as $label => $partial ) {
+				$this->same( true, StoreDetails::save( StoreDetails::validate( array_replace( StoreDetails::blank(), $partial ) )['values'] ), "{$label} saved in owned Hall" );
+				$this->same( '', Template::map_url(), "{$label}: map URL omitted" );
+				[ $dom, $xpath ] = $this->front_document();
+				$this->same( 0, $xpath->query( '//div[@class="visit-map"]' )->length, "{$label}: no map wrapper or iframe" );
+				if ( 'phone/email only' === $label ) {
+					$this->same( 2, $xpath->query( '//section[@aria-labelledby="visit-title"]//a' )->length, 'phone/email links remain without map' );
+					$this->export_map_preview( 'contact-only', $dom, $xpath );
+				}
+				if ( 'country only' === $label ) { $this->ok( str_contains( $dom->saveHTML(), 'Canada' ), 'country contact detail retained without map' ); }
+			}
+			StoreDetails::save( array_replace( StoreDetails::blank(), [ 'address_line_1' => '3 Saved Street' ] ) );
+			remove_filter( StoreDetails::FILTER, [ StoreDetails::class, 'provide' ] );
+			try {
+				$this->same( '', Template::map_url(), 'Core provider absent: map safely omitted despite stored address' );
+				[ $dom, $xpath ] = $this->front_document();
+				$this->same( 0, $xpath->query( '//section[@aria-labelledby="visit-title"]' )->length, 'Core absent: no empty Visit Us section or map' );
+			} finally { StoreDetails::register(); }
+		} finally { restore_current_blog(); }
+		$this->same( $before_b, get_blog_option( $b, StoreDetails::OPTION ), 'Hall A address edits leave Hall B settings unchanged' );
+		switch_to_blog( $b );
+		try { $this->same( 'https://www.google.com/maps?q=2%20Beta%20Avenue%2C%20Beta%20City&output=embed', Template::map_url(), 'Hall B map unchanged after Hall A edits' ); }
+		finally { restore_current_blog(); }
+	}
+
+	/** Render the actual homepage, with no browser or remote Google request. */
+	private function front_document(): array {
+		ob_start();
+		try { include ABSPATH . 'wp-content/themes/' . self::THEME . '/front-page.php'; $html = (string) ob_get_contents(); }
+		finally { ob_end_clean(); }
+		$dom = new DOMDocument();
+		$previous = libxml_use_internal_errors( true );
+		try { $dom->loadHTML( '<?xml encoding="UTF-8">' . $html, LIBXML_NONET ); }
+		finally { libxml_clear_errors(); libxml_use_internal_errors( $previous ); }
+		return [ $dom, new DOMXPath( $dom ) ];
+	}
+
+	private function export_map_preview( string $name, DOMDocument $dom, DOMXPath $xpath ): void {
+		$directory = getenv( 'BC_MAP_PREVIEW_DIR' );
+		if ( ! $directory ) { return; }
+		$real = realpath( $directory );
+		if ( false === $real || ! str_starts_with( $real, '/private/tmp/' ) ) { throw new RuntimeException( 'Preview export requires an existing private/tmp directory.' ); }
+		$html = $dom->saveHTML( $xpath->query( '//section[@aria-labelledby="visit-title"]' )->item( 0 ) );
+		if ( false === file_put_contents( $real . '/' . $name . '.html', $html ) ) { throw new RuntimeException( 'Map preview export failed.' ); }
 	}
 
 	private function slider_assets_only_on_front_page(): void {

@@ -54,9 +54,18 @@ Three roles — do not conflate or merge:
   (32-character labels, full HTTP(S) URLs), and two fixed image-framing presets.
   Invalid submissions preserve saved data. The original banner remains when no
   usable slides exist. Multiple slides provide accessible six-second autoplay,
-  Pause/Resume, arrows and dots, with reduced-motion support. Map, Shop by
-  Category, Session selection and other homepage sections/controls remain
-  future work; no map provider is chosen. (BR-084)
+  Pause/Resume, arrows and dots, with reduced-motion support. Shop by Category,
+  Session selection and other homepage sections/controls remain future work.
+  (BR-084)
+- Homepage map (2026-09-30): implemented directly below Visit Us, before the
+  footer, using `https://www.google.com/maps?q={encoded address}&output=embed`.
+  It uses only the current Hall's public Store Details: address line 1, address
+  line 2, city, state, postal code and country, in that order, omitting blanks.
+  A nonblank address line 1 is required; otherwise the map is omitted and any
+  contact details remain. Appearance → Store Details edits change the map on the
+  next uncached render. The full-width iframe is 520px high, or 380px at widths
+  of 640px and below, with lazy loading and a Hall-specific accessible title.
+  There are no separate map controls, API keys, geocoding or new storage.
 - One Store Details form holds the Hall's public address, phone, email and
   Facebook, Instagram, YouTube and TikTok links. All fields are optional. The
   public address is separate from WooCommerce's business/tax address, and

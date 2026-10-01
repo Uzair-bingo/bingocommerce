@@ -3806,3 +3806,53 @@ customer selection screens.
   are in `/private/tmp/bingocommerce-slider-review/`. No staging, commit, push
   or deployment was performed; HEAD remains
   `6c03d2f4fafe73b7fb32ec66efcb975fe00c0233`.
+
+### Homepage map — branch `bingotheme`, uncommitted (2026-09-30)
+
+- Implemented only the Visit Us map, starting from clean HEAD
+  `0167e4b6abe319939f9b490fa3027be3327b507f`. The committed slider/fallback,
+  contact helper, header/footer, fonts and colour tokens are preserved.
+- The theme derives `https://www.google.com/maps?q={encoded address}&output=embed`
+  from the current Hall's `bingocommerce_store_details` filter on every render:
+  address line 1, address line 2, city, state, postal code, country; blanks are
+  omitted and the query value is encoded once. A nonblank address line 1 is
+  required. Missing Core or address omits the map; available contacts remain.
+  The final URL and Hall-specific iframe title are escaped at output.
+- Existing Appearance → Store Details storage, validation and permissions are
+  reused without changes. There are no new map settings, options, tables,
+  plugins, API keys, JavaScript libraries or geocoding services; WooCommerce's
+  tax/shipping address and Portal Hall records are not read. No configuration
+  boundary extension is needed. Historical decisions remain unchanged.
+- The map sits outside the constrained contact container, below Visit Us and
+  before the footer. It matches the read-only reference's 520px height, 380px
+  at widths ≤640px, 48px contact-to-map spacing and top border, using 100% width
+  to avoid viewport-width overflow. Contact typography/layout remain intact.
+  The iframe is lazy-loaded with `no-referrer-when-downgrade`.
+- Reference inspected: `bingocommer-frontendstore/front-page.html` lines 226–249
+  and `assets/css/style.css` lines 84–86, 396–407 and 920–927. No supplied map
+  screenshot was available. Local desktop/mobile previews were compared with
+  these actual reference files; Google responses were replaced/refused.
+- Guarded `bingocommerce_state_recon` fixture results: storefront 106 passed /
+  0 failed; Store Details 204 / 0; homepage slider 222 / 0. Tests include
+  address-derived iframe URLs and escaping, UTF-8/punctuation encoding, blank
+  field/street omission, Core absence, contact preservation, address updates
+  and A → B → A isolation. Owned disposable Halls/users were removed and
+  persistent fixture Halls 2/3/4 were unchanged. No existing development Hall
+  settings were edited.
+- Browser results: map 34 passed / 0 failed at 1440/1024/768/641/640/390/320px;
+  existing slider browser suite 59 / 0. Map checks used static fixture-rendered
+  HTML with every browser request intercepted: reference sizing, full width,
+  no overflow, blocked-Google contact visibility/keyboard focus, omission and
+  no-JavaScript markup. This verifies generated iframe markup/layout, not a
+  successfully loaded live Google map or the accuracy of Google's location.
+- PHP syntax checks passed for all three changed PHP files; `git diff --check`
+  passed. Logs, static previews, browser checker/screenshots and the complete
+  diff are in `/private/tmp/bingocommerce-map-review/`.
+- Remaining manual checks: in Hall A, change Appearance → Store Details and
+  reload its uncached homepage; verify the live Google location, then verify
+  Hall B remains unchanged and return to A. Clear A's address line 1 and check
+  that its map disappears while phone/email remain. Check a desktop/mobile
+  browser and keyboard access. Live Google loading, a complete wp-admin browser
+  save, Safari/Firefox, screen readers and physical devices were not tested.
+- Shop by Category, Session selection and other homepage components remain
+  pending. Changes are unstaged/uncommitted; no push or deployment performed.

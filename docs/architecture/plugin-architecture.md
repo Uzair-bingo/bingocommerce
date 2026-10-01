@@ -22,6 +22,14 @@ WooCommerce template overrides. It reads Store Details through the core
 `bingocommerce_homepage_slider`. Missing Core data gives empty contact output
 and the original Hall-name/Shop homepage banner. The theme owns slider rendering
 and interaction; Core validates and persists its Hall-local display configuration.
+The homepage map is theme presentation derived on each render from the same
+Store Details filter, with a nonblank public address line 1 required. It uses
+the Google Maps `q` / `output=embed` iframe method, encoding the ordered address
+once and escaping the URL at output. Existing Appearance → Store Details owns
+editing; there is no new configuration boundary, option, API key or geocoding
+service. Hall switching follows the current site without a theme static cache;
+missing Core/address data omits the map safely. Other homepage sections and
+Session selection remain pending.
 
 Plugin boundaries are locked by ADR-026, narrowed by ADR-035, and extended for
 automatic Commerce enable/suspend by ADR-042:
