@@ -20,6 +20,7 @@ final class Plugin {
 		StoreDetails::register();
 		StoreDetailsAdmin::register();
 		HomepageSlider::register();
+		HomepageCategories::register();
 		HomepageAdmin::register();
 		// BR-084: fixed v1 storefront fonts/colours; global-styles writes are Platform Admin only on Halls.
 		StorefrontStyleGuard::register();

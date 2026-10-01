@@ -6214,6 +6214,50 @@ by construction, never deleted by anything.
   selection and all other homepage sections remain separate work. Core's existing
   Store Details option and administration are unchanged. No deployment is claimed.
 
+- **ADR-045 / BR-084 addition — [2026-10-01] — Hall Shop by Category Display Configuration (user-approved):**
+
+  Core's display-configuration exception now also includes ordered homepage
+  category cards: version 1 of the non-autoloaded current-site option
+  `bc_homepage_categories`, an independent Shop by Category form/save action in
+  Appearance → Homepage, and the read-only `bingocommerce_homepage_categories`
+  filter. Historical decisions above and BR-084's original checkpoint remain
+  unchanged. This owns navigation presentation, not WooCommerce categories,
+  product assignments, Catalog, Session, cart or purchase authority.
+
+  Zero to five cards are configurable. The section and each card can have an
+  optional background image; each card requires separate main artwork and may
+  have plain visible text of up to 80 characters. Images are current-Hall native
+  Media Library attachment IDs, with selection/removal controls; clearing a
+  reference never deletes an attachment. A card has one active destination:
+  either a full HTTP(S) URL under the existing homepage navigation policy and
+  2,048-character limit, or a current-Hall `product_cat` term ID (including empty
+  categories). Archive links are resolved through WordPress on each read.
+  Link names derive from visible text, selected category name or explicit main
+  image Alt Text in that priority; absence is a validation error, with no
+  filename fallback or mandatory visible text.
+
+  Both homepage forms remain independent, including notices and settings.
+  Existing Hall settings authorization and a category-specific Hall nonce
+  protect saves. Whole-form validation includes exact shape, a maximum of five
+  cards, current-Hall media/terms, complete exclusive destinations, and explicit
+  count/completion markers. Invalid/truncated submissions preserve saved data.
+  Submitted tenant selectors are rejected; resolved current-site context is
+  always authoritative. Reads use native site-aware APIs without an unkeyed
+  static cache and never repair storage. Missing optional backgrounds fall back
+  to theme styling. Cards missing main images, destinations or accessible names
+  are omitted, with administrator warnings; no usable cards hides the section.
+
+  BingoThemev1 renders this section immediately below the slider/banner and
+  before Visit Us/map. The reference's portrait artwork, decorative heading,
+  arrow links and responsive four/two/one-column proportions are preserved;
+  fewer cards and incomplete rows are centered. Main images are contained to
+  support transparent artwork; backgrounds remain separate decorative layers.
+  Keyboard focus is visible and the storefront needs no JavaScript. Colours,
+  fonts, heading/presentation and homepage section order remain theme-owned.
+  No carousel, sample-content import, page builder or invented Session route is
+  introduced. Slider, map, Store Details and purchase behavior are unchanged;
+  other homepage sections and Session selection remain separate work.
+
 ---
 
 ## Business Rules (BR)

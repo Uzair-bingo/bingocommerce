@@ -1318,7 +1318,8 @@ multisite test site, and re-enable reused the same site.
 
 Owns shared migration infrastructure, tenant context, capabilities, and audit
 infrastructure, plus ADR-045's narrow exception: the Hall public storefront
-profile (Store Details and the homepage slider under the 2026-09-30 addition —
+profile (Store Details, the homepage slider under the 2026-09-30 addition, and
+Shop by Category display cards under the 2026-10-01 addition —
 per-site display configuration, not Catalog, Session,
 commerce or Portal authority). Its capability policy includes the BR-084
 `StorefrontStyleGuard`, which limits Hall global-style writes to Super Admins

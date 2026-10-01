@@ -149,12 +149,14 @@ final class HomepageSlider {
 		return $received === $expected;
 	}
 
-	private static function text_valid( mixed $value, int $max ): bool {
+	/** Shared plain-text policy for Hall homepage display configuration. */
+	public static function text_valid( mixed $value, int $max ): bool {
 		return is_string( $value ) && 1 === preg_match( '//u', $value ) && mb_strlen( trim( $value ) ) <= $max
 			&& 0 === preg_match( '/[\x00-\x1F\x7F<>]/u', $value );
 	}
 
-	private static function url_valid( string $url ): bool {
+	/** Shared navigation-only policy; no cart or WordPress action destinations. */
+	public static function url_valid( string $url ): bool {
 		if ( ! self::text_valid( $url, self::LIMITS['url'] ) || preg_match( '/[\s"\'\\\\]|%0[0-9a-f]|%1[0-9a-f]|%7f/i', $url ) ) {
 			return false;
 		}

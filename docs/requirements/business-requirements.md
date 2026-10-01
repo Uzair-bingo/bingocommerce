@@ -54,9 +54,35 @@ Three roles — do not conflate or merge:
   (32-character labels, full HTTP(S) URLs), and two fixed image-framing presets.
   Invalid submissions preserve saved data. The original banner remains when no
   usable slides exist. Multiple slides provide accessible six-second autoplay,
-  Pause/Resume, arrows and dots, with reduced-motion support. Shop by Category,
-  Session selection and other homepage sections/controls remain future work.
+  Pause/Resume, arrows and dots, with reduced-motion support. Session selection
+  and other homepage sections/controls remain future work.
   (BR-084)
+- Shop by Category (2026-10-01): implemented immediately below the slider/banner,
+  before Visit Us/map. Appearance → Homepage uses native WordPress navigation
+  tabs for Homepage slider and Shop by Category, each with its own form and save
+  notices. The category form manages zero to five ordered navigation cards; empty or wholly unusable configuration hides
+  the section. Each card has required main artwork, optional plain visible
+  text (80 characters), and either a full HTTP(S) navigation URL (2,048
+  characters, existing homepage URL policy) or a
+  current-Hall WooCommerce product category, including empty categories. A
+  separate optional image covers the entire section. The 2026-10-01 UI follow-up
+  removes the per-card background picker; existing card backgrounds remain
+  stored and are preserved on save/reorder unless the manager explicitly uses
+  “Remove existing card background” and saves. This removal-only control also
+  clears unavailable legacy references without changing other card fields or
+  deleting Media Library attachments. Visible text panels have a 12px gap
+  above their arrows. At widths up to 640px, cards form a centered single column
+  capped at 280px per card; desktop/tablet sizing is unchanged. Native Media
+  Library IDs and category IDs stay Hall-local;
+  no media or sample cards are seeded.
+  Link names come from visible text, then the selected category name, then
+  explicit image Alt Text; missing names fail validation and filenames are
+  never a fallback. Saves are whole-form, nonce/capability protected, and
+  independent of slider saves. Deleted optional backgrounds fall back to theme
+  styling; unavailable main images/destinations/names omit cards with admin
+  warnings. Reads follow the current Hall without rewriting settings. Categories
+  and product assignments are never modified. Section headings, layout, fonts
+  and colours remain theme-controlled. (ADR-045 / BR-084 addition 2026-10-01)
 - Homepage map (2026-09-30): implemented directly below Visit Us, before the
   footer, using `https://www.google.com/maps?q={encoded address}&output=embed`.
   It uses only the current Hall's public Store Details: address line 1, address

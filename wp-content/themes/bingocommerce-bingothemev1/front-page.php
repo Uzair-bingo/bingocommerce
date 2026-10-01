@@ -1,7 +1,7 @@
 <?php
 /**
- * Front page — Core-owned slider display configuration (BR-084), with the
- * original Hall-name/Shop fallback and public contact details. Other homepage
+ * Front page — Core-owned slider and category display configuration (BR-084),
+ * with the original Hall-name/Shop fallback and public contact/map. Other homepage
  * sections belong to later slices. No purchase or persistence logic here.
  */
 
@@ -78,6 +78,8 @@ $bingothemev1_slides = is_array( $bingothemev1_slides ) ? $bingothemev1_slides :
 	</div>
 </section>
 <?php endif; ?>
+
+<?php get_template_part( 'template-parts/homepage-categories' ); ?>
 
 <?php $bingothemev1_map_url = Template::map_url(); ?>
 <?php if ( Template::has_contact() || '' !== $bingothemev1_map_url ) : ?>

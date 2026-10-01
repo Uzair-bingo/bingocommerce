@@ -3856,3 +3856,193 @@ customer selection screens.
   save, Safari/Firefox, screen readers and physical devices were not tested.
 - Shop by Category, Session selection and other homepage components remain
   pending. Changes are unstaged/uncommitted; no push or deployment performed.
+
+### Shop by Category — branch `bingotheme`, uncommitted (2026-10-01)
+
+- Implemented only the homepage category section from clean HEAD
+  `2dea66ee37cf4677e2d75c77a21bd66ed9eaaaf8`. Slider/banner and Visit Us/map
+  behavior/settings are preserved. No existing development Hall settings or
+  media were changed, and no sample cards/images were imported.
+- Core owns version 1 of non-autoloaded Hall-local `bc_homepage_categories`,
+  the `bingocommerce_homepage_categories` read filter, and a separate Shop by
+  Category form/save action in Appearance → Homepage. The existing Hall settings
+  capability is reused with its own Hall-specific nonce and form field. Slider
+  and category POSTs/notices are independent; mixed or truncated payloads fail
+  without changing either configuration. Count/completion markers distinguish
+  an explicit empty list from missing data. Tenant selectors are rejected.
+- Managers can add/edit/remove/order up to five cards, choose/remove the section
+  background independently of required main artwork, and supply
+  optional plain text (80 characters). Each card has one destination: a full
+  HTTP(S) navigation URL under the unchanged homepage URL policy (2,048
+  characters), or a current-Hall `product_cat` ID including empty categories.
+  No taxonomy records or product assignments are modified. Clearing configured
+  image references does not delete media attachments.
+- Core resolves media, current category links and accessible names for the
+  current Hall on every read. Names use visible text, category name, then
+  explicit main-image Alt Text, with no filename fallback. Invalid saves keep
+  saved settings. Deleted backgrounds fall back to theme styling; unavailable
+  main images, destinations or names omit cards with administrator warnings.
+  No usable cards hides the section; reads never rewrite saved data.
+- The theme inserts the section below slider/banner and before Visit Us/map.
+  Four/two/one-column reference proportions, centered smaller selections and
+  incomplete rows, floating arrows, visible keyboard focus and contained
+  transparent main artwork are implemented. Extra row space keeps arrow hit
+  areas clear. Optional backgrounds are separate decorative layers. Existing
+  font and colour tokens remain unchanged; no storefront JavaScript/carousel
+  is required. Theme controls the heading and decorative presentation.
+- Read-only reference reviewed: `front-page.html` lines 67–109;
+  `assets/css/style.css` lines 253–286, 887–891, 920–922 and 973–975;
+  `assets/js/main.js` reveal/boot lines 546–560 and 875–895; and
+  `assets/images/card-today.webp`, `card-sessions.webp`, `card-novelties.webp`,
+  `card-supplies.webp` (all 1122 × 1402) and `category-bg.webp` (1959 × 803).
+  Card artwork contains baked-in text. No supplied category screenshot was
+  available for the initial implementation; the supplied screenshot was reviewed
+  for the subsequent background/text-spacing fix below. Desktop/mobile fixture
+  previews were compared with the original HTML/CSS/artwork using local theme
+  fonts; reference files remain untouched.
+- Guarded `bingocommerce_state_recon` fixture results: category suite 257 passed /
+  0 failed; slider 222 / 0; Store Details 204 / 0; storefront/map 106 / 0.
+  Includes 0–5 cards, both destinations, optional layers/text, invalid/truncated
+  saves, independent forms/notices, permissions/nonces, deleted references,
+  accessible-name fallbacks, overlapping media/category IDs and A → B → A reads.
+  Native WordPress Media Library query handlers are exercised. Disposable
+  Halls/users were cleaned up; persistent fixture Halls 2/3/4 were unchanged.
+- Chrome static-fixture browser results: categories 148 passed / 0 failed;
+  slider 59 / 0; map 34 / 0. Category layouts cover 1440/1024/768/640/390/320px,
+  fully decoded artwork/background proportions, keyboard add/remove/reorder,
+  image selection/removal, exclusive destinations, focus, reduced motion and
+  no-JavaScript storefront output. All requests were intercepted. Native media
+  modal selection uses a test double; reference image URLs/metadata are adapted
+  only in the browser harness. Google map responses were stubbed/refused.
+- PHP syntax passed for all 10 changed/new PHP files; JavaScript syntax passed
+  for the two new scripts; whitespace checks passed for tracked and new files.
+  Logs, screenshots, static fixture output, review manifest and complete diff
+  are in `/private/tmp/bingocommerce-categories-review/`.
+- Remaining manual checks: complete native wp-admin media modal and save flow;
+  chosen Hall artwork/contrast; actual WooCommerce category archive navigation;
+  Safari/Firefox, screen readers and physical devices. Live Google loading was
+  not tested. Use separate Halls to confirm independent cards and unchanged
+  slider/map settings, then remove all cards and confirm the section hides.
+- ADR-045/BR-084 ownership is recorded as a dated addition; historical decisions
+  remain unchanged. Session selection and other homepage components remain
+  pending. Changes remain unstaged/uncommitted; no push or deployment occurred.
+
+#### Category coverage and label-spacing follow-up (2026-10-01)
+
+- The section background now fills the section with `inset: 0`, `height: 100%`
+  and `object-fit: cover`, including the final card row and arrows. Main artwork
+  still uses `contain`; individual card-background presentation is unchanged.
+  Cards with visible text now keep a 12px gap between the text panel and arrow,
+  including wrapped labels. Image-only arrow placement is unchanged.
+- Removed the optional per-card background picker as requested. Existing
+  per-card background IDs remain in hidden form fields and survive saving and
+  reordering; new cards start without one. The section-background and main-image
+  selectors remain available. No stored configuration was migrated or cleared.
+- Fresh guarded fixture results: categories 263 passed / 0 failed; slider
+  222 / 0; Store Details 204 / 0; storefront/map 106 / 0. Native media queries,
+  Hall isolation, invalid saves and independent homepage forms still pass.
+  Disposable actors/Halls were removed; persistent fixture Halls 2/3/4 remained
+  unchanged. Existing development Hall settings were not changed.
+- Chrome categories: 224 passed / 0 failed; slider: 59 / 0; map: 34 / 0.
+  One- and five-card fixtures include a real section-background element and a
+  retained individual card background. Checks wait for every image to decode,
+  then verify full section/last-row coverage, text/arrow clearance, no overflow
+  and unchanged card image treatment at 1440/1024/768/640/390/320px. A temporary
+  intercepted-CSS probe restoring the old rule fails the new coverage assertion
+  as expected. Desktop/mobile previews were visually reviewed.
+- These are static fixture browser checks: category HTML is freshly exported;
+  slider/map markup reuses the prior guarded exports with current assets. All
+  requests are intercepted, the native media modal is a test double, and Google
+  is stubbed/refused. Reference artwork/metadata are substituted only in the
+  harness. Live wp-admin/browser saves, live Google, Safari/Firefox, screen
+  readers and physical devices were not tested in this follow-up.
+- Changed PHP and JavaScript syntax checks and `git diff --check` pass. Focused
+  diff, logs and one-/five-card desktop/mobile previews are in
+  `/private/tmp/bingocommerce-category-coverage-review/`. Prior uncommitted
+  implementation changes and historical decisions are preserved. Everything
+  remains unstaged/uncommitted; no push or deployment occurred.
+
+#### Mobile category sizing and Homepage admin tabs (2026-10-01)
+
+- At viewport widths up to 640px, category cards now form a centered single
+  column with a maximum width of 280px. Desktop/tablet sizing, contained main
+  artwork, full-section background coverage and the 12px text/arrow gap remain
+  intact. The one-column rule prevents two cards appearing at the 640px edge.
+- Appearance → Homepage now uses WordPress's native `nav-tab-wrapper` /
+  `nav-tab` styling for Homepage slider and Shop by Category. Only the selected
+  editor renders. Native page links work with keyboard access and JavaScript
+  disabled; slider is the default for missing/unknown tab values. As with other
+  page-navigation settings tabs, save edits before leaving a tab.
+- Each form has an explicit current-Hall action URL for its own tab. POST form
+  identity, rather than the tab query, chooses the existing handler and returns
+  its own success/errors and submitted values. Nonces, permissions, validation,
+  storage and independent saves are unchanged. The category editor's former
+  divider/top spacing was removed because it is no longer stacked below slider.
+- Fresh guarded fixture results: categories 316 passed / 0 failed; slider
+  222 / 0. Tab tests cover default/unknown/array values, read-only navigation,
+  exactly one form, form actions, successful/invalid saves on a conflicting tab
+  URL, submitted-value/error retention and preservation of both configurations.
+  Existing Hall isolation/permissions/invalid-save checks pass. Owned fixtures
+  were cleaned up; persistent fixture Halls 2/3/4 and development Halls are intact.
+- Chrome static-fixture results: categories 255 passed / 0 failed; slider
+  59 / 0; map 34 / 0. Mobile card caps are verified at 320/390/640px for 1–5
+  cards; coverage, wrapping, text clearance and no overflow pass across all six
+  widths through 1440px. Desktop reference image dimensions still match. Native
+  tabs fit side by side at 390/1440px and work by keyboard and without JavaScript.
+  Mobile storefront and desktop/mobile admin previews were visually reviewed.
+- Browser requests are intercepted, category/slider markup is freshly exported,
+  map markup reuses the prior guarded export, and WordPress admin styles are read
+  from the local installation. Media selection uses a test double; Google is
+  stubbed/refused. Live admin browser saves, Safari/Firefox, screen readers and
+  physical devices were not tested. Unchanged Store Details/storefront PHP suites
+  were not rerun in this follow-up; their prior results remain recorded above.
+- PHP syntax for the three changed PHP files, category browser JavaScript syntax
+  and `git diff --check` pass. Incremental diff, logs and previews are in
+  `/private/tmp/bingocommerce-homepage-tabs-review/`. Prior uncommitted work and
+  historical decisions are preserved; nothing was staged, committed, pushed or
+  deployed, and no existing Hall settings were changed.
+
+#### Legacy card-background recovery (2026-10-01)
+
+- Added a removal-only button for retained per-card background IDs greater than
+  zero. The individual card-background picker remains removed. Keyboard removal
+  changes only that card's hidden background ID to zero, announces the pending
+  change and keeps focus in the card. Storage changes only through Save category
+  cards; no references are silently cleared on load and no settings are migrated.
+- Warning/error links target a focusable recovery region. Links and help IDs
+  remain correct after reordering, and the region stays usable after removal.
+  Existing validation, nonce/capability checks and save handlers are unchanged.
+  No Media Library attachment is deleted by the removal control or its save.
+- New browser-backed regression runs within the guarded disposable PHP fixture:
+  save valid backgrounds, delete one test attachment, submit the rendered form
+  and confirm rejection, follow warning/error links, use Space to activate the
+  removal button, and pass the browser's actual Save submission to the real PHP
+  handler. Whole-configuration equality proves that only the selected background
+  becomes zero; main image, text, destination, order and section background stay
+  intact. Ordinary saves/reordering retain valid backgrounds. Explicitly removing
+  a valid background preserves its attachment. Slider, Store Details and every
+  table in the other owned Hall remain unchanged.
+- `BC_CATEGORY_RECOVERY_BROWSER=1` enables this integrated coverage in
+  `tests/homepage-categories.php`; set `BC_NODE_EXECUTABLE`,
+  `BC_PLAYWRIGHT_MODULE` and `BC_CHROME_EXECUTABLE` for local runtimes. Without
+  the flag the suite explicitly reports this coverage as skipped. The browser
+  subprocess requires the same guarded fixture flag/database and cannot send
+  network requests or open a database; it returns native form fields to the
+  existing fixture process rather than constructing a replacement configuration.
+- Actual results with integrated coverage enabled: category PHP/browser bridge
+  383 passed / 0 failed (67 additional checks); existing category browser suite
+  255 / 0; slider PHP 222 / 0. Owned disposable actors/Halls were cleaned up and
+  persistent fixture Halls 2/3/4 were unchanged. Existing development Hall
+  settings and attachments were not changed.
+- PHP syntax for both changed PHP files, JavaScript syntax for the production
+  editor and new browser helper, and whitespace checks pass. Mobile sizing,
+  section coverage, text spacing and native admin-tab regressions pass in the
+  existing browser suite. Theme/CSS, slider, map, storage/validation code and
+  historical decisions remain unchanged in this follow-up.
+- Limits: the recovery test uses a real Chrome DOM, production editor JavaScript,
+  native form serialization and the real PHP handler, but intercepts submission
+  instead of making a live wp-admin HTTP request. The media API guard and speech
+  API are test doubles; native media-query isolation remains covered in PHP.
+  Safari/Firefox, a screen reader and physical devices were not tested. Logs and
+  the focused diff are in `/private/tmp/bingocommerce-legacy-background-recovery-review/`.
+  All changes remain unstaged/uncommitted; no push or deployment occurred.

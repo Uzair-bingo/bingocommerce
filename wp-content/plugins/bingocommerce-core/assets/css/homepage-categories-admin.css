@@ -1,0 +1,9 @@
+.bc-category-editor { margin-top: 20px; }
+.bc-category-editor fieldset { margin: 24px 0; padding: 20px; border: 1px solid #c3c4c7; background: #fff; }
+.bc-category-editor legend { font-size: 18px; font-weight: 600; padding: 0 6px; }
+.bc-category-editor label { display: block; font-weight: 600; margin-bottom: 6px; }
+.bc-category-editor [data-category-tools] { display: flex; flex-wrap: wrap; gap: 8px; }
+.bc-category-media { margin-bottom: 20px; }
+.bc-category-media img { display: block; max-width: 100%; max-height: 180px; width: auto; margin-bottom: 10px; }
+.bc-category-error { display: block; color: #b32d2e; margin-top: 6px; }
+.bc-category-editor [hidden] { display: none !important; }

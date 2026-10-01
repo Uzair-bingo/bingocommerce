@@ -57,7 +57,7 @@ final class HomepageSliderTest {
 				$this->same( 10, has_action( get_plugin_page_hookname( Admin::PAGE, 'themes.php' ), [ Admin::class, 'render' ] ), 'Appearance -> Homepage routes to guarded screen' );
 				$this->same( false, get_option( Slider::OPTION, false ), 'new Hall has no seeded configuration' );
 				$this->same( [], Slider::provide(), 'new Hall provides no slides' );
-				$this->ok( str_contains( $this->screen(), 'Homepage slider' ), 'screen renders only slider editor' );
+				$this->ok( str_contains( $this->screen(), 'Homepage slider' ), 'screen retains slider editor' );
 				$this->same( false, get_option( Slider::OPTION, false ), 'GET does not create option' );
 				$id = $this->attachment( 900001, 'hall-a' );
 				$valid = $this->config( $id );

@@ -5,7 +5,7 @@ independently activatable and testable.
 
 | Plugin | Responsibility | Depends on |
 |---|---|---|
-| `bingocommerce-core` | Roles & capabilities, tenant context helpers, audit log service, migration framework; Hall public storefront profile (Store Details: per-site `bc_store_details`, Appearance → Store Details screen, read-only `bingocommerce_store_details` filter — ADR-045 narrow clarification of ADR-026); Hall homepage slider (`bc_homepage_slider`, Appearance → Homepage, read-only `bingocommerce_homepage_slider` filter — ADR-045 addition 2026-09-30); BR-084 `StorefrontStyleGuard` (on Hall sites only Super Admins may edit/delete/publish `wp_global_styles`; the unavailable Appearance → Fonts entry is removed for everyone else) | WooCommerce (network) |
+| `bingocommerce-core` | Roles & capabilities, tenant context helpers, audit log service, migration framework; Hall public storefront profile (Store Details: per-site `bc_store_details`, Appearance → Store Details screen, read-only `bingocommerce_store_details` filter — ADR-045 narrow clarification of ADR-026); Hall homepage slider (`bc_homepage_slider`, Appearance → Homepage, read-only `bingocommerce_homepage_slider` filter — ADR-045 addition 2026-09-30); Hall Shop by Category cards (`bc_homepage_categories`, independent Appearance → Homepage form, read-only `bingocommerce_homepage_categories` — ADR-045 addition 2026-10-01); BR-084 `StorefrontStyleGuard` (on Hall sites only Super Admins may edit/delete/publish `wp_global_styles`; the unavailable Appearance → Fonts entry is removed for everyone else) | WooCommerce (network) |
 | `bingocommerce-catalog` | Hall-scoped Game Type replica/domain behavior, Bingo Play Product domain metadata/mapping, Bingo Package definitions/components, ADR-044 Package add-on eligibility/configuration, administration and targeted projection reconciliation, BR-032/BR-065 metadata projections, BR-064 network maximum and Hall override settings screens/writers plus the read-only current-value resolver, starter-product domain logic when that deferred copy exists (ADR-026/ADR-031/ADR-035/ADR-044; add-on schema Slice 1, backend Slice 2 and admin UI Slice 3 implemented; ADR-042 MVP runs no starter copy) | core |
 | `bingocommerce-sessions` | Portal Session-template replica; Commerce schedules with immutable named timezone and structured time; dated occurrence generation/reconciliation; inclusive hall-local 30-day window; centralized current-definition membership; Available for Sale; Package assignment; and customer occurrence-before-Package selection (BR-050–BR-052/BR-063/BR-073/BR-077/BR-078; approved ADR-043) | core, catalog |
 | `bingocommerce-digital-tickets` | Implemented: Hall-local purchase-time entitlement snapshot on successful online payment, refund/cancellation voiding and terminal markers, stable QR reference, guarded customer order-view rendering, and a paid-order email link to that authorized view. Pending: Android scanning/redemption, device binding, and staff reactivation | core, catalog, sessions |
@@ -28,8 +28,16 @@ the Google Maps `q` / `output=embed` iframe method, encoding the ordered address
 once and escaping the URL at output. Existing Appearance → Store Details owns
 editing; there is no new configuration boundary, option, API key or geocoding
 service. Hall switching follows the current site without a theme static cache;
-missing Core/address data omits the map safely. Other homepage sections and
-Session selection remain pending.
+missing Core/address data omits the map safely. The category section reads
+`bingocommerce_homepage_categories`: Core resolves usable current-Hall attachment
+IDs, navigation URLs/category archives and accessible names; the theme renders
+escaped links with decorative backgrounds and contained main artwork. The
+versioned, non-autoloaded `bc_homepage_categories` option and its independent
+form use the existing Hall settings capability, a category-specific Hall nonce,
+strict count/completion validation and whole-option replacement. Shared homepage
+text/URL/image policy is reused without changing slider policy. Neither display
+configuration owns WooCommerce taxonomy or product data. Other homepage sections
+and Session selection remain pending.
 
 Plugin boundaries are locked by ADR-026, narrowed by ADR-035, and extended for
 automatic Commerce enable/suspend by ADR-042:

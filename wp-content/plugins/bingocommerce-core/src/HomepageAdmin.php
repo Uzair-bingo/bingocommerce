@@ -24,7 +24,7 @@ final class HomepageAdmin {
 		}
 	}
 
-	private static function allowed(): bool {
+	public static function allowed(): bool {
 		return is_multisite() && is_admin() && is_user_logged_in() && ! is_network_admin() && HallContext::is_hall()
 			&& ( is_super_admin() || current_user_can( 'bc_manage_hall_settings' ) );
 	}
@@ -33,11 +33,16 @@ final class HomepageAdmin {
 		return 'bingocommerce_homepage_slider:hall:' . get_current_blog_id();
 	}
 
+	public static function tab_url( string $tab ): string {
+		return add_query_arg( [ 'page' => self::PAGE, 'tab' => 'categories' === $tab ? 'categories' : 'slider' ], admin_url( 'themes.php' ) );
+	}
+
 	public static function assets( string $hook ): void {
 		if ( '' === self::$screen || self::$screen !== $hook || ! self::allowed() ) {
 			return;
 		}
 		wp_enqueue_media();
+		HomepageCategoriesAdmin::assets();
 		$base = plugins_url( 'assets/', BINGOCOMMERCE_CORE_PATH . 'bingocommerce-core.php' );
 		wp_enqueue_script( 'bingocommerce-homepage-admin', $base . 'js/homepage-admin.js', [ 'media-views', 'wp-a11y' ], (string) filemtime( BINGOCOMMERCE_CORE_PATH . 'assets/js/homepage-admin.js' ), true );
 		wp_enqueue_style( 'bingocommerce-homepage-admin', $base . 'css/homepage-admin.css', [], (string) filemtime( BINGOCOMMERCE_CORE_PATH . 'assets/css/homepage-admin.css' ) );
@@ -78,13 +83,24 @@ final class HomepageAdmin {
 		if ( ! self::allowed() ) {
 			wp_die( esc_html__( 'You are not authorized to manage this Hall’s homepage.', 'bingocommerce-core' ), '', [ 'response' => 403 ] );
 		}
-		$outcome = 'POST' === ( $_SERVER['REQUEST_METHOD'] ?? '' ) ? self::handle_request( wp_unslash( $_POST ) ) : null;
+		$posted = 'POST' === ( $_SERVER['REQUEST_METHOD'] ?? '' ) ? wp_unslash( $_POST ) : null;
+		$category_request = null !== $posted && HomepageCategoriesAdmin::is_request( $posted );
+		$outcome = null !== $posted && ! $category_request ? self::handle_request( $posted ) : null;
+		$category_outcome = $category_request ? HomepageCategoriesAdmin::handle_request( $posted ) : null;
+		// POST identity owns the active editor, including errors; GET tabs never select a save handler.
+		$tab = null !== $posted ? ( $category_request ? 'categories' : 'slider' ) : ( 'categories' === ( $_GET['tab'] ?? null ) ? 'categories' : 'slider' );
 		$stored = HomepageSlider::stored();
 		$values = null !== $outcome && is_wp_error( $outcome['result'] ) && [] !== $outcome['values'] ? $outcome['values'] : ( is_wp_error( $stored ) ? HomepageSlider::blank() : $stored );
 		$errors = $outcome['errors'] ?? [];
 		?>
 		<div class="wrap bc-homepage">
 			<h1><?php esc_html_e( 'Homepage', 'bingocommerce-core' ); ?></h1>
+			<nav class="nav-tab-wrapper" aria-label="<?php esc_attr_e( 'Homepage settings', 'bingocommerce-core' ); ?>">
+				<?php foreach ( [ 'slider' => __( 'Homepage slider', 'bingocommerce-core' ), 'categories' => __( 'Shop by Category', 'bingocommerce-core' ) ] as $key => $label ) : ?>
+					<a class="nav-tab<?php echo $tab === $key ? ' nav-tab-active' : ''; ?>" href="<?php echo esc_url( self::tab_url( $key ) ); ?>"<?php if ( $tab === $key ) : ?> aria-current="page"<?php endif; ?>><?php echo esc_html( $label ); ?></a>
+				<?php endforeach; ?>
+			</nav>
+			<?php if ( 'slider' === $tab ) : ?>
 			<h2><?php esc_html_e( 'Homepage slider', 'bingocommerce-core' ); ?></h2>
 			<p><?php esc_html_e( 'Add up to six slides. Images, headings, supporting text and navigation buttons are edited separately. With no usable slides, your Hall name and Shop banner are shown.', 'bingocommerce-core' ); ?></p>
 			<?php if ( null !== $outcome ) : ?>
@@ -98,7 +114,7 @@ final class HomepageAdmin {
 				<div class="notice notice-warning"><p><?php echo esc_html( $stored->get_error_message() ); ?></p></div>
 			<?php endif; ?>
 			<noscript><p><?php esc_html_e( 'Enable JavaScript to add, arrange or select slide images. Existing text and buttons can still be edited and saved.', 'bingocommerce-core' ); ?></p></noscript>
-			<form method="post" novalidate id="bc-form">
+			<form method="post" action="<?php echo esc_url( self::tab_url( 'slider' ) ); ?>" novalidate id="bc-form">
 				<?php wp_nonce_field( self::nonce_action() ); ?>
 				<input type="hidden" name="bc_homepage_slider[version]" value="1">
 				<input type="hidden" name="bc_slider_count" value="<?php echo esc_attr( (string) count( $values['slides'] ) ); ?>">
@@ -111,6 +127,7 @@ final class HomepageAdmin {
 				<?php submit_button( __( 'Save slider', 'bingocommerce-core' ) ); ?>
 			</form>
 			<template id="bc-slide-template"><?php self::slide( '__INDEX__', [ 'image_id' => 0, 'image_position' => 'right-low', 'heading' => '', 'text' => '', 'buttons' => [] ], [] ); ?></template>
+			<?php else : HomepageCategoriesAdmin::render( $category_outcome ); endif; ?>
 		</div>
 		<?php
 	}
