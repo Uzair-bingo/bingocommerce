@@ -133,7 +133,7 @@ final class CartSelection {
 					continue;
 				}
 				$product = clone $product;
-				if ( isset( $line['price'] ) ) { $product->set_price( $line['price'] ); }
+				if ( isset( $line['price'] ) ) { self::relation_priced( $product, $line['price'] ); }
 				if ( ! $product->is_purchasable() || ! $product->is_in_stock() || ! $product->has_enough_stock( $item['quantity'] ) || ( $product->is_sold_individually() && 1 !== (int) $item['quantity'] ) ) {
 					$errors->add( 'bc_cart_invalid', self::error()->get_error_message() );
 				}
@@ -153,6 +153,21 @@ final class CartSelection {
 			else { $digital_faces = $faces; }
 		}
 		return [ 'errors' => $errors, 'lines' => $lines, 'digital_faces' => $digital_faces ];
+	}
+
+	/**
+	 * An add-on's relationship price as the ONLY price of an in-memory product copy
+	 * (BR-082; addition 2026-10-02): its price and regular price, with no sale
+	 * price. The product's own stored regular and sale prices do not apply to the
+	 * relationship, so WooCommerce must not present it as a discount from them
+	 * (the Cart block's previous price and "Save") or treat it as a sale item
+	 * (coupon sale-item rules). Callers pass a copy; nothing is ever saved.
+	 */
+	public static function relation_priced( \WC_Product $product, string $price ): \WC_Product {
+		$product->set_price( $price );
+		$product->set_regular_price( $price );
+		$product->set_sale_price( '' );
+		return $product;
 	}
 
 	private static function electronic_faces( int $package_id, array $addons ) {

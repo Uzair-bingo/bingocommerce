@@ -40,6 +40,10 @@ WooCommerce retains its guest session and Nonce/Cart-Token validation; the
 existing Hall commerce gate still applies. No custom REST route or AJAX handler
 is registered and no capability is granted to guests. A future classic theme
 can use this same endpoint/cart; this slice adds no frontend request code.
+BingoThemev1's homepage purchase step now does exactly that (ADR-045 / BR-084
+addition 2026-10-02): a JSON POST to this endpoint with the Store API `Nonce`
+header and the cookie-based guest session, retried once only after a confirmed
+401 `woocommerce_rest_missing_nonce` / 403 `woocommerce_rest_invalid_nonce`.
 
 ## Cart representation and behavior
 
@@ -56,9 +60,21 @@ can use this same endpoint/cart; this slice adds no frontend request code.
   scoped price getter during a validated child add allows an independently
   priced relationship even when the shell has no standalone price. Saved Woo
   prices/status/stock/visibility and global purchasability are untouched; native
-  purchasability and stock checks still apply.
+  purchasability and stock checks still apply. Since the 2026-10-02 addition
+  `CartSelection::relation_priced()` makes the relationship price the add-on
+  line product's price AND regular price with no sale price, on add, session
+  restore and every refresh, so the Cart block shows no false "previous price
+  / Save" and a coupon that excludes sale items does not treat the add-on line
+  as a sale item; Package and merchandise lines keep their genuine Woo sales.
+- The ordinary Shop's main product query (`woocommerce_product_query`) leaves
+  out every WooCommerce product claimed by the Hall's own Package or Play
+  Product rows (Catalog `ShopListing`, 2026-10-02 addition); the direct-add
+  guard above is unchanged and still refuses them anywhere else.
 - All new lines are removed if any child add fails or post-add revalidation
-  fails. Existing merchandise is preserved. Native sold-individually quantity
+  fails, and so are only the WooCommerce notices recorded during that failed
+  attempt (2026-10-02; `WC_Cart::add_to_cart()` records its own refusal as a
+  session error notice, which would otherwise block later Store API cart
+  validation). Earlier notices and existing merchandise are preserved. Native sold-individually quantity
   clamping is detected and rejected, not treated as the customer's selection.
 - Explicit parent removal cascades children. Explicit child removal updates
   the parent's selection. Parent Undo attempts the original linked group and
@@ -70,10 +86,12 @@ can use this same endpoint/cart; this slice adds no frontend request code.
   cart prices are refreshed on load/totals. These are not historical price locks.
 - Store API item extensions expose read-only Session/Package/relationship IDs,
   role and parent key. Backend linkage/order is implemented. The BingoThemev1
-  homepage calendar now shows date → Session → informational Package cards
-  without any cart action (ADR-045 / BR-084 addition 2026-10-01); add-on
-  selection, the add-to-cart request, visual nesting and labels remain frontend
-  work. The BingoThemev1 shell (ADR-045) renders the native cart and checkout
+  homepage calendar shows date → Session → Package cards (ADR-045 / BR-084
+  addition 2026-10-01), and its purchase step selects one Package and optional
+  eligible add-ons and sends them through this endpoint (addition 2026-10-02;
+  reference two-column layout, Package contents and local add-on search added
+  the same day, request format unchanged);
+  visual nesting and Session/date labels on cart lines remain frontend work. The BingoThemev1 shell (ADR-045) renders the native cart and checkout
   but adds no Bingo line labels.
 
 ## Installed WooCommerce integration evidence

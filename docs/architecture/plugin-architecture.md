@@ -48,8 +48,31 @@ WooCommerce product. The theme validates the response shape, lays out month
 grids, renders informational Package cards, and adds optional JavaScript that
 only switches already-rendered panels; a missing or unusable provider renders
 "Sessions can't be shown right now." There is no route, rewrite rule, REST/AJAX
-endpoint or Manager control. Other homepage sections, add-on selection and
-purchase actions remain pending.
+endpoint or Manager control. Other homepage sections remain pending.
+
+The purchase step (ADR-045 / BR-084 addition 2026-10-02) adds no route either.
+Catalog's anonymous `CustomerCartCatalog::addons()` lists a Package's eligible
+relationships through the existing `addon()` predicate; the Sessions provider
+adds them to each listed Package at their relationship prices and supplies the
+current Hall's existing Store API cart-extension and cart-read endpoints,
+`bingocommerce-selection` namespace, Store API nonce and cart URL. BingoThemev1
+validates that data, renders a hidden, disabled radio/add-on form, and its
+optional `homepage-purchase.js` posts the selection to WooCommerce's route,
+where `CustomerCart` validates it again; a refused add's rollback also drops
+only the WooCommerce notices that attempt recorded. Bingo cart-line labels
+remain pending.
+
+The same-day presentation addition (2026-10-02) keeps those boundaries: the
+Sessions provider also gives each listed Package its read-only `contents` (the
+saved base composition from the same Catalog customer read: component names,
+configured quantities and media; `ok` or `unavailable`), and BingoThemev1
+renders the reference two-column layout, "What's included", the add-on image
+cards and a local name search, deciding nothing. `bingocommerce-catalog` adds
+`ShopListing`, a `woocommerce_product_query` filter that leaves the Hall's own
+Package and Play Product products out of the ordinary Shop (by Catalog
+membership; listing only, no product change). `bingocommerce-sessions`'
+`CartSelection::relation_priced()` gives add-on cart lines their relationship
+price as price and regular price with no sale price.
 
 Plugin boundaries are locked by ADR-026, narrowed by ADR-035, and extended for
 automatic Commerce enable/suspend by ADR-042:
@@ -76,8 +99,8 @@ reconciliation. Slice 3 implements Package administration UI and request handlin
 the customer cart backend and electronic-limit checks at cart addition and
 classic/Store API checkout are implemented. The BingoThemev1 storefront
 foundation is implemented (ADR-045), as is the homepage date → Session →
-informational Package display; add-on selection and purchase actions remain
-pending.
+Package display and its purchase step (addition 2026-10-02); Bingo cart-line
+labels remain pending.
 No real Hall migration or deployment is claimed. Its two
 baseline Session tables belong to `bingocommerce-sessions`. Session schema v3
 adds the Portal-template replica and three schedule-definition tables in the

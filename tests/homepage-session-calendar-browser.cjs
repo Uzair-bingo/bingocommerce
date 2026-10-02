@@ -136,7 +136,12 @@ async function noScript(browser) {
 	check(JSON.stringify([...new URL(page.url()).searchParams.keys()]) === '["bc_session"]', 'View Packages carries only the exact Session');
 	const names = await page.$$eval('#session-packages .session-package__name', headings => headings.map(heading => heading.textContent.trim()));
 	check(JSON.stringify(names) === JSON.stringify(main.packages), 'inline Package cards show the authoritative names');
-	check(0 === (await page.$$('#session-packages a, #session-packages button, #session-packages form, #session-packages input')).length, 'Package cards are informational: no purchase controls');
+	check(0 === (await page.$$('#session-packages a[href*="add-to-cart"], #session-packages [name="add-to-cart"], #session-packages [data-product_id], #session-packages .add_to_cart_button, #session-packages .ajax_add_to_cart, #session-packages form[action]')).length, 'no direct WooCommerce add-to-cart shortcut in the Package block');
+	const shownControls = await page.$$eval('#session-packages input, #session-packages button, #session-packages select, #session-packages textarea, #session-packages a', controls => controls.filter(control => control.getClientRects().length > 0).length);
+	check(0 === shownControls && await page.isVisible('#session-packages [data-purchase-nojs]'), 'without JavaScript: informational cards and the no-JS note, no visible purchase control');
+	await page.focus('#session-packages');
+	await page.keyboard.press('Tab');
+	check(await page.evaluate(() => !document.activeElement.closest('#session-packages')), 'without JavaScript: keyboard focus never enters the Package block');
 	check(JSON.stringify(await current(page)) === JSON.stringify([main.session_date]), 'the Session determines the selected date');
 	const image = page.locator('#session-packages .session-package__image').first();
 	await image.scrollIntoViewIfNeeded();
@@ -387,9 +392,15 @@ async function responsive(browser) {
 				const cards = [...document.querySelectorAll('.session-package')].map(item => item.getBoundingClientRect());
 				const grid = document.querySelector('.bc-session-packages__grid');
 				const style = grid && getComputedStyle(grid);
-				// What the base rule, repeat(auto-fill, minmax(min(100%, 260px), 1fr)), yields for this width.
+				// With the purchase script running, the cards are the reference layout's Package column
+				// (addition 2026-10-02): beside the details above 1024px, then repeat(auto-fill, minmax(min(100%, 300px), 1fr)).
+				const ready = Boolean(document.querySelector('form.bc-purchase.is-ready'));
+				const choices = ready ? document.querySelector('fieldset[data-purchase-packages]').getBoundingClientRect() : null;
+				const details = ready ? document.querySelector('.bc-purchase__details').getBoundingClientRect() : null;
+				// What the base rule, repeat(auto-fill, minmax(min(100%, 260px), 1fr)), or the stacked purchase rule yields for this width.
 				const content = grid ? grid.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) : 0;
 				const gap = grid ? parseFloat(style.columnGap) || 0 : 0;
+				const minimum = ready ? 300 : 260;
 				return {
 					overflow: document.documentElement.scrollWidth - window.innerWidth,
 					day: getComputedStyle(document.querySelector('.calendar-day__num')).width,
@@ -399,7 +410,9 @@ async function responsive(browser) {
 					inside: cards.every(rect => rect.left >= 0 && rect.right <= window.innerWidth + 0.5),
 					cards: cards.length,
 					tracks: grid ? style.gridTemplateColumns.trim().split(/\s+/).length : 0,
-					autoFill: grid ? Math.max(1, Math.floor((content + gap) / (Math.min(content, 260) + gap))) : 0,
+					autoFill: grid ? Math.max(1, Math.floor((content + gap) / (Math.min(content, minimum) + gap))) : 0,
+					ready,
+					beside: ready && details.left >= choices.right - 1 && details.width > choices.width,
 				};
 			});
 			const name = hall === main ? 'Packages view' : 'February view';
@@ -412,6 +425,8 @@ async function responsive(browser) {
 				check(metrics.cards >= 2, `${width}px: at least two Package cards rendered (${metrics.cards})`);
 				if (width <= 640) {
 					check(1 === metrics.tracks && 1 === metrics.columns, `${width}px: Package cards stack in one column (auto-fill alone would give ${metrics.autoFill})`);
+				} else if (metrics.ready && width > 1024) {
+					check(1 === metrics.tracks && 1 === metrics.columns && metrics.beside, `${width}px: purchase step running: Package cards in one narrow column beside the wider details column`);
 				} else {
 					check(metrics.tracks === metrics.autoFill && metrics.columns === Math.min(metrics.autoFill, metrics.cards), `${width}px: Package grid keeps its auto-fill layout (${metrics.tracks} tracks, ${metrics.columns} columns)`);
 					if (width >= 1024) check(metrics.columns >= 2, `${width}px: Package cards sit side by side`);

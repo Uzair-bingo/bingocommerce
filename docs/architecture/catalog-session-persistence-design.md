@@ -10,8 +10,12 @@ reconciliation. Slice 3 implements Package administration UI and request
 handling. The customer cart backend and electronic-limit validation at cart
 addition and classic/Store API checkout are implemented; the BingoThemev1
 storefront foundation is implemented (ADR-045), as is the homepage date →
-Session → informational Package display; add-on selection and purchase
-actions remain pending. No real Hall migration or deployment is claimed. The
+Session → Package display and its purchase step (one Package, optional eligible
+add-ons, the existing Store API cart-extension route; addition 2026-10-02), with
+each Package's "What's included" read from its saved base composition and the
+ordinary Shop leaving out the Hall's Package and Play Product products by
+Catalog membership (same-day addition); Bingo cart-line labels remain pending. No real Hall migration or deployment is
+claimed. The
 additive Session schedule/occurrence model exists under approved ADR-043;
 production deployment is not claimed.
 
@@ -1086,9 +1090,13 @@ Package Admin UI, nonce/controller boundary, checkbox/bulk orchestration,
 regular-price prefill and browser Remove confirmation on the existing Edit
 Package screen. The later BR-081/BR-082 slices implement the customer cart
 backend and electronic-limit validation at cart addition and classic/Store API
-checkout. The BingoThemev1 storefront foundation is implemented (ADR-045);
-customer selection screens remain pending; no real Hall migration or
-deployment is claimed.
+checkout. The BingoThemev1 storefront foundation is implemented (ADR-045), and
+the homepage Session → Package → add-on selection adds to the cart through the
+existing route (ADR-045 / BR-084 addition 2026-10-02); the same-day addition
+shows each listed Package's base components (`bingo_package_components`, read
+through the existing customer eligibility read) and leaves Catalog-claimed
+products out of the ordinary Shop query, with no schema or writer change; no
+real Hall migration or deployment is claimed.
 
 The add-on slice extends, but does not replace, the existing Catalog boundaries.
 Eligibility requires an active Package, active Play Product, enabled relationship

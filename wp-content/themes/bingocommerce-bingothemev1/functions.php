@@ -63,6 +63,9 @@ final class Theme {
 			wp_enqueue_script( 'bingothemev1-homepage-slider', get_theme_file_uri( 'assets/js/homepage-slider.js' ), [], self::asset_version( 'assets/js/homepage-slider.js' ), [ 'in_footer' => true, 'strategy' => 'defer' ] );
 			// Optional: every calendar control is a real link without it.
 			wp_enqueue_script( 'bingothemev1-homepage-calendar', get_theme_file_uri( 'assets/js/homepage-calendar.js' ), [], self::asset_version( 'assets/js/homepage-calendar.js' ), [ 'in_footer' => true, 'strategy' => 'defer' ] );
+			// Optional purchase step: without it the Package cards stay informational.
+			wp_enqueue_script( 'bingothemev1-homepage-purchase', get_theme_file_uri( 'assets/js/homepage-purchase.js' ), [], self::asset_version( 'assets/js/homepage-purchase.js' ), [ 'in_footer' => true, 'strategy' => 'defer' ] );
+			wp_localize_script( 'bingothemev1-homepage-purchase', 'bingothemev1Purchase', SessionCalendar::purchase_strings() );
 		}
 		wp_enqueue_script(
 			'bingothemev1',

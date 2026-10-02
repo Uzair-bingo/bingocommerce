@@ -125,6 +125,7 @@ final class CustomerCart {
 			'role' => 'package', 'addon_id' => 0, 'parent_key' => '',
 			'addon_ids' => array_keys( $selection['addons'] ),
 		];
+		$notices = WC()->session ? WC()->session->get( 'wc_notices', [] ) : null;
 		self::$adding = true;
 		try {
 			$parent = self::add_line( $cart, $selection['wc_product_id'], 1, $meta );
@@ -143,6 +144,7 @@ final class CustomerCart {
 			foreach ( $cart->removed_cart_contents as $key => $item ) {
 				if ( ( $item[ CartSelection::META ]['selection_id'] ?? null ) === $meta['selection_id'] ) { unset( $cart->removed_cart_contents[ $key ] ); }
 			}
+			self::drop_attempt_notices( $notices );
 			$parent = CartSelection::error();
 		} finally {
 			self::$pending = null;
@@ -150,6 +152,30 @@ final class CustomerCart {
 		}
 		$cart->calculate_totals();
 		return $parent;
+	}
+
+	/**
+	 * WC_Cart::add_to_cart() records its own refusal (stock, purchasability, a guard
+	 * exception) as a session error notice. Left behind, it would be reported by later
+	 * Store API cart reads and block Store API cart validation, although this rolled-
+	 * back attempt changed nothing. Drop exactly the notices appended during the
+	 * attempt; every notice that existed before it is kept unchanged. A notice list
+	 * rewritten some other way during the attempt is left alone.
+	 */
+	private static function drop_attempt_notices( mixed $before ): void {
+		if ( null === $before || ! WC()->session ) { return; }
+		$before = is_array( $before ) ? $before : [];
+		$now = WC()->session->get( 'wc_notices', [] );
+		if ( ! is_array( $now ) ) { return; }
+		$kept = $now;
+		foreach ( $now as $type => $list ) {
+			$earlier = is_array( $before[ $type ] ?? null ) ? $before[ $type ] : [];
+			if ( is_array( $list ) && array_slice( $list, 0, count( $earlier ) ) === $earlier ) {
+				$kept[ $type ] = $earlier;
+			}
+		}
+		$kept = array_filter( $kept, static fn( $list ): bool => [] !== $list && null !== $list );
+		if ( $kept !== $now ) { WC()->session->set( 'wc_notices', [] === $kept ? null : $kept ); }
 	}
 
 	private static function add_line( \WC_Cart $cart, int $product_id, int $quantity, array $meta, ?string $price = null ) {
@@ -179,8 +205,7 @@ final class CustomerCart {
 
 	public static function price_new_item( array $item ): array {
 		if ( self::$pending && null !== self::$pending['price'] && self::$pending['meta'] === ( $item[ CartSelection::META ] ?? null ) ) {
-			$item['data'] = clone $item['data'];
-			$item['data']->set_price( self::$pending['price'] );
+			$item['data'] = CartSelection::relation_priced( clone $item['data'], self::$pending['price'] );
 		}
 		return $item;
 	}
@@ -189,7 +214,7 @@ final class CustomerCart {
 	public static function prepare_restored_price( $remove, $key, $values, $product ) {
 		if ( isset( $values[ CartSelection::META ] ) ) {
 			$line = CartSelection::line( $values );
-			if ( ! is_wp_error( $line ) && isset( $line['price'] ) ) { $product->set_price( $line['price'] ); }
+			if ( ! is_wp_error( $line ) && isset( $line['price'] ) ) { CartSelection::relation_priced( $product, $line['price'] ); }
 		}
 		return $remove;
 	}

@@ -6324,6 +6324,166 @@ by construction, never deleted by anything.
   cache exists today; if one is added, the homepage now carries time-dependent
   availability.
 
+- **ADR-045 / BR-084 addition — [2026-10-02] — Homepage Purchase Step: One Package, Optional Add-ons, Existing Cart (user-approved, implemented):**
+
+  This dated addition records the reviewed and implemented purchase step; the
+  2026-10-01 entry above remains the historical record of the informational
+  increment. Flow: verified eligible dated Session → one of its listed Packages
+  → optional eligible add-ons → WooCommerce's existing Store API cart-extension
+  route (`POST /wc/store/v1/cart/extensions`, namespace
+  `bingocommerce-selection`), handled by the existing `CustomerCart`. No new
+  production route, cart service, schema, setting, checkout, order, refund or
+  entitlement change; no Manager control.
+
+  **Public add-on read.** Catalog adds the anonymous, read-only, current-Hall
+  `CustomerCartCatalog::addons( $package_id )`: the Package's relationship IDs
+  in Manager order, each decided by the existing `addon()` predicate (ordinary
+  ineligibility skipped, unreadable rows counted). The Sessions provider adds,
+  per listed Package, `addons {status ok|partial|unavailable, items}` with the
+  relationship ID, the linked product's name and image, the relationship
+  maximum and its formatted price. The price is the relationship's own: an
+  in-memory product copy carries it (never saved) for public visibility and
+  WooCommerce purchasability, as the cart applies it, so a product with no
+  standalone price is listed; it is formatted with WooCommerce's tax/currency
+  display, never `get_price_html()` (whose sale branch reads the product's own
+  stored prices). Stock and electronic limits are not listing filters. The
+  provider also supplies, for a selected Session with listed Packages, the
+  current Hall's cart-extension endpoint, cart read endpoint, namespace,
+  `wc_store_api` nonce and cart URL. The theme accepts these only when every
+  URL is on its own host and IDs survive the browser exactly; otherwise the
+  cards stay informational with "Purchasing isn't available right now."
+
+  **Interaction.** "Choose one Bingo Package. Add-ons are optional." above a
+  native radio group (no preselection, quantity one); only the chosen Package's
+  add-on panel is shown and usable, and each Package keeps its own choices.
+  Add-ons are compact rows: a native checkbox, an optional thumbnail, the name
+  and server-formatted unit price, and — outside the checkbox's label — a
+  labelled quantity 1…maximum enabled only while selected ("Quantity 1" when
+  the maximum is one). A summary beside the add-ons on desktop (below them on
+  mobile) shows the Session name, date/time, Package and add-ons with
+  server-formatted prices and "Your cart shows the total." The request is
+  captured once and carries only the Session ID, Package ID, add-on
+  relationship IDs and quantities. One in-flight guard spans the request and
+  any nonce recovery. Success is reported only when the returned cart is
+  exactly consistent with the captured selection under the existing Store API
+  extension data (one Package line, quantity one, this Session and Package, a
+  usable cart key; exactly the captured add-ons and quantities, each naming the
+  same Session, Package and parent; no other Bingo line; ordinary merchandise
+  allowed); the form then locks with View cart and triggers the theme's
+  existing header cart refresh. Existing cart replacement requires explicit
+  removal in the cart; nothing is removed, replaced, reduced or substituted
+  automatically. Known refusal codes get translated theme wording —
+  `bc_cart_package_limit`: "Only one Bingo Package is allowed in your cart. To
+  choose a different Package, open your cart and remove the current Package
+  first." with a prominent View cart; the generic `bc_cart_selection_invalid`
+  never names a cause (no stock wording); verification failures say the
+  selection could not be checked — and any other refusal's own message is shown
+  as text only. Extension-route errors, 5xx, network failures, lost, malformed
+  or inconsistent responses say "We couldn't confirm your selection was added.
+  Check your cart before trying again."; the Hall commerce gate's refusal says
+  purchasing is unavailable. One automatic
+  retry follows only a confirmed 401 `woocommerce_rest_missing_nonce` or 403
+  `woocommerce_rest_invalid_nonce`, after the same Hall's cart read supplies a
+  usable nonce, with the identical captured JSON; otherwise "This page has
+  expired. Reload it and try again." Purchasing requires JavaScript; without
+  it no purchase control is visible or focusable.
+
+  **Failed-add notices (corrected in the same slice).** A native WooCommerce add
+  refusal inside `CustomerCart::add()` (for example insufficient stock) used to
+  leave WooCommerce's own error notice in the guest session, so Store API cart
+  reads reported it and Store API cart validation (as at checkout) returned 409
+  until a classic page printed it. The existing failed-add rollback now also
+  drops exactly the notices appended during that failed attempt; earlier
+  notices, merchandise, the atomic Package/add-on rollback, stock checks and
+  every purchase rule are unchanged.
+
+  **Cart page.** HallSiteProvisioner runs `WC_Install::install()`, whose page
+  creation makes the Cart page WooCommerce's Cart block (no BingoCommerce
+  filter changes it); the purchase step was verified with that Cart block and
+  with the classic `[woocommerce_cart]` shortcode. Checkout is not part of this
+  step. Bingo Session/date labels on cart lines are the next separate
+  presentation task.
+
+- **ADR-045 / BR-084 addition — [2026-10-02] — Purchase-Step Reference Layout, Package Contents, Shop Listing and Add-on Price Presentation (user-requested, implemented):**
+
+  This dated addition changes presentation and one listing only; the two
+  entries above remain the historical record, and every purchase rule, route,
+  request format, eligibility check, nonce rule and outcome message they
+  record is unchanged except the one wording below. No schema, endpoint,
+  plugin, setting or migration is added.
+
+  **Layout.** With the optional script running, the purchase step follows the
+  reference session page (`session.html`): a narrower left column of Package
+  choices (one native radio group, nothing preselected, every listed Package
+  choosable, compact cards with a thumbnail or a decorative placeholder) and a
+  wider right column holding a "Selected Package" panel (name, type,
+  server-formatted price, "1 Package", the Session and its date/time), the
+  chosen Package's optional add-ons as an image-card grid, and below the grid
+  the dark selection summary with Add to cart. The columns stack at 1024px
+  and below. Without the script the cards stay informational and nothing is
+  usable or focusable, as before. This supersedes the compact add-on rows and
+  the summary beside the add-ons described above, for presentation only.
+
+  **Add-on cards.** Each card is the relationship's own image (or a
+  placeholder), name and server-formatted relationship price. Its native
+  checkbox and, outside the checkbox's label, a labelled quantity field
+  (enabled only while selected; pointer −/+ buttons outside the tab order;
+  "Maximum quantity: N", or a fixed "Quantity: 1" when the maximum is one)
+  stay independently operable. The configured relationship maximum is
+  unrelated to digital-face limits, which the cart still checks. "Add-ons are
+  optional." introduces each grid. A Package with more than one add-on has a
+  local name search (case- and accent-insensitive, Enter never submits): it
+  hides non-matching cards only, so selected add-ons keep their quantities and
+  stay in the summary and the request; "No add-ons match “…”. Clear the
+  search to see every add-on." is announced politely, and a hidden selection
+  that needs correcting is revealed before its message is shown. "Your cart
+  shows the total." remains; the browser computes no total.
+
+  **"What's included".** Each Package card shows its saved base composition,
+  read by the Sessions provider from the same Catalog customer read that
+  listed the Package: each component's Bingo Play Product name, its configured
+  component quantity ("Paper · Quantity: 2"; units of that item, never digital
+  faces) and its Paper or Digital medium, in the Catalog's order. Optional
+  add-ons are never part of it, and no admission, "per seat" or other benefit
+  is invented. A composition that cannot be verified completely — for example
+  a base component whose linked product is in the trash — shows "Package
+  contents can't be shown right now." instead of a partial list. The contents
+  are informational: they create no cart line and are not part of the
+  purchase request.
+
+  **Shop listing.** Bingo Packages and Bingo Play Products are left out of
+  WooCommerce's main product query (`woocommerce_product_query`: the Shop page,
+  product category, tag and attribute archives and product search) by the
+  Catalog's `ShopListing`, identified by current Hall-local Catalog
+  membership — every row of the Hall's own Package and Play Product tables,
+  active or archived — never by name or by the BR-065 compatibility metadata.
+  Ordinary merchandise stays listed and purchasable. Nothing is deleted,
+  unpublished or re-priced; catalog visibility, stock and purchasability are
+  unchanged; administration, the Session purchase step and other product
+  queries are unaffected; and CustomerCart's existing direct-purchase guard
+  still refuses a Bingo product added any other way. If the Catalog cannot be
+  read the Shop is left exactly as WooCommerce built it, so a Catalog fault
+  never empties the Shop. Not changed: related/up-sell products, product
+  blocks, shortcodes, widgets, the general site search and WooCommerce's
+  stored category counts.
+
+  **Add-on price presentation.** An add-on line's in-memory product (on add,
+  on session restore and on every cart refresh) now carries the relationship
+  price as its price AND regular price with no sale price
+  (`CartSelection::relation_priced()`), so WooCommerce no longer presents it
+  as a discount from the product's own stored prices (the Cart block's
+  "Previous price … Save …") or as a sale item. Consequence, by design: a
+  coupon set to exclude sale items now applies to an add-on line even when the
+  add-on's product has its own sale price, because the relationship price is
+  not a sale. Line prices, totals, taxes, refunds and order facts are
+  unchanged; genuine sales on Package and merchandise products still show as
+  sales; stored product prices are never changed.
+
+  **Wording.** `bc_electronic_limit_exceeded` now reads "Your selection
+  exceeds this Hall’s digital bingo face limit. Reduce the digital add-ons or
+  choose a different Package." The limit itself is unchanged and still
+  enforced per Hall-local Game Type.
+
 ---
 
 ## Business Rules (BR)
@@ -8125,10 +8285,14 @@ delete_users.
   implements electronic-limit validation at cart addition and classic/Store
   API checkout. ADR-045/BR-084 add the BingoThemev1 foundation (fixed header
   and footer, native logo/menus, native WooCommerce output) and core Store
-  Details; the Session → Package → add-on selection screens, customer listing
-  reads, Bingo cart-line labels, automatic theme assignment for new Halls, and
-  the remaining homepage sections, map and homepage editing controls (BR-084)
-  remain pending. ADR-044 and BR-079 business decisions are unchanged; no real
+  Details; the homepage Session → Package → add-on purchase step and its
+  customer add-on listing read are implemented (ADR-045 / BR-084 addition
+  2026-10-02), as are its reference two-column layout, each Package's "What's
+  included", the ordinary Shop's exclusion of Bingo Packages and Play Products
+  and the add-on price presentation correction (same-day addition), while Bingo
+  cart-line labels, automatic theme assignment for new
+  Halls, and the remaining homepage sections and homepage editing controls
+  (BR-084) remain pending. ADR-044 and BR-079 business decisions are unchanged; no real
   Hall migration, deployment or production readiness is claimed.
 - Portal integration details still open after ADR-036 through ADR-042: webhook
   signing, retry, replay and ordering; transitional synchronization conflict

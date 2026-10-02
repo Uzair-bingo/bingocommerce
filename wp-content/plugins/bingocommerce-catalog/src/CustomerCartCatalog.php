@@ -59,6 +59,38 @@ final class CustomerCartCatalog {
 		];
 	}
 
+	/**
+	 * Every currently eligible relationship of one Package, in the Manager's
+	 * order, for the customer listing. Each row is decided by addon() itself, so
+	 * the listing can never offer a relationship the cart would refuse on these
+	 * grounds. Ordinary ineligibility is skipped; an unreadable row is counted.
+	 *
+	 * @return array{items:array<int,array<string,mixed>>,errors:int}|\WP_Error
+	 */
+	public static function addons( int $package_id ) {
+		if ( ! self::ready() || $package_id < 1 ) {
+			return self::unavailable();
+		}
+		global $wpdb;
+		$ids = $wpdb->get_col( $wpdb->prepare( 'SELECT package_addon_id FROM %i WHERE package_id = %d ORDER BY sort_order, package_addon_id', Migrations::package_addons_table(), $package_id ) );
+		if ( ! is_array( $ids ) || '' !== $wpdb->last_error ) { return self::unavailable(); }
+		$items = [];
+		$errors = 0;
+		foreach ( $ids as $id ) {
+			if ( ! is_string( $id ) || 1 !== preg_match( '/\A[1-9][0-9]*\z/', $id ) ) {
+				++$errors;
+				continue;
+			}
+			$addon = self::addon( $package_id, (int) $id );
+			if ( ! is_wp_error( $addon ) ) {
+				$items[] = $addon;
+			} elseif ( 'bc_cart_addon_ineligible' !== $addon->get_error_code() ) {
+				++$errors;
+			}
+		}
+		return [ 'items' => $items, 'errors' => $errors ];
+	}
+
 	private static function ready(): bool {
 		return class_exists( HallContext::class ) && HallContext::is_hall() && Migrations::is_current();
 	}

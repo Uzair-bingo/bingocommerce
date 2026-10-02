@@ -116,6 +116,59 @@ Three roles — do not conflate or merge:
   listing filters, no "What's Included" list, add-on selection or purchase
   action yet, and no Manager controls. JavaScript is optional.
   (ADR-045 / BR-084 addition 2026-10-01; BR-052, BR-080)
+- Homepage purchase step (2026-10-02): for the selected Session, "Choose one
+  Bingo Package. Add-ons are optional." introduces one Package radio group
+  (nothing preselected; Package quantity stays one). Choosing a Package shows
+  only its own optional add-ons as compact rows: currently eligible
+  relationships (enabled, active parents, compatible medium — Paper Packages
+  show only Paper add-ons), each with a checkbox, optional thumbnail, its
+  relationship unit price and, when selected, a labelled quantity from 1 to its
+  maximum. A successful empty list says "No
+  add-ons are available for this Package."; a partial read shows the verified
+  add-ons with a notice; a failed or malformed read says "Add-ons can't be
+  shown right now." and still permits an explicit Package-only purchase. A
+  summary shows the Session name, MM/DD/YYYY date and time, the Package and the
+  selected add-ons with server-formatted prices; the cart shows the total. Add
+  to cart sends only the Session, Package, add-on relationship IDs and
+  quantities to the existing WooCommerce cart, where every rule (one Package
+  per cart, eligibility, archived base components, relationship price and
+  maximum, stock, electronic limits) is checked again. Success is reported only
+  when the returned cart holds exactly that selection; the completed form then
+  offers View cart and cannot add again. An existing Package must be removed in
+  the cart before another is chosen; nothing is removed, replaced, reduced or
+  substituted automatically; a second Package is refused with "Only one Bingo
+  Package is allowed in your cart. To choose a different Package, open your
+  cart and remove the current Package first." and View cart. Other refusals
+  are worded accurately without guessing an unstated cause, and an
+  unconfirmable or inconsistent outcome says "We couldn't confirm your
+  selection was added. Check your cart before trying again." A refused add
+  leaves no WooCommerce notice behind that could block a later purchase or
+  checkout validation. Purchasing needs JavaScript:
+  without it the cards stay informational with a note, and no purchase control
+  is visible or focusable. Stock and electronic limits are still not listing
+  filters. (ADR-045 / BR-084 addition 2026-10-02; BR-032, BR-079–BR-082; its
+  layout and wording were revised the same day — next bullet.)
+- Purchase-step layout, Package contents and Shop listing (2026-10-02
+  addition): the purchase step follows the reference session page — a
+  narrower left column of Package choices, each card showing "What's
+  included" (the Package's saved base composition: each item's name, its
+  configured quantity and Paper or Digital, never the optional add-ons, never a
+  digital-face count; "Package contents can't be shown right now." when it
+  cannot be verified), and a wider right column with the selected Package,
+  its optional add-ons as image cards and, below them, the dark summary and
+  Add to cart; the columns stack on tablets and phones. Add-on quantities read
+  "Maximum quantity: N" (a fixed "Quantity: 1" for a maximum of one) and become
+  available once the add-on is selected; a name search filters a Package's
+  add-on cards without dropping any selection. The ordinary Shop (Shop page,
+  product categories and product search) lists ordinary merchandise only: the
+  Hall's own Bingo Packages and Bingo Play Products are left out by Catalog
+  membership, without unpublishing, re-pricing or changing any product, and
+  are still bought only through a Session. Add-on lines show their
+  relationship price without a false "previous price / Save" in the cart, and
+  are not treated as sale items. The digital-limit refusal reads "Your
+  selection exceeds this Hall’s digital bingo face limit. Reduce the digital
+  add-ons or choose a different Package." (ADR-045 / BR-084 addition
+  2026-10-02; BR-032, BR-080–BR-082)
 - One Store Details form holds the Hall's public address, phone, email and
   Facebook, Instagram, YouTube and TikTok links. All fields are optional. The
   public address is separate from WooCommerce's business/tax address, and
@@ -128,10 +181,11 @@ Three roles — do not conflate or merge:
   choose each link's text and URL, and the links appear at the right of the
   copyright line. (BR-084)
 - Shop, product, cart, checkout, account and order pages use native
-  WooCommerce output. The homepage calendar now presents date → Session →
-  informational Package cards; add-on selection and the purchase action, rather
-  than native product Add to cart controls that the backend refuses, remain
-  required later shopping-screen work. (BR-081, BR-084)
+  WooCommerce output. The homepage calendar presents date → Session → Package,
+  and its purchase step adds the selection through the existing cart (rather
+  than native product Add to cart controls, which the backend refuses). Bingo
+  Session/date labels on cart lines remain the next presentation work.
+  (BR-081, BR-084)
 
 Portal Global Admin is an external Portal authority, not a fourth
 BingoCommerce role. Its ADR-035/BR-075 authority here is the platform-level
@@ -307,9 +361,11 @@ identity/role mapping remain deferred.
   Package administration UI and request handling. The customer cart backend
   and electronic-limit validation at cart addition and classic/Store API
   checkout are implemented; the BingoThemev1 storefront foundation and Store
-  Details are implemented (BR-084), the homepage date → Session → informational
-  Package display is implemented (ADR-045 / BR-084 addition 2026-10-01), and
-  add-on selection and purchase actions remain pending. No real Hall migration
+  Details are implemented (BR-084), the homepage date → Session → Package
+  display is implemented (ADR-045 / BR-084 addition 2026-10-01), and its
+  Package/add-on purchase step — with its reference layout, each Package's
+  "What's included" and the Shop's exclusion of Bingo products — is
+  implemented (additions 2026-10-02); Bingo cart-line labels remain pending. No real Hall migration
   or deployment is claimed. The
   additive Portal-template and Commerce-schedule tables in Session schema v3 do
   not replace them.

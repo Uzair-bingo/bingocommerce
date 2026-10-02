@@ -415,7 +415,9 @@ final class HomepageSessionCalendarTest {
 			$this->same( [ 'Early Bird Paper Pack', 'Hidden & Fun Pack', 'Digital Dozen', 'Combo Night' ], array_column( $items, 'name' ), 'authoritative names as plain text' );
 			$this->same( [ $f['image'], 0, 0, 0 ], array_column( $items, 'image_id' ), 'product image only where one is set' );
 			$this->ok( str_contains( $items[0]['price_html'], '10.00' ) && str_contains( $items[2]['price_html'], '<del' ) && str_contains( $items[2]['price_html'], '9.00' ), 'native WooCommerce price HTML, including a sale price' );
-			$this->same( [ 'id', 'type', 'name', 'image_id', 'price_html' ], array_keys( $items[0] ), 'only presentation fields are returned' );
+			$this->same( [ 'id', 'type', 'name', 'image_id', 'price_html', 'contents', 'addons' ], array_keys( $items[0] ), 'only presentation fields are returned' );
+			$this->same( [ [ 'status' => 'ok', 'items' => [ [ 'name' => 'Paper play product', 'quantity' => 2, 'medium' => 'paper' ] ] ], [ 'status' => 'ok', 'items' => [ [ 'name' => 'Paper play product', 'quantity' => 1, 'medium' => 'paper' ], [ 'name' => 'Digital play product', 'quantity' => 2, 'medium' => 'digital' ] ] ] ], [ $items[0]['contents'], $items[3]['contents'] ], 'each Package carries its saved base composition (“What’s included”): names, configured quantities and media' );
+			$this->same( [ 'status' => 'ok', 'items' => [] ], $items[0]['addons'], 'a Package without add-on relationships reads as a successful empty list' );
 			foreach ( [ 'draft', 'pending', 'private' ] as $key ) {
 				$this->ok( ! in_array( $p[ $key ], array_column( $items, 'id' ), true ), "{$key} product is not publicly visible: excluded" );
 			}
@@ -698,12 +700,16 @@ final class HomepageSessionCalendarTest {
 			[ , $xpath, $html ] = $this->render( [ 'bc_session' => (string) $s['x'] ] );
 			$block = $xpath->query( '//section[@id="calendar"]//div[@id="session-packages"]' )->item( 0 );
 			$this->ok( $block instanceof DOMElement, 'Package block rendered inline below the calendar' );
-			$this->same( [ 'Early Bird Paper Pack', 'Hidden & Fun Pack', 'Digital Dozen', 'Combo Night' ], array_map( static fn( DOMElement $h ): string => trim( $h->textContent ), iterator_to_array( $xpath->query( '//div[@id="session-packages"]//h4' ) ) ), 'cards show authoritative names' );
+			$this->same( [ 'Early Bird Paper Pack', 'Hidden & Fun Pack', 'Digital Dozen', 'Combo Night' ], array_map( static fn( DOMElement $h ): string => trim( $h->textContent ), iterator_to_array( $xpath->query( '//div[@id="session-packages"]//span[contains(@class,"session-package__name")]' ) ) ), 'cards show authoritative names' );
 			$this->same( [ 'Paper Package', 'Paper Package', 'Digital Package', 'Hybrid Package' ], array_map( static fn( DOMElement $e ): string => trim( $e->textContent ), iterator_to_array( $xpath->query( '//div[@id="session-packages"]//span[contains(@class,"session-package__type")]' ) ) ), 'cards show Package types' );
 			$this->same( 1, $xpath->query( '//div[@id="session-packages"]//li[1]//img' )->length, 'card image from the product image' );
 			$this->same( 1, $xpath->query( '//div[@id="session-packages"]//li[3]//del' )->length, 'sale price shown natively' );
-			$this->same( 0, $xpath->query( '//div[@id="session-packages"]//*[self::button or self::form or self::input or self::a]' )->length, 'informational cards: no buttons, forms or links' );
-			$this->ok( ! str_contains( strtolower( $html ), 'per seat' ) && ! str_contains( $html, 'add-to-cart' ) && ! str_contains( $html, "What's Included" ) && ! str_contains( $html, 'What’s Included' ), 'no demo wording, cart action or deferred content' );
+			// The purchase step uses only the Sessions-supplied cart-extension route: no direct WooCommerce shortcut.
+			$this->same( 0, $xpath->query( '//div[@id="session-packages"]//*[contains(@href,"add-to-cart") or @name="add-to-cart" or @data-product_id or contains(@class,"add_to_cart_button") or contains(@class,"ajax_add_to_cart") or (self::form and @action)]' )->length, 'no direct WooCommerce add-to-cart link, field, product ID or form action' );
+			$this->same( 0, $this->usable_controls( $xpath, '//div[@id="session-packages"]' ), 'without JavaScript every purchase control is hidden or disabled' );
+			$this->same( 1, $xpath->query( '//form[@data-bingo-purchase]/p[@data-purchase-nojs][not(@hidden)][normalize-space()="Turn on JavaScript to choose a Package and add it to your cart."]' )->length, 'no-JS note shown with the informational cards' );
+			$this->ok( ! str_contains( strtolower( $html ), 'per seat' ) && ! str_contains( strtolower( $html ), 'admission' ), 'no reference placeholder wording' );
+			$this->same( [ 'What’s included Paper play product Paper · Quantity: 2', 'What’s included Paper play product Paper · Quantity: 1 Digital play product Digital · Quantity: 2' ], array_map( static fn( DOMElement $d ): string => trim( preg_replace( '/\s+/u', ' ', $d->textContent ) ), [ $xpath->query( '//div[@id="session-packages"]//div[contains(@class,"session-package__contents")]' )->item( 0 ), $xpath->query( '//div[@id="session-packages"]//div[contains(@class,"session-package__contents")]' )->item( 3 ) ] ), '“What’s included” shows each card’s own saved contents' );
 			$this->same( 1, $xpath->query( '//li[@aria-current="true"][contains(@class,"is-selected")]' )->length, 'selected Session row marked current' );
 			$this->ok( str_ends_with( $xpath->evaluate( 'string(//li[@aria-current="true"]//a/@href)' ), '?bc_session=' . $s['x'] . '#session-packages' ), 'View Packages is a Session-only server link' );
 
@@ -822,6 +828,19 @@ final class HomepageSessionCalendarTest {
 		}
 	}
 
+	/** Controls a visitor could use or focus without the optional script: neither hidden nor disabled, nor inside a hidden element or disabled fieldset. */
+	private function usable_controls( DOMXPath $xpath, string $scope ): int {
+		$usable = 0;
+		foreach ( $xpath->query( $scope . '//*[self::input or self::button or self::select or self::textarea or self::a]' ) as $control ) {
+			$blocked = $control->hasAttribute( 'hidden' ) || $control->hasAttribute( 'disabled' );
+			for ( $node = $control->parentNode; ! $blocked && $node instanceof DOMElement; $node = $node->parentNode ) {
+				$blocked = $node->hasAttribute( 'hidden' ) || ( 'fieldset' === $node->nodeName && $node->hasAttribute( 'disabled' ) );
+			}
+			$usable += $blocked ? 0 : 1;
+		}
+		return $usable;
+	}
+
 	private function failure_rendered( string $label ): void {
 		[ , $xpath ] = $this->render();
 		$this->same( [ 1, 1, 0, 0 ], [
@@ -892,7 +911,7 @@ final class HomepageSessionCalendarTest {
 			$this->same( 0, $xpath->query( '//*[@id="session-packages"]' )->length, "?{$query}: no Packages" );
 		}
 		[ , $xpath ] = $this->cgi( $f['site'], 'bc_session=' . $s['x'] . '&bc_month=' . substr( $t( 0 ), 0, 8 ) . '01' );
-		$this->same( [ 4, $t( 3 ) ], [ $xpath->query( '//div[@id="session-packages"]//li' )->length, $xpath->evaluate( 'string(//a[@aria-current="date"]/@data-calendar-date)' ) ], 'Session GET with a valid month: its date, inline Packages' );
+		$this->same( [ 4, $t( 3 ) ], [ $xpath->query( '//div[@id="session-packages"]//li[contains(concat(" ", normalize-space(@class), " "), " session-package ")]' )->length, $xpath->evaluate( 'string(//a[@aria-current="date"]/@data-calendar-date)' ) ], 'Session GET with a valid month: its date, inline Packages' );
 		[ , $xpath ] = $this->cgi( $f['site'], 'utm_source=newsletter' );
 		$this->same( $t( 0 ), $xpath->evaluate( 'string(//a[@aria-current="date"]/@data-calendar-date)' ), 'unrelated parameters do not change the homepage' );
 

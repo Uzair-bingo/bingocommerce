@@ -212,6 +212,177 @@ final class SessionCalendar {
 		];
 	}
 
+	/** The largest integer a browser can carry exactly (Number.MAX_SAFE_INTEGER). */
+	private const MAX_SAFE_ID = 9007199254740991;
+
+	/**
+	 * One listed Package's add-ons as a display state: `ok` (with items), `empty`
+	 * (a successful read that found none), `partial` (verified items only) or
+	 * `unavailable`. Anything missing or malformed is `unavailable`, so a failed
+	 * or incomplete read never looks like a Package without add-ons.
+	 *
+	 * @param array<string,mixed> $item One Package item from the provider.
+	 * @return array{state:string,items:array<int,array<string,mixed>>}
+	 */
+	public static function addons( array $item ): array {
+		$unavailable = [ 'state' => 'unavailable', 'items' => [] ];
+		$value       = $item['addons'] ?? null;
+		if ( ! is_array( $value ) || ! in_array( $value['status'] ?? null, [ 'ok', 'partial' ], true )
+			|| ! is_array( $value['items'] ?? null ) || ! array_is_list( $value['items'] ) ) {
+			return $unavailable;
+		}
+		$seen = [];
+		foreach ( $value['items'] as $addon ) {
+			if ( ! is_array( $addon ) || ! self::is_id( $addon['id'] ?? null ) || isset( $seen[ $addon['id'] ] )
+				|| ! is_string( $addon['name'] ?? null ) || '' === trim( $addon['name'] )
+				|| ! is_int( $addon['image_id'] ?? null ) || $addon['image_id'] < 0
+				|| ! is_int( $addon['max_quantity'] ?? null ) || $addon['max_quantity'] < 1 || $addon['max_quantity'] > 99
+				|| ! is_string( $addon['price_html'] ?? null ) || '' === trim( $addon['price_html'] ) ) {
+				return $unavailable;
+			}
+			$seen[ $addon['id'] ] = true;
+		}
+		if ( [] === $value['items'] ) {
+			// Only a successful read may say there are none.
+			return 'ok' === $value['status'] ? [ 'state' => 'empty', 'items' => [] ] : $unavailable;
+		}
+
+		return [ 'state' => $value['status'], 'items' => $value['items'] ];
+	}
+
+	/** The largest component quantity the Catalog stores (an unsigned 32-bit column). */
+	private const MAX_COMPONENT_QUANTITY = 4294967295;
+
+	/**
+	 * One listed Package's "What's included" as a display state: `ok` with every
+	 * saved base component (name, configured quantity, Paper or Digital), or
+	 * `unavailable` for anything missing, partial or malformed, which renders
+	 * "Package contents can't be shown right now." Optional add-ons are never part
+	 * of it, and a component quantity is never a digital-face count.
+	 *
+	 * @param array<string,mixed> $item One Package item from the provider.
+	 * @return array{state:string,items:array<int,array{name:string,quantity:int,medium:string}>}
+	 */
+	public static function contents( array $item ): array {
+		$unavailable = [ 'state' => 'unavailable', 'items' => [] ];
+		$value       = $item['contents'] ?? null;
+		if ( ! is_array( $value ) || 'ok' !== ( $value['status'] ?? null ) || ! is_array( $value['items'] ?? null )
+			|| [] === $value['items'] || ! array_is_list( $value['items'] ) ) {
+			return $unavailable;
+		}
+		foreach ( $value['items'] as $component ) {
+			if ( ! is_array( $component ) || ! is_string( $component['name'] ?? null ) || '' === trim( $component['name'] )
+				|| ! is_int( $component['quantity'] ?? null ) || $component['quantity'] < 1 || $component['quantity'] > self::MAX_COMPONENT_QUANTITY
+				|| ! in_array( $component['medium'] ?? null, [ 'paper', 'digital' ], true ) ) {
+				return $unavailable;
+			}
+		}
+
+		return [ 'state' => 'ok', 'items' => $value['items'] ];
+	}
+
+	public static function medium_label( string $medium ): string {
+		$labels = [
+			'paper'   => __( 'Paper', Theme::TEXT_DOMAIN ),
+			'digital' => __( 'Digital', Theme::TEXT_DOMAIN ),
+		];
+
+		return $labels[ $medium ] ?? '';
+	}
+
+	/**
+	 * The selected Session's purchase settings when every value is usable, the
+	 * Session and Package IDs survive the browser exactly, and every URL is on
+	 * this site's own host; otherwise null and the cards stay informational.
+	 *
+	 * @param array<string,mixed> $calendar A response accepted by model().
+	 * @return array{endpoint:string,cart_endpoint:string,namespace:string,nonce:string,cart_url:string}|null
+	 */
+	public static function purchase( array $calendar ): ?array {
+		$value    = $calendar['purchase'] ?? null;
+		$session  = $calendar['session'] ?? null;
+		$packages = $calendar['packages']['items'] ?? null;
+		if ( ! is_array( $value ) || ! is_array( $session ) || ! self::is_id( $session['id'] ?? null ) || ! is_array( $packages ) || [] === $packages ) {
+			return null;
+		}
+		foreach ( $packages as $package ) {
+			if ( ! self::is_id( $package['id'] ?? null ) ) {
+				return null;
+			}
+		}
+		$host = strtolower( (string) wp_parse_url( home_url( '/' ), PHP_URL_HOST ) );
+		foreach ( [ 'endpoint', 'cart_endpoint', 'cart_url' ] as $key ) {
+			$url = $value[ $key ] ?? null;
+			if ( ! is_string( $url ) || ! in_array( wp_parse_url( $url, PHP_URL_SCHEME ), [ 'http', 'https' ], true )
+				|| '' === $host || strtolower( (string) wp_parse_url( $url, PHP_URL_HOST ) ) !== $host ) {
+				return null;
+			}
+		}
+		if ( ! is_string( $value['namespace'] ?? null ) || 1 !== preg_match( '/\A[a-z0-9][a-z0-9-]*\z/', $value['namespace'] )
+			|| ! is_string( $value['nonce'] ?? null ) || 1 !== preg_match( '/\A[^\s\x00-\x1F\x7F]{1,128}\z/', $value['nonce'] ) ) {
+			return null;
+		}
+
+		return [
+			'endpoint'      => $value['endpoint'],
+			'cart_endpoint' => $value['cart_endpoint'],
+			'namespace'     => $value['namespace'],
+			'nonce'         => $value['nonce'],
+			'cart_url'      => $value['cart_url'],
+		];
+	}
+
+	/**
+	 * Visible purchase wording for the optional script, through the theme's own
+	 * text domain. Known cart refusal codes are worded here; any other refusal's
+	 * own message is shown as text only.
+	 *
+	 * @return array<string,string>
+	 */
+	public static function purchase_strings(): array {
+		return [
+			'notChosen'        => __( 'Not chosen yet', Theme::TEXT_DOMAIN ),
+			'noPackage'        => __( 'No Package chosen yet', Theme::TEXT_DOMAIN ),
+			/* translators: %s: the add-on search text. */
+			'noMatches'        => __( 'No add-ons match “%s”. Clear the search to see every add-on.', Theme::TEXT_DOMAIN ),
+			'none'             => __( 'None', Theme::TEXT_DOMAIN ),
+			'noneEmpty'        => __( 'None. This Package has no add-ons.', Theme::TEXT_DOMAIN ),
+			'noneUnavailable'  => __( 'None. Add-ons can’t be shown right now, so this adds the Package only.', Theme::TEXT_DOMAIN ),
+			/* translators: 1: add-on name, 2: quantity. */
+			'addonQuantity'    => __( '%1$s × %2$d', Theme::TEXT_DOMAIN ),
+			'each'             => __( 'each', Theme::TEXT_DOMAIN ),
+			/* translators: %s: add-on name. */
+			'checkQuantity'    => __( '%s: check the quantity', Theme::TEXT_DOMAIN ),
+			'choosePackage'    => __( 'Choose a Package.', Theme::TEXT_DOMAIN ),
+			/* translators: 1: add-on name, 2: largest permitted quantity. */
+			'quantityRange'    => __( 'Enter a whole number from 1 to %2$d for %1$s.', Theme::TEXT_DOMAIN ),
+			'addToCart'        => __( 'Add to cart', Theme::TEXT_DOMAIN ),
+			'adding'           => __( 'Adding…', Theme::TEXT_DOMAIN ),
+			/* translators: 1: Package name, 2: Session name, 3: Session date (and time). */
+			'added'            => __( 'Added %1$s for %2$s on %3$s to your cart.', Theme::TEXT_DOMAIN ),
+			/* translators: %s: comma-separated add-ons with quantities. */
+			'addedAddons'      => __( 'Add-ons: %s.', Theme::TEXT_DOMAIN ),
+			'locked'           => __( 'This selection is in your cart. To choose a different Package, remove it from your cart first.', Theme::TEXT_DOMAIN ),
+			'viewCart'         => __( 'View cart', Theme::TEXT_DOMAIN ),
+			'refresh'          => __( 'Refresh this Session’s Packages', Theme::TEXT_DOMAIN ),
+			'expired'          => __( 'This page has expired. Reload it and try again.', Theme::TEXT_DOMAIN ),
+			'uncertain'        => __( 'We couldn’t confirm your selection was added. Check your cart before trying again.', Theme::TEXT_DOMAIN ),
+			'unavailable'      => __( 'Purchasing isn’t available for this store right now. Please try again later.', Theme::TEXT_DOMAIN ),
+			'packageLimit'     => __( 'Only one Bingo Package is allowed in your cart. To choose a different Package, open your cart and remove the current Package first.', Theme::TEXT_DOMAIN ),
+			'selectionInvalid' => __( 'This selection couldn’t be added to your cart. It may no longer be available, or something already in your cart may need attention. Refresh this Session’s Packages or check your cart.', Theme::TEXT_DOMAIN ),
+			'addonIneligible'  => __( 'One of the add-ons you chose is no longer available with this Package. Refresh this Session’s Packages to see its current add-ons.', Theme::TEXT_DOMAIN ),
+			'electronicLimit'  => __( 'Your selection exceeds this Hall’s digital bingo face limit. Reduce the digital add-ons or choose a different Package.', Theme::TEXT_DOMAIN ),
+			'unchecked'        => __( 'This selection couldn’t be checked right now, so it wasn’t added to your cart. Please try again later.', Theme::TEXT_DOMAIN ),
+			'notSent'          => __( 'This selection couldn’t be sent. Reload the page and try again.', Theme::TEXT_DOMAIN ),
+			'fallback'         => __( 'This selection couldn’t be added to your cart.', Theme::TEXT_DOMAIN ),
+		];
+	}
+
+	/** @param mixed $value A positive integer ID the browser can carry exactly. */
+	private static function is_id( $value ): bool {
+		return is_int( $value ) && $value > 0 && $value <= self::MAX_SAFE_ID;
+	}
+
 	/** @param mixed $value */
 	private static function is_date( $value ): bool {
 		return is_string( $value ) && 1 === preg_match( '/^(\d{4})-(\d{2})-(\d{2})$/D', $value, $parts ) && checkdate( (int) $parts[2], (int) $parts[3], (int) $parts[1] );

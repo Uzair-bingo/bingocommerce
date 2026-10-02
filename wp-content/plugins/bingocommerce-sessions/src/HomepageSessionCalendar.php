@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace BingoCommerce\Sessions;
 
+use BingoCommerce\Catalog\CustomerCartCatalog;
 use BingoCommerce\Core\HallContext;
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -35,6 +36,21 @@ if ( ! defined( 'ABSPATH' ) ) {
  * product must be publicly viewable (viewer-independent) and purchasable under
  * WooCommerce's own rule. Catalog visibility, stock and electronic limits are
  * deliberately NOT listing filters; cart and checkout keep enforcing them.
+ *
+ * ADD-ONS AND PURCHASE (ADR-045 / BR-084 addition, 2026-10-02). Each listed
+ * Package carries its saved base composition ("What's included", from the same
+ * Catalog read: names, configured quantities, Paper/Digital; `ok` or
+ * `unavailable`, never partial) and its currently eligible add-on
+ * relationships, decided by the
+ * Catalog's own CustomerCartCatalog::addon() predicate, then by the linked
+ * product's public visibility and WooCommerce purchasability AT THE
+ * RELATIONSHIP PRICE (an in-memory copy, never saved), exactly as the cart
+ * prices it (CartSelection::relation_priced()). The add-on list is classified
+ * like the Package list. A selected
+ * Session with listed Packages also carries the current Hall's existing
+ * WooCommerce cart-extension endpoint, cart read endpoint, namespace, Store API
+ * nonce and cart URL. No purchase happens here: the browser posts to that
+ * existing endpoint and CustomerCart validates everything again.
  *
  * NO AUTHORIZATION, BY DESIGN: a signed-out customer asks these questions, as
  * with the predicates composed here. Nothing here writes, audits, caches across
@@ -83,6 +99,15 @@ final class HomepageSessionCalendar {
 
 	private const PACKAGE_TYPES = [ 'paper', 'digital', 'hybrid' ];
 
+	/** A component's only media (BR-039); paper is never inferred from "not digital". */
+	private const COMPONENT_MEDIUMS = [ 'paper', 'digital' ];
+
+	/** The linked-product statuses the Catalog itself accepts for a Bingo Play Product. */
+	private const COMPONENT_PRODUCT_STATUSES = [ 'publish', 'draft', 'private', 'pending' ];
+
+	/** CustomerCart's existing Store API cart-extension namespace. */
+	private const CART_NAMESPACE = 'bingocommerce-selection';
+
 	public static function register(): void {
 		add_filter( self::FILTER, [ self::class, 'provide' ] );
 	}
@@ -112,6 +137,9 @@ final class HomepageSessionCalendar {
 		$model = self::resolve( $eligible, $query, SessionService::hall_local_today() );
 		if ( is_array( $model['session'] ?? null ) ) {
 			$model['packages'] = self::packages( (int) $model['session']['id'] );
+			if ( [] !== $model['packages']['items'] ) {
+				$model['purchase'] = self::purchase();
+			}
 		}
 
 		return $model;
@@ -283,6 +311,7 @@ final class HomepageSessionCalendar {
 			'selected_label' => null === $selected ? '' : self::date_label( $selected ),
 			'session'        => $session,
 			'packages'       => null,
+			'purchase'       => null,
 			'available_url'  => self::url( [], self::ANCHOR_CALENDAR ),
 		];
 	}
@@ -521,9 +550,11 @@ final class HomepageSessionCalendar {
 			$items[] = [
 				'id'         => $package_id,
 				'type'       => $type,
-				'name'       => trim( wp_strip_all_tags( html_entity_decode( (string) $product->get_name(), ENT_QUOTES | ENT_HTML5, 'UTF-8' ) ) ),
+				'name'       => self::product_name( $product ),
 				'image_id'   => $image > 0 && wp_attachment_is_image( $image ) ? $image : 0,
 				'price_html' => (string) $product->get_price_html(),
+				'contents'   => self::contents( $package ),
+				'addons'     => self::addons( $package_id ),
 			];
 		}
 
@@ -532,5 +563,127 @@ final class HomepageSessionCalendar {
 		}
 
 		return [ 'status' => 0 === $errors ? self::STATUS_OK : self::STATUS_PARTIAL, 'items' => $items ];
+	}
+
+	/**
+	 * "What's included": the listed Package's saved base composition, from the
+	 * same Catalog read that listed it (ADR-045 / BR-084 addition 2026-10-02).
+	 * Each component is its Bingo Play Product's linked product name, the
+	 * configured component quantity (units of that item, never digital faces)
+	 * and its Paper or Digital medium, in the Catalog's own order. Optional
+	 * add-ons are never part of it. A list that cannot be verified completely —
+	 * missing, empty, an unrecognised medium or lifecycle, an invalid quantity, an
+	 * unresolvable or trashed product, an empty name — is `unavailable`, so a
+	 * partial list never looks like the whole Package.
+	 *
+	 * @param array<string,mixed> $package The Catalog's customer eligibility read.
+	 * @return array{status:string,items:array<int,array{name:string,quantity:int,medium:string}>}
+	 */
+	private static function contents( array $package ): array {
+		$unavailable = [ 'status' => self::STATUS_UNAVAILABLE, 'items' => [] ];
+		$components  = $package['components'] ?? null;
+		if ( ! is_array( $components ) || [] === $components || ! array_is_list( $components ) ) {
+			return $unavailable;
+		}
+
+		$items = [];
+		foreach ( $components as $component ) {
+			$quantity = is_array( $component ) ? ( $component['quantity'] ?? null ) : null;
+			$medium   = is_array( $component ) ? ( $component['medium'] ?? null ) : null;
+			$product  = is_array( $component ) ? wc_get_product( (int) ( $component['play_product_wc_id'] ?? 0 ) ) : null;
+			// BR-080 already refuses an archived component for sale; anything else is unverifiable here.
+			if ( ! is_int( $quantity ) || $quantity < 1 || ! in_array( $medium, self::COMPONENT_MEDIUMS, true )
+				|| 'active' !== ( $component['play_product_status'] ?? null )
+				|| ! $product instanceof \WC_Product || ! in_array( $product->get_status(), self::COMPONENT_PRODUCT_STATUSES, true ) ) {
+				return $unavailable;
+			}
+			$name = self::product_name( $product );
+			if ( '' === $name ) {
+				return $unavailable;
+			}
+			$items[] = [ 'name' => $name, 'quantity' => $quantity, 'medium' => $medium ];
+		}
+
+		return [ 'status' => self::STATUS_OK, 'items' => $items ];
+	}
+
+	/**
+	 * Currently eligible add-on relationships of one listed Package. `id` is the
+	 * Package add-on RELATIONSHIP ID (what the cart request submits), never a
+	 * Play Product or WooCommerce product ID. Prices are the relationship's own.
+	 *
+	 * @return array{status:string,items:array<int,array<string,mixed>>}
+	 */
+	private static function addons( int $package_id ): array {
+		$unavailable = [ 'status' => self::STATUS_UNAVAILABLE, 'items' => [] ];
+		if ( ! class_exists( CustomerCartCatalog::class ) ) {
+			return $unavailable;
+		}
+
+		$read = CustomerCartCatalog::addons( $package_id );
+		if ( is_wp_error( $read ) ) {
+			return $unavailable;
+		}
+
+		$items  = [];
+		$errors = (int) $read['errors'];
+		foreach ( $read['items'] as $addon ) {
+			$product = wc_get_product( (int) $addon['wc_product_id'] );
+			// The cart accepts simple products only (CartSelection::inspect()).
+			if ( ! $product instanceof \WC_Product || ! $product->is_type( 'simple' ) ) {
+				++$errors;
+				continue;
+			}
+
+			// The relationship price on an in-memory copy, exactly as the cart applies
+			// it; the stored WooCommerce prices are never changed or saved.
+			$priced = CartSelection::relation_priced( clone $product, (string) $addon['unit_price'] );
+			if ( ! is_post_publicly_viewable( $product->get_id() ) || ! $priced->is_purchasable() ) {
+				continue;
+			}
+
+			$image   = (int) $product->get_image_id();
+			$items[] = [
+				'id'           => (int) $addon['package_addon_id'],
+				'name'         => self::product_name( $product ),
+				'image_id'     => $image > 0 && wp_attachment_is_image( $image ) ? $image : 0,
+				'max_quantity' => (int) $addon['max_quantity'],
+				// Not get_price_html(): its sale branch would compare the product's own
+				// stored sale and regular prices, which do not apply to this price.
+				'price_html'   => wc_price( (float) wc_get_price_to_display( $priced, [ 'price' => (string) $addon['unit_price'] ] ) ) . $priced->get_price_suffix(),
+			];
+		}
+
+		if ( $errors > 0 && [] === $items ) {
+			return $unavailable;
+		}
+
+		return [ 'status' => 0 === $errors ? self::STATUS_OK : self::STATUS_PARTIAL, 'items' => $items ];
+	}
+
+	/** A product's display name as plain text. */
+	private static function product_name( \WC_Product $product ): string {
+		return trim( wp_strip_all_tags( html_entity_decode( (string) $product->get_name(), ENT_QUOTES | ENT_HTML5, 'UTF-8' ) ) );
+	}
+
+	/**
+	 * The current Hall's existing purchase boundary: WooCommerce's Store API
+	 * cart-extension route (CustomerCart's namespace) and its cart read, with a
+	 * Store API nonce for this viewer. Request authority stays server-side.
+	 *
+	 * @return array<string,string>|null
+	 */
+	private static function purchase(): ?array {
+		if ( ! function_exists( 'wc_get_cart_url' ) || ! function_exists( 'rest_url' ) ) {
+			return null;
+		}
+
+		return [
+			'endpoint'      => rest_url( 'wc/store/v1/cart/extensions' ),
+			'cart_endpoint' => rest_url( 'wc/store/v1/cart' ),
+			'namespace'     => self::CART_NAMESPACE,
+			'nonce'         => wp_create_nonce( 'wc_store_api' ),
+			'cart_url'      => (string) wc_get_cart_url(),
+		];
 	}
 }

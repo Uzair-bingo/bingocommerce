@@ -4153,3 +4153,154 @@ customer selection screens.
   clean. WooCommerce 11.0.1 itself was not re-run (its ordering is from upstream
   source).
 - Nothing was staged, committed, pushed or deployed.
+
+### Homepage purchase step — branch `bingotheme`, uncommitted (2026-10-02)
+
+- Started from clean HEAD `515e799`; implements the reviewed purchase plan and its
+  corrections (ADR-045 / BR-084 addition 2026-10-02). Flow: verified dated
+  Session → one Package (native radio group, nothing preselected, quantity one)
+  → optional eligible add-ons (only the chosen Package's panel; native
+  checkboxes, labelled quantities 1…relationship maximum) → WooCommerce's
+  existing Store API cart-extension route, validated again by `CustomerCart`.
+  No new production route, cart service, schema, setting, checkout, order,
+  refund or entitlement change.
+- Catalog: anonymous `CustomerCartCatalog::addons()` composes the existing
+  `addon()` predicate. Sessions: per-Package `addons` (relationship ID, name,
+  image, maximum, relationship price formatted by WooCommerce from an in-memory
+  copy, never `get_price_html()`), ok/partial/unavailable, plus `purchase`
+  (current Hall endpoint, cart read, namespace, Store API nonce, cart URL).
+  BingoThemev1: validated data, hidden/disabled form markup, summary without a
+  browser total, and the optional `assets/js/homepage-purchase.js` (captured
+  JSON, one in-flight guard, exact-selection success check, one retry only after
+  a confirmed 401/403 Store API nonce rejection, header refresh through the
+  existing `wc-blocks_added_to_cart` path). Existing server messages are shown
+  as text; uncertain outcomes say "We couldn't confirm your selection was
+  added. Check your cart before trying again."
+- Found and fixed during browser verification: the first nonce check treated a
+  200 response as a nonce rejection (undefined === undefined) and retried.
+- Guarded `bingocommerce_state_recon` results: new
+  `tests/homepage-session-purchase.php` **141 passed / 0 failed** with
+  `BC_SESSION_PURCHASE_BROWSER=1` (138 / 0 without it; browser stage **197 / 0** over 129 live
+  php-cgi requests that boot each disposable Hall directly, real JSON POSTs,
+  normal nonce checks and real Set-Cookie headers; cart page = classic
+  `[woocommerce_cart]` shortcode, Cart block not exercised, no checkout run).
+  Regressions: calendar 358/0 with browser (browser stage 185/0) and 353/0
+  without; customer cart 140/0; electronic limits 679/0; order recording
+  1098/0; storefront 106/0; Store Details 204/0; slider 222/0 and browser 59/0;
+  categories 316/0 and browser 255/0. PHP/JS syntax and whitespace checks pass.
+  Disposable Halls (sessions tables included) removed; network electronic-limit
+  setting restored; main-site WooCommerce session table and persistent fixture
+  Halls 2/3/4 unchanged.
+- Observed, not changed: a native WooCommerce add refusal inside
+  `CustomerCart::add()` (e.g. insufficient stock) leaves WooCommerce's error
+  notice in the guest session; the classic cart page later prints it, and until
+  then Store API cart reads report it and Store API cart validation returns 409.
+  Next presentation task: Bingo Session/date labels on cart lines.
+- Review revision (same day, still uncommitted): compact add-on rows (checkbox,
+  optional thumbnail, name, unit price; labelled quantity outside the label,
+  enabled only while selected; "Quantity 1" for a maximum of one), the intro
+  "Choose one Bingo Package. Add-ons are optional.", compact Package choices on
+  mobile with the summary directly below the add-ons; translated theme wording
+  for the known refusal codes (`bc_cart_package_limit` → the one-Package message
+  with a prominent View cart; no stock wording from the generic
+  `bc_cart_selection_invalid`); a strict success check against the existing
+  Store API extension data (one consistent Package line, exactly the captured
+  add-ons, no other Bingo line; merchandise allowed). The retained-notice side
+  effect above was reproduced and corrected in `CustomerCart::add()`'s failed-add
+  rollback: only notices appended during that failed attempt are dropped.
+  Cart-page mode: HallSiteProvisioner's `WC_Install::install()` creates a Cart
+  BLOCK page; verified with that Cart block (Hall A) and the classic shortcode
+  (Hall B). Checkout was not exercised by these suites.
+- Revision results (guarded `bingocommerce_state_recon`): purchase suite
+  **151 / 0** with the browser stage (**306 / 0** over 217 php-cgi requests,
+  first-time guests without seeding or cookie injection included) and 148 / 0
+  without; calendar 358/0 with browser (browser stage 185/0) and 353/0 without;
+  customer cart 140/0; electronic limits 679/0; order recording 1098/0; digital
+  entitlement snapshot 1330/0; storefront 106/0; Store Details 204/0; slider
+  222/0 and browser 59/0; categories 316/0 and browser 255/0. The main-site
+  WooCommerce session table is now compared by row contents (unchanged).
+- Observed, not changed (cart presentation, out of scope): WooCommerce's Cart
+  block shows an add-on whose product has its own regular price as discounted
+  ("Previous price $5.00 / Discounted price $3.00 / Save $2.00") because the
+  relationship price is applied as the line price while the product's regular
+  price stays. A first-time guest's lost first response leaves that first cart
+  in a session the browser never received (until WooCommerce's guest-session
+  expiry); a manual retry adds the selection once to a new session.
+- Nothing was staged, committed, pushed or deployed.
+
+### Purchase-step reference layout, Package contents, Shop listing and add-on prices — branch `bingotheme`, uncommitted (2026-10-02)
+
+- Started from HEAD `515e799` plus the uncommitted purchase-step work above
+  (23 paths, backed up before editing); ADR-045 / BR-084 same-day addition.
+  No schema, endpoint, plugin, setting or migration added; request format,
+  nonce retry, success check, rejection messages (except the digital-limit
+  wording), calendar, slider, map, categories, header, footer and tokens
+  unchanged.
+- Layout (BingoThemev1, presentation only): the reference session page's
+  structure — a narrower left column of compact Package choices (one radio
+  group, nothing preselected, placeholder tile when a Package has no image)
+  and a wider right column with a "Selected Package" panel, the chosen
+  Package's add-on image cards (checkbox; quantity field outside the label
+  with pointer −/+ buttons; "Maximum quantity: N" or a fixed "Quantity: 1";
+  "Add-ons are optional.") and the dark summary with Add to cart below the
+  grid; stacked at ≤1024px. Local, case- and accent-insensitive name search
+  for Packages with more than one add-on: hidden cards keep their choices,
+  quantities and place in the summary/request; a polite "No add-ons match …"
+  message; Enter never submits; a hidden invalid choice is revealed before its
+  message. "Your cart shows the total." kept.
+- "What's included": Sessions' `HomepageSessionCalendar` adds read-only
+  `contents` per listed Package from the same Catalog customer read (component
+  product name, configured quantity, Paper/Digital; `ok` or `unavailable`);
+  the theme validates it and shows "Package contents can't be shown right
+  now." when unverifiable (e.g. a component whose product is trashed). No cart
+  line or request change.
+- Shop: new Catalog `ShopListing` on `woocommerce_product_query` leaves the
+  Hall's own Package and Play Product products (every row, active or archived)
+  out of the Shop page, product archives and product search; fails open
+  (listing unchanged) when the Catalog can't be read; no product, visibility,
+  stock, price or purchasability change; direct-purchase guards unchanged.
+- Add-on price presentation: `CartSelection::relation_priced()` (used on add,
+  session restore, refresh and the homepage listing) makes the relationship
+  price an add-on line's price and regular price with no sale price — the Cart
+  block's false "Previous price / Save" is gone; genuine Package and
+  merchandise sales still show. Behaviour change by design: a coupon that
+  excludes sale items now discounts an add-on whose product has its own sale.
+- Wording: `bc_electronic_limit_exceeded` → "Your selection exceeds this
+  Hall’s digital bingo face limit. Reduce the digital add-ons or choose a
+  different Package." Stale test comments about the cart page corrected (Hall A
+  Cart block, Hall B classic shortcode).
+- Guarded `bingocommerce_state_recon` results (disposable token-owned Halls
+  only): `tests/homepage-session-purchase.php` **235 / 0** with
+  `BC_SESSION_PURCHASE_BROWSER=1` (browser stage **383 / 0** over 230 live
+  php-cgi requests that boot each Hall directly; real JSON POSTs, normal nonce
+  checks, real Set-Cookie; Hall A Cart block page and Hall B classic cart;
+  Shop page, product category and product search requests) and **232 / 0**
+  without it. New coverage: contents (provider, theme validation, rendering,
+  no-JS, trashed component), layout and responsive metrics at 1440–320px,
+  long names, missing images, keyboard order, stepper/checkbox independence,
+  search (no-match, Enter, hidden selections, accents), Shop exclusion with a
+  product ID that is merchandise in Hall A and a Play Product in Hall B,
+  unchanged product states and guards, Store API prices (no false sale;
+  genuine Package/merchandise sales), a restored cart, a coupon excluding sale
+  items, and taxes. Simulated (router-altered) responses remain only where
+  labelled (mappings, strict success, nonces, uncertain outcomes).
+- Regressions: calendar **362 / 0** with browser (browser stage **184 / 0**;
+  its Package-grid check now follows the purchase layout when the script runs)
+  and **357 / 0** without; customer cart **140 / 0**; electronic limits
+  **679 / 0**; order recording incl. refunds, coupons and taxes **1098 / 0**;
+  digital entitlement snapshot **1330 / 0**; storefront **106 / 0**; Store
+  Details **204 / 0**; slider **222 / 0** and browser **59 / 0**; categories
+  **316 / 0** and browser **255 / 0**; session availability 564, sessions 352,
+  schedules 159, schedule admin 447 and reconciliation 271 assertions (all
+  PASS); package add-ons **582 / 0** and add-on admin **350 / 0**. PHP and
+  JavaScript syntax checks and `git diff --check` pass. Persistent fixture
+  Halls 2/3/4 and the main site's WooCommerce session table unchanged;
+  network electronic-limit setting restored.
+- Not changed or not covered: related/up-sell products, product blocks,
+  shortcodes, widgets, the general site search and WooCommerce's stored
+  category counts (the Shop filter is the main product query only); a Bingo
+  product's single product page is still reachable by URL (its add is still
+  refused); the add-on grid has no internal scroll area (the reference caps it
+  at 450px); the purchase suites run no checkout (the order-recording and
+  entitlement suites above do).
+- Nothing was staged, committed, pushed or deployed.

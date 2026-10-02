@@ -30,9 +30,13 @@ Request -> hallname.parent-domain.com
         -> implemented server-side cart validation and electronic-limit checks
            at cart addition and classic/Store API checkout; BingoThemev1
            foundation implemented (ADR-045); the homepage Session calendar
-           (date -> eligible dated Session -> informational Package cards,
-           homepage GET parameters, no new route) is implemented; add-on
-           selection and the purchase action remain pending
+           (date -> eligible dated Session -> Package cards, homepage GET
+           parameters, no new route) is implemented, and its purchase step
+           (one Package -> optional eligible add-ons -> the existing Store API
+           cart-extension route, JavaScript only) is implemented (2026-10-02),
+           with the reference two-column layout, each Package's "What's
+           included" and the ordinary Shop listing only merchandise (same-day
+           addition); Bingo cart-line labels remain pending
         -> order records exact Session, Package, add-on links/quantities and
            saved digital-face totals by Game Type; Woo line amounts, discounts
            and taxes remain the financial record (BR-083)
@@ -152,8 +156,10 @@ automatic Enable/Disable. See
   reconciliation. Slice 3 implements Package administration UI and request
   handling. The customer cart backend and electronic-limit checks at cart
   addition and classic/Store API checkout are implemented; the BingoThemev1
-  storefront foundation is implemented (ADR-045) and the selection screens
-  remain pending. No real Hall migration, deployment or
+  storefront foundation is implemented (ADR-045), including the homepage
+  Session → Package → add-on purchase step (2026-10-02; reference layout, Package
+  contents, Shop exclusion of Bingo products and add-on price presentation the
+  same day). No real Hall migration, deployment or
   production readiness is claimed.
   Game Type, Bingo Play Product, Package, and Session use local
   surrogate domain IDs; Portal `game_types.id` is the trusted cross-
