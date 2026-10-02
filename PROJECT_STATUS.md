@@ -4122,3 +4122,34 @@ customer selection screens.
   `customer-electronic-limits.php` is still 611 / 68 failed, with a failure set
   identical to the HEAD baseline.
 - Nothing was staged, committed, pushed or deployed.
+
+### Electronic-limit checkout fixture ordering — branch `bingotheme`, uncommitted (2026-10-01)
+
+- Cause of the 611 / 68 result recorded above (kept as history): a test-fixture
+  ordering issue, not missing enforcement. `tests/customer-electronic-limits.php`
+  stopped Store API checkout with an intentional 418 on
+  `woocommerce_store_api_checkout_update_customer_from_request`. WooCommerce
+  11.0.1 fired that action after `CartController::validate_cart()`; since 11.1.0
+  (upstream PR #67773) `Checkout::process_order()` updates the customer first, so
+  on installed WooCommerce **11.1.2** the stop ran before BingoCommerce's
+  priority-100 `woocommerce_store_api_cart_errors` validator. All 68 failures were
+  the 25 expected-rejection Store API cases (stop reached / 418 instead of 409,
+  plus 18 configuration-message checks). Classic checkout and add-to-cart checks
+  passed, and a diagnostic trace showed rejected carts receive WooCommerce's
+  genuine 409 with BingoCommerce's messages once validation runs.
+- Test-only correction: the Store API stop now runs on
+  `woocommerce_store_api_cart_errors` at `PHP_INT_MAX` and is removed with the same
+  hook and priority. It returns without throwing when errors exist (WooCommerce
+  then returns its own 409); otherwise it marks the stop reached and throws the
+  existing 418, after BingoCommerce's cart-error checks and before later
+  WooCommerce validation and order creation. No complete successful checkout is
+  exercised. Assertions are unchanged; no production code, business rule,
+  dependency or Hall setting changed.
+- Guarded `bingocommerce_state_recon` result:
+  `BC_TEST_DB=bingocommerce_state_recon php tests/customer-electronic-limits.php`
+  → **679 passed, 0 failed** (exit 0), with the same 679 assertion labels as the
+  failing run; disposable Halls/tables removed, network setting restored,
+  persistent fixture Halls 2/3/4 unchanged. `php -l` and `git diff --check`
+  clean. WooCommerce 11.0.1 itself was not re-run (its ordering is from upstream
+  source).
+- Nothing was staged, committed, pushed or deployed.

@@ -418,7 +418,13 @@ final class CustomerElectronicLimitsTest {
 		$this->checkout_paths( true, 'Hall A cart still valid' );
 	}
 
-	/** Real checkout entry points. Sentinels stop only AFTER validation, before orders/payment. */
+	/**
+	 * Real checkout entry points; neither exercises a complete successful checkout.
+	 * Classic stops at order creation, after final checkout validation. Store API stops
+	 * inside CartController::validate_cart() after BingoCommerce's cart-error checks and
+	 * before later WooCommerce validation and order creation (WC 11.1 updates the
+	 * customer before validating the cart, so that action is no longer a valid stop).
+	 */
 	private function checkout_paths( bool $allowed, string $label, bool $configuration_failure = false ): void {
 		$this->same( 0, get_current_user_id(), $label . ': guest checkout' );
 		wc_clear_notices(); WC()->cart->cart_context = 'shortcode';
@@ -443,14 +449,19 @@ final class CustomerElectronicLimitsTest {
 		}
 		wc_clear_notices();
 		$reached = false;
-		$stop_api = static function () use ( &$reached ) { $reached = true; throw new RouteException( 'bc_fixture_after_validation', 'Fixture stopped after checkout cart validation.', 418 ); };
-		add_action( 'woocommerce_store_api_checkout_update_customer_from_request', $stop_api );
+		// After BingoCommerce's priority-100 validator: any error is left for WooCommerce's genuine 409.
+		$stop_api = static function ( WP_Error $errors ) use ( &$reached ) {
+			if ( $errors->has_errors() ) { return; }
+			$reached = true;
+			throw new RouteException( 'bc_fixture_after_validation', 'Fixture stopped after BingoCommerce cart-error checks, before later WooCommerce validation and order creation.', 418 );
+		};
+		add_action( 'woocommerce_store_api_cart_errors', $stop_api, PHP_INT_MAX );
 		try {
 			$response = $this->request( '/checkout', [ 'billing_address' => $address ] );
 			$this->same( $allowed, $reached, $label . ': Store API reaches post-validation boundary only when valid' );
 			$this->same( $allowed ? 418 : 409, $response->get_status(), $label . ': Store API checkout response ' . ( 409 === $response->get_status() || 418 === $response->get_status() ? '' : wp_json_encode( $response->get_data() ) ) );
 			if ( $configuration_failure ) { $this->ok( str_contains( wp_json_encode( $response->get_data() ), 'The Hall electronic-face limit could not be verified.' ), $label . ': Store API reports configuration failure through its existing cart-error envelope' ); }
-		} finally { remove_action( 'woocommerce_store_api_checkout_update_customer_from_request', $stop_api ); }
+		} finally { remove_action( 'woocommerce_store_api_cart_errors', $stop_api, PHP_INT_MAX ); }
 		wc_clear_notices(); WC()->cart->cart_context = 'shortcode';
 	}
 
