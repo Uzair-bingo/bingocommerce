@@ -29,6 +29,19 @@
  *     product search) lists merchandise but no Bingo Package or Play Product,
  *     by each Hall's own Catalog, including a product ID that is merchandise in
  *     one Hall and a Play Product in the other; direct-purchase guards kept.
+ *  7. Cart Session labels (ADR-045 / BR-084 addition 2026-10-02): the one
+ *     native "Bingo Session" item-data entry on a verified Package line —
+ *     generated, legacy, long, multibyte, maximum-length and unsafe names, the
+ *     display-only " — HH:MM" removal, translations; every malformed field,
+ *     missing row, read failure and identity mismatch reaching the neutral
+ *     entry; verification failures adding nothing; unexpected shapes; the
+ *     classic cart, checkout review and mini-cart templates and the Store API
+ *     (other filters' entries and variation details kept, one entry per
+ *     Package line, identical output without the callback apart from that
+ *     entry); Session A in the cart while Session B is viewed; colliding IDs
+ *     and forged foreign-Hall metadata; guest and signed-in customers; cart
+ *     state, checkout validation (also with the neutral entry) and Remove/Undo
+ *     unchanged; saved order labels byte-identical and in their existing format.
  *
  * Optional: BC_SESSION_PURCHASE_BROWSER=1 with BC_NODE_EXECUTABLE,
  * BC_PLAYWRIGHT_MODULE, BC_CHROME_EXECUTABLE and BC_SESSION_PURCHASE_ARTIFACTS
@@ -38,8 +51,10 @@
  * homepage, cart page (Hall A: the Cart block page WooCommerce's installer
  * creates; Hall B: the classic [woocommerce_cart] shortcode), Shop page, Store
  * API cart read and cart-extension POST, merchandise seeding and WooCommerce
- * cart fragments, with guest cookies carried between requests. No checkout is
- * run.
+ * cart fragments, with guest cookies carried between requests. For the cart
+ * labels it also opens Hall A's Checkout block page and a Mini-Cart block page,
+ * Hall B's classic checkout page (its review refresh included) and a disposable
+ * customer's signed-in session. No checkout is submitted.
  *
  * Disposable token-owned Halls and actors only; persistent fixture Halls 2/3/4
  * and the main site's WooCommerce session table are compared before and after,
@@ -80,6 +95,7 @@ final class HomepageSessionPurchaseTest {
 	private const NY    = 'America/New_York';
 
 	private array $sites = [];
+	private array $users = [];
 	private int $admin;
 	private string $token;
 	private int $passes = 0;
@@ -111,7 +127,9 @@ final class HomepageSessionPurchaseTest {
 			$this->pricing( $a );
 			$this->isolation( $a, $b );
 			$this->shop( $a, $b );
-			$this->browser( $a, $b );
+			$labels = $this->label_fixtures( $a, $b );
+			$this->labels( $a, $b, $labels );
+			$this->browser( $a, $b, $labels );
 		} catch ( Throwable $e ) {
 			++$this->failures;
 			fwrite( STDERR, get_class( $e ) . ': ' . $e->getMessage() . "\n" . $e->getTraceAsString() . "\n" );
@@ -320,14 +338,14 @@ final class HomepageSessionPurchaseTest {
 	}
 
 	/** One generated, Sales-ON dated Session through the real schedule and sales services. */
-	private function session( string $name, int $days, array $packages ): int {
+	private function session( string $name, int $days, array $packages, string $time = '18:00' ): int {
 		global $wpdb;
 		static $next = 0;
 		$template = 981000 + ( ++$next );
 		$now      = current_time( 'mysql', true );
 		$wpdb->insert( Migrations::portal_session_templates_table(), [ 'portal_session_id' => $template, 'name' => $name, 'portal_status' => 'active', 'is_current' => 1, 'created_at' => $now, 'updated_at' => $now ] );
 		$schedules = new SessionScheduleService( $this->audit );
-		$schedule  = $schedules->create( $template, 'dates', '18:00', [ self::day( self::NY, $days ) ], $packages );
+		$schedule  = $schedules->create( $template, 'dates', $time, [ self::day( self::NY, $days ) ], $packages );
 		if ( ! $schedule instanceof SessionScheduleResult || SessionScheduleResult::STATUS_OK !== $schedule->status ) { throw new RuntimeException( 'Schedule fixture failed.' ); }
 		$schedules->generate( (int) $schedule->schedule['schedule_id'] );
 		$session = (int) $wpdb->get_var( $wpdb->prepare( 'SELECT session_id FROM %i WHERE schedule_id = %d', Migrations::sessions_table(), $schedule->schedule['schedule_id'] ) );
@@ -337,6 +355,18 @@ final class HomepageSessionPurchaseTest {
 
 	private static function day( string $zone, int $days ): string {
 		return ( new DateTimeImmutable( 'now', new DateTimeZone( $zone ) ) )->setTime( 12, 0 )->modify( '+' . $days . ' days' )->format( 'Y-m-d' );
+	}
+
+	/** One legacy (unscheduled) Sales-ON Session through the real SessionService writers. */
+	private function legacy( string $name, int $days, array $packages ): int {
+		$service = new SessionService( $this->audit );
+		$created = $service->create( self::day( self::NY, $days ), $name, true );
+		if ( ! $created instanceof SessionResult ) { throw new RuntimeException( 'Legacy Session fixture failed.' ); }
+		$session = (int) $created->session['session_id'];
+		foreach ( $packages as $package ) {
+			if ( ! $service->assignPackage( $session, $package ) instanceof SessionResult ) { throw new RuntimeException( 'Legacy Package assignment failed.' ); }
+		}
+		return $session;
 	}
 
 	/* ================================================================== *
@@ -925,10 +955,952 @@ final class HomepageSessionPurchaseTest {
 	}
 
 	/* ================================================================== *
+	 * 7. Cart Session labels (ADR-045 / BR-084 addition 2026-10-02)
+	 * ================================================================== */
+
+	/**
+	 * Label Sessions in both Halls, created after the Shop checks so earlier listings are
+	 * unchanged: generated Sessions at other times, a long name in a 30-character named
+	 * zone, a multibyte name, a 191-character stored name, legacy Sessions (one whose
+	 * name holds "6:30 PM", one with markup), a variable merchandise product, Hall B's
+	 * classic checkout page (with a Mini-Cart block, so its Cart/Checkout fallback
+	 * renders), a Hall A Mini-Cart page, and one disposable signed-in customer.
+	 *
+	 * @return array<string,mixed>
+	 */
+	private function label_fixtures( array $a, array $b ): array {
+		global $wpdb;
+		$long   = 'Saturday Super Jackpot Early Bird Special Session with Bonus Rounds and Prize Draws';
+		$multi  = 'Noche de Bingo — Ñandú Café 東京 🎉';
+		$unsafe = '<img src=x onerror=alert(1)> & "q" \'a\' <b>b</b>';
+		$max    = rtrim( mb_substr( str_repeat( 'Grand Charity Bingo Marathon ', 8 ), 0, 183 ) );
+		while ( mb_strlen( $max ) < 183 ) { $max .= 'x'; }
+		$fixtures = [];
+		foreach ( [ $a, $b ] as $hall ) {
+			switch_to_blog( $hall['site'] );
+			wp_set_current_user( $this->admin );
+			try {
+				$paper = [ $hall['packages']['paper'] ];
+				$x     = [ 'friday' => [ $hall['session'], $hall['date'], 'Friday Night Bingo', '18:00', self::NY ] ];
+				$make  = function ( string $name, int $days, ?string $time, string $zone = self::NY ) use ( $paper ): array {
+					$date = self::day( self::NY, $days );
+					if ( null === $time ) { return [ $this->legacy( $name, $days, $paper ), $date, $name, null, null ]; }
+					update_option( 'timezone_string', $zone );
+					try { return [ $this->session( $name, $days, $paper, $time ), $date, $name, $time, $zone ]; }
+					finally { update_option( 'timezone_string', self::NY ); }
+				};
+				if ( 'a' === $hall['label'] ) {
+					// Created first: its Hall-local ID collides with Hall B's Saturday Session.
+					$x['star']   = $make( 'Star Evening', 4, '19:30' );
+					$x['legacy'] = $make( 'Early Bird Bingo 6:30 PM', 5, null );
+				} else {
+					$row           = $wpdb->get_row( $wpdb->prepare( 'SELECT session_date FROM %i WHERE session_id = %d', Migrations::sessions_table(), $hall['only_session'] ), ARRAY_A );
+					$x['saturday'] = [ $hall['only_session'], (string) $row['session_date'], 'Saturday Bingo', '18:00', self::NY ];
+				}
+				$x['long']      = $make( $long, 3, '18:30', 'America/North_Dakota/New_Salem' );
+				$x['multibyte'] = $make( $multi, 6, '20:15' );
+				$x['unsafe']    = $make( $unsafe, 7, null );
+				if ( 'a' === $hall['label'] ) {
+					$x['max'] = $make( $max, 8, '21:45' );
+				}
+				$sessions = [];
+				foreach ( $x as $key => [ $id, $date, $name, $time, $zone ] ) {
+					$sessions[ $key ] = [ 'id' => (int) $id, 'date' => $date, 'name' => $name, 'time' => $time, 'zone' => $zone, 'label' => self::label( $date, $name, $time, $zone ) ];
+				}
+				[ $parent, $variation ] = $this->variable( 'Bingo bag' );
+				if ( 'b' === $hall['label'] ) {
+					// Classic checkout, with a Mini-Cart block: on a Checkout page it renders WooCommerce's hidden fallback.
+					$checkout = wp_insert_post( [ 'post_type' => 'page', 'post_status' => 'publish', 'post_title' => 'Checkout', 'post_content' => "[woocommerce_checkout]\n\n<!-- wp:woocommerce/mini-cart /-->" ] );
+					update_option( 'woocommerce_checkout_page_id', (int) $checkout );
+					$minicart = 0;
+				} else {
+					$checkout = wc_get_page_id( 'checkout' );
+					$minicart = wp_insert_post( [ 'post_type' => 'page', 'post_status' => 'publish', 'post_title' => 'Mini-Cart fixture', 'post_name' => 'mini-cart-fixture', 'post_content' => "<!-- wp:paragraph -->\n<p>Mini-Cart fixture page.</p>\n<!-- /wp:paragraph -->\n\n<!-- wp:woocommerce/mini-cart /-->" ] );
+				}
+				$fixtures[ $hall['label'] ] = [
+					'sessions' => $sessions, 'variable' => $parent, 'variation' => $variation,
+					'checkout_page' => (int) $checkout, 'checkout_url' => (string) get_permalink( (int) $checkout ),
+					'checkout_mode' => has_block( 'woocommerce/checkout', (int) $checkout ) ? 'block' : ( has_shortcode( (string) get_post_field( 'post_content', (int) $checkout ), 'woocommerce_checkout' ) ? 'shortcode' : 'unknown' ),
+					'minicart_page' => (int) $minicart, 'minicart_url' => $minicart ? (string) get_permalink( (int) $minicart ) : '',
+				];
+			} finally {
+				wp_set_current_user( 0 );
+				restore_current_blog();
+			}
+		}
+		// One disposable customer, a member of Hall A only, marked as this run's own.
+		switch_to_blog( $a['site'] );
+		try {
+			$customer = wp_insert_user( [ 'user_login' => 'bc_label_customer_' . strtolower( wp_generate_password( 10, false ) ), 'user_pass' => wp_generate_password( 32 ), 'user_email' => 'label-customer-' . strtolower( wp_generate_password( 8, false ) ) . '@example.invalid', 'role' => 'customer' ] );
+			if ( is_wp_error( $customer ) ) { throw new RuntimeException( 'Customer fixture failed.' ); }
+			$this->users[] = (int) $customer;
+			update_user_meta( (int) $customer, self::OWNER, $this->token );
+		} finally {
+			restore_current_blog();
+		}
+		$fixtures['customer'] = (int) $customer;
+		return $fixtures;
+	}
+
+	/** The approved label for these stored inputs: `MM/DD/YYYY · HH:MM Zone · Name`, or `MM/DD/YYYY · Name` without structured time. */
+	private static function label( string $date, string $name, ?string $time, ?string $zone ): string {
+		$day = DateTimeImmutable::createFromFormat( '!Y-m-d', $date )->format( 'm/d/Y' );
+		return null === $time ? $day . ' · ' . $name : $day . ' · ' . $time . ' ' . $zone . ' · ' . $name;
+	}
+
+	/**
+	 * @return array{0:int,1:int} A variable merchandise product and one variation. With three
+	 * attributes WooCommerce's own title rule leaves them out of the variation's name, so the
+	 * classic displays list them as variation details.
+	 */
+	private function variable( string $name ): array {
+		$attributes = [];
+		foreach ( [ 'Colour' => [ 'Blue', 'Red' ], 'Size' => [ 'Large', 'Small' ], 'Material' => [ 'Cotton', 'Canvas' ] ] as $label => $options ) {
+			$attribute = new WC_Product_Attribute();
+			$attribute->set_name( $label );
+			$attribute->set_options( $options );
+			$attribute->set_visible( true );
+			$attribute->set_variation( true );
+			$attributes[] = $attribute;
+		}
+		$parent = new WC_Product_Variable();
+		$parent->set_name( $name );
+		$parent->set_status( 'publish' );
+		$parent->set_attributes( $attributes );
+		$parent_id = (int) $parent->save();
+		$variation = new WC_Product_Variation();
+		$variation->set_parent_id( $parent_id );
+		$variation->set_attributes( [ 'colour' => 'Blue', 'size' => 'Large', 'material' => 'Cotton' ] );
+		$variation->set_regular_price( '6.00' );
+		$variation->set_virtual( true );
+		$variation->set_status( 'publish' );
+		$variation_id = (int) $variation->save();
+		WC_Product_Variable::sync( $parent_id );
+		if ( $parent_id < 1 || $variation_id < 1 ) { throw new RuntimeException( 'Variable product fixture failed.' ); }
+		return [ $parent_id, $variation_id ];
+	}
+
+	private function labels( array $a, array $b, array $x ): void {
+		$this->group( 'Cart Session labels: registration' );
+		$this->same( 100, has_filter( 'woocommerce_get_item_data', [ CustomerCart::class, 'session_details' ] ), 'one read-only callback on WooCommerce’s native woocommerce_get_item_data, priority 100' );
+		CustomerCart::register();
+		$this->same( 1, $this->callback_count( 'woocommerce_get_item_data', [ CustomerCart::class, 'session_details' ] ), 'the existing registration guard keeps it registered once' );
+		$this->same( [ 'a' => 'block', 'b' => 'shortcode' ], [ 'a' => $x['a']['checkout_mode'], 'b' => $x['b']['checkout_mode'] ], 'Hall A: WooCommerce’s installer Checkout BLOCK page; Hall B: a classic [woocommerce_checkout] page' );
+		$this->label_format( $a, $b, $x );
+		$this->label_validation( $a, $x );
+		$this->label_displays( $a, $x );
+		$this->label_switching( $a, $b, $x );
+		$this->label_isolation( $a, $b, $x );
+		$this->label_customers( $a, $x );
+		$this->label_behaviour( $a, $x );
+		$this->label_orders( $a, $x );
+	}
+
+	/** Generated and legacy text, terminal-suffix removal, translations, multibyte and maximum-length names. */
+	private function label_format( array $a, array $b, array $x ): void {
+		$this->group( 'Cart Session labels: text (signed out)' );
+		$this->same( [ 'America/North_Dakota/New_Salem', 30 ], [ $x['a']['sessions']['long']['zone'], strlen( $x['a']['sessions']['long']['zone'] ) ], 'fixture: the long Session uses a 30-character named zone (the longest in this PHP’s list)' );
+		foreach ( [ 'a' => $a, 'b' => $b ] as $label => $hall ) {
+			switch_to_blog( $hall['site'] );
+			try {
+				wp_set_current_user( 0 );
+				WC()->initialize_session();
+				WC()->initialize_cart();
+				foreach ( $x[ $label ]['sessions'] as $key => $s ) {
+					$this->label_cart( $hall, $s['id'] );
+					$store   = $this->store_lines();
+					$classic = $this->classic_lines();
+					$pkg     = 'package:' . $hall['packages']['paper'];
+					$this->same( [ $this->entry( $s['label'] ) ], $store[ $pkg ]['item_data'] ?? null, "Hall {$label} {$key}: Store API item_data is one “Bingo Session” entry, escaped ({$s['label']})" );
+					$this->same( [ [ 'Bingo Session', $s['label'] ] ], $classic[ $pkg ] ?? null, "Hall {$label} {$key}: classic item data shows the same text" );
+					$this->same( [ [], [] ], [ $store[ 'addon:' . $hall['relations']['paper_shared'] ]['item_data'] ?? null, $store[ 'merch:' . $hall['merch'] ]['item_data'] ?? null ], "Hall {$label} {$key}: add-on and merchandise keep empty item data" );
+					$this->same( [ [], [] ], [ $classic[ 'addon:' . $hall['relations']['paper_shared'] ] ?? null, $classic[ 'merch:' . $hall['merch'] ] ?? null ], "Hall {$label} {$key}: classic add-on and merchandise unchanged" );
+					if ( 'unsafe' === $key ) {
+						$html = wc_get_formatted_cart_item_data( $this->package_item() );
+						$dom  = $this->xpath( $html );
+						$this->ok( 0 === $dom->query( '//img|//b|//script' )->length && str_contains( $html, '&lt;img src=x onerror=alert(1)&gt; &amp; &quot;q&quot; &#039;a&#039; &lt;b&gt;b&lt;/b&gt;' ), "Hall {$label}: markup in a Session name is escaped text, never elements" );
+					}
+				}
+				$names = [];
+				foreach ( $x[ $label ]['sessions'] as $key => $s ) {
+					$names[ $key ] = $this->stored_name( $s['id'] );
+				}
+				$expected = array_map( static fn( array $s ): string => null === $s['time'] ? $s['name'] : rtrim( mb_substr( trim( preg_replace( '/\s+/u', ' ', $s['name'] ) ), 0, 183 ) ) . ' — ' . $s['time'], $x[ $label ]['sessions'] );
+				$this->same( $expected, $names, "Hall {$label}: stored names unchanged (generated names keep their “ — HH:MM” ending; legacy names as written)" );
+			} finally {
+				$this->clear();
+				restore_current_blog();
+			}
+		}
+		$this->same( 191, mb_strlen( $this->in_hall( $a, fn(): string => $this->stored_name( $x['a']['sessions']['max']['id'] ) ) ), 'the maximum Session name (191 characters stored) still gets its label, without the ending' );
+		foreach ( [ '00:00', '09:05', '18:30', '23:59' ] as $clock ) {
+			$this->same( 'Any Name' . "\u{20}\u{2014}\u{20}" . $clock, \BingoCommerce\Sessions\ScheduleExpansion::occurrence_display_name( 'Any Name', $clock . ':00' ), "suffix drift guard: a generated name for {$clock} ends with exactly the “ — {$clock}” the label removes" );
+		}
+
+		$this->group( 'Cart Session labels: translations' );
+		switch_to_blog( $a['site'] );
+		$map = [
+			'Bingo Session' => 'Sesión de bingo',
+			'%1$s · %2$s %3$s · %4$s' => '%4$s — %1$s, %2$s (%3$s)',
+			'%1$s · %2$s' => '<b>%2$s</b> el %1$s',
+			'Session details can’t be shown right now.' => 'Los detalles de la sesión no se pueden mostrar ahora.',
+		];
+		$gettext = static fn( $translation, $text, $domain ) => 'bingocommerce-sessions' === $domain && isset( $map[ $text ] ) ? $map[ $text ] : $translation;
+		add_filter( 'gettext', $gettext, 10, 3 );
+		try {
+			$star   = $x['a']['sessions']['star'];
+			$legacy = $x['a']['sessions']['legacy'];
+			$this->label_cart( $a, $star['id'] );
+			$day = static fn( array $s ): string => DateTimeImmutable::createFromFormat( '!Y-m-d', $s['date'] )->format( 'm/d/Y' );
+			$this->same( [ $this->entry( 'Star Evening — ' . $day( $star ) . ', 19:30 (America/New_York)', 'Sesión de bingo' ) ], $this->package_store_data(), 'translated heading and a reordered timed format (positional arguments)' );
+			$this->label_cart( $a, $legacy['id'] );
+			$this->same( [ $this->entry( '<b>Early Bird Bingo 6:30 PM</b> el ' . $day( $legacy ), 'Sesión de bingo' ) ], $this->package_store_data(), 'a translation containing markup is escaped with the rest of the value' );
+			$this->same( [ [ 'Sesión de bingo', '<b>Early Bird Bingo 6:30 PM</b> el ' . $day( $legacy ) ] ], $this->classic_lines()[ 'package:' . $a['packages']['paper'] ], 'classic: the translated markup shows as text' );
+			$this->with_label_row( 'fail', fn() => $this->same( [ $this->entry( 'Los detalles de la sesión no se pueden mostrar ahora.', 'Sesión de bingo' ) ], $this->package_store_data(), 'the neutral message is translated too' ) );
+			$broken = static fn( $translation, $text, $domain ) => 'bingocommerce-sessions' === $domain && '%1$s · %2$s' === $text ? '%1$s %5$s' : $translation;
+			remove_filter( 'gettext', $gettext, 10 );
+			add_filter( 'gettext', $broken, 10, 3 );
+			try {
+				$warnings = $this->collect_warnings( fn() => $this->same( [ $this->entry( 'Session details can’t be shown right now.' ) ], $this->package_store_data(), 'a translation whose format cannot be filled (ArgumentCountError) falls back to the neutral message' ) );
+				$this->same( [], $warnings, 'no PHP warning from the broken translation' );
+			} finally {
+				remove_filter( 'gettext', $broken, 10 );
+			}
+		} finally {
+			remove_filter( 'gettext', $gettext, 10 );
+			$this->clear();
+			restore_current_blog();
+		}
+	}
+
+	/** Malformed fields reach the neutral entry; verification failures add nothing; unexpected shapes pass through. */
+	private function label_validation( array $a, array $x ): void {
+		global $wpdb;
+		$this->group( 'Cart Session labels: field validation (verified Package line)' );
+		switch_to_blog( $a['site'] );
+		try {
+			wp_set_current_user( 0 );
+			WC()->initialize_session();
+			WC()->initialize_cart();
+			$star = $x['a']['sessions']['star'];
+			$this->label_cart( $a, $star['id'] );
+			$row = $wpdb->get_row( $wpdb->prepare( 'SELECT session_id, session_date, display_name, schedule_id, start_time_local, timezone_name, starts_at_utc FROM %i WHERE session_id = %d', Migrations::sessions_table(), $star['id'] ), ARRAY_A );
+			$neutral = [ $this->entry( 'Session details can’t be shown right now.' ) ];
+			$state   = $this->cart_state();
+			$this->with_label_row( $row, fn() => $this->same( [ $this->entry( $star['label'] ) ], $this->package_store_data(), 'control: the stored row returned through the same read gives the label (the read is intercepted for the cases below)' ) );
+			$next  = (int) substr( $row['session_date'], 0, 4 ) + 1;
+			$cases = [
+				'date 30 February'                  => [ 'session_date' => $next . '-02-30' ],
+				'date with a trailing space'        => [ 'session_date' => $row['session_date'] . ' ' ],
+				'date as MM/DD/YYYY'                => [ 'session_date' => DateTimeImmutable::createFromFormat( '!Y-m-d', $row['session_date'] )->format( 'm/d/Y' ) ],
+				'date empty'                        => [ 'session_date' => '' ],
+				'date NULL'                         => [ 'session_date' => null ],
+				'time NULL (generated)'             => [ 'start_time_local' => null ],
+				'time with seconds'                 => [ 'start_time_local' => '19:30:30' ],
+				'time 25:00:00'                     => [ 'start_time_local' => '25:00:00' ],
+				'time negative'                     => [ 'start_time_local' => '-01:00:00' ],
+				'time without seconds'              => [ 'start_time_local' => '19:30' ],
+				'time padded'                       => [ 'start_time_local' => ' 19:30:00' ],
+				'zone NULL'                         => [ 'timezone_name' => null ],
+				'zone empty'                        => [ 'timezone_name' => '' ],
+				'zone abbreviation EST'             => [ 'timezone_name' => 'EST' ],
+				'zone offset +05:00'                => [ 'timezone_name' => '+05:00' ],
+				'zone unknown'                      => [ 'timezone_name' => 'Mars/Olympus_Mons' ],
+				'zone padded'                       => [ 'timezone_name' => ' America/New_York' ],
+				'zone backward-compatible link'     => [ 'timezone_name' => 'US/Eastern' ],
+				'UTC start NULL'                    => [ 'starts_at_utc' => null ],
+				'UTC start one minute off'          => [ 'starts_at_utc' => gmdate( 'Y-m-d H:i:s', strtotime( $row['starts_at_utc'] . ' UTC' ) + 60 ) ],
+				'UTC start in another format'       => [ 'starts_at_utc' => str_replace( ' ', 'T', $row['starts_at_utc'] ) . 'Z' ],
+				'name empty'                        => [ 'display_name' => '' ],
+				'name whitespace only'              => [ 'display_name' => '   ' ],
+				'name no-break spaces only'         => [ 'display_name' => "\u{00A0}\u{00A0}" ],
+				'name invalid UTF-8'                => [ 'display_name' => [ 'hex' => bin2hex( "Star \xC3\x28vening — 19:30" ) ] ],
+				'name 192 characters'               => [ 'display_name' => str_repeat( 'y', 184 ) . ' — 19:30' ],
+				'name without its time ending'      => [ 'display_name' => 'Star Evening' ],
+				'name ending with another time'     => [ 'display_name' => 'Star Evening — 18:00' ],
+				'name ending with a hyphen'         => [ 'display_name' => 'Star Evening - 19:30' ],
+				'name that is only the ending'      => [ 'display_name' => ' — 19:30' ],
+				'name of spaces and the ending'     => [ 'display_name' => '    — 19:30' ],
+				'schedule 0'                        => [ 'schedule_id' => '0' ],
+				'schedule negative'                 => [ 'schedule_id' => '-3' ],
+				'schedule not a number'             => [ 'schedule_id' => 'abc' ],
+				'schedule zero-padded'              => [ 'schedule_id' => '0' . $row['schedule_id'] ],
+				'legacy row carrying a time'        => [ 'schedule_id' => null ],
+				'legacy row carrying only a zone'   => [ 'schedule_id' => null, 'start_time_local' => null, 'starts_at_utc' => null ],
+				'legacy row carrying only a UTC'    => [ 'schedule_id' => null, 'start_time_local' => null, 'timezone_name' => null ],
+				'a different Session identity'      => [ 'session_id' => (string) ( $star['id'] + 1 ) ],
+				'a zero-padded Session identity'    => [ 'session_id' => '0' . $star['id'] ],
+			];
+			foreach ( $cases as $label => $change ) {
+				$warnings = $this->collect_warnings( fn() => $this->with_label_row( array_replace( $row, $change ), function () use ( $neutral, $label, $a ): void {
+					$this->same( $neutral, $this->package_store_data(), "{$label}: the neutral entry, nothing invented" );
+					$this->same( [ [ 'Bingo Session', 'Session details can’t be shown right now.' ] ], $this->classic_lines()[ 'package:' . $a['packages']['paper'] ], "{$label}: classic shows the neutral message" );
+				} ) );
+				$this->same( [], $warnings, "{$label}: no PHP warning or notice" );
+			}
+			foreach ( [ 'missing row' => null, 'read failure' => 'fail' ] as $label => $result ) {
+				$warnings = $this->collect_warnings( fn() => $this->with_label_row( $result, fn() => $this->same( $neutral, $this->package_store_data(), "{$label}: the neutral entry" ) ) );
+				$this->same( [], $warnings, "{$label}: no PHP warning or notice" );
+			}
+			$this->with_label_row( array_replace( $row, [ 'display_name' => 'Late — 21:00 — 19:30' ] ), fn() => $this->same( [ $this->entry( self::label( $row['session_date'], 'Late — 21:00', '19:30', self::NY ) ) ], $this->package_store_data(), 'only the exact terminal “ — 19:30” is removed; an earlier time-like text stays' ) );
+			$this->with_label_row( array_replace( $row, [ 'schedule_id' => null, 'start_time_local' => null, 'timezone_name' => null, 'starts_at_utc' => null, 'display_name' => 'Legacy-shaped 7:15 PM' ] ), fn() => $this->same( [ $this->entry( self::label( $row['session_date'], 'Legacy-shaped 7:15 PM', null, null ) ) ], $this->package_store_data(), 'a legacy-shaped row: date and complete name, no time invented' ) );
+			$this->same( $state, $this->cart_state(), 'after every malformed case: cart contents, hash, totals, notices, validation errors and session data unchanged' );
+
+			$this->group( 'Cart Session labels: verification failures add nothing' );
+			$parent = $this->package_key();
+			$meta   = WC()->cart->cart_contents[ $parent ][ CartSelection::META ];
+			$forged = [
+				'another site ID'         => [ 'site_id' => get_current_blog_id() + 100000 ],
+				'version 2'               => [ 'version' => 2 ],
+				'string Session ID'       => [ 'session_id' => (string) $meta['session_id'] ],
+				'invalid selection UUID'  => [ 'selection_id' => 'not-a-uuid' ],
+				'unknown role'            => [ 'role' => 'bundle' ],
+				'keyed add-on list'       => [ 'addon_ids' => [ 'x' => 1 ] ],
+				'parent key on a Package' => [ 'parent_key' => str_repeat( 'a', 32 ) ],
+				'Session of another Hall' => [ 'session_id' => 999999 ],
+			];
+			foreach ( $forged as $label => $change ) {
+				WC()->cart->cart_contents[ $parent ][ CartSelection::META ] = array_replace( $meta, $change );
+				$this->label_unverified( $label, $parent );
+			}
+			WC()->cart->cart_contents[ $parent ][ CartSelection::META ] = $meta;
+			WC()->cart->cart_contents[ $parent ]['quantity'] = 2;
+			$this->label_unverified( 'Package quantity 2', $parent );
+			WC()->cart->cart_contents[ $parent ]['quantity'] = 1;
+			$merch = $this->merch_key();
+			WC()->cart->cart_contents[ $merch ][ CartSelection::META ] = $meta;
+			$this->same( [], $this->store_lines()[ 'merch:' . $a['merch'] ]['item_data'] ?? null, 'merchandise line carrying a Package’s metadata: no entry' );
+			unset( WC()->cart->cart_contents[ $merch ][ CartSelection::META ] );
+			wp_set_current_user( $this->admin );
+			$off = ( new SessionService( $this->audit ) )->setAvailableForSale( $star['id'], false );
+			wp_set_current_user( 0 );
+			try {
+				$this->ok( $off instanceof SessionResult, 'fixture: the Session’s Sales turned OFF after it was added (real writer)' );
+				$this->label_unverified( 'Session no longer for sale', $parent );
+			} finally {
+				wp_set_current_user( $this->admin );
+				( new SessionService( $this->audit ) )->setAvailableForSale( $star['id'], true );
+				wp_set_current_user( 0 );
+			}
+			$this->same( [ $this->entry( $star['label'] ) ], $this->package_store_data(), 'Sales back ON: the label returns' );
+
+			$this->group( 'Cart Session labels: unexpected shapes' );
+			$item     = $this->package_item();
+			$warnings = $this->collect_warnings( function () use ( $item ): void {
+				foreach ( [ 'a string' => 'x', 'null' => null, 'an integer' => 7, 'an object' => new ArrayObject( [ 1 ] ) ] as $label => $value ) {
+					$this->ok( $value === CustomerCart::session_details( $value, $item ), "incoming item data as {$label}: returned unchanged" );
+				}
+				foreach ( [ 'not an array' => 'cart item', 'empty' => [], 'string metadata' => [ CartSelection::META => 'x' ], 'array Session ID' => [ CartSelection::META => [ 'session_id' => [ 1 ] ], 'product_id' => [ 2 ], 'quantity' => [ 1 ] ] ] as $label => $cart_item ) {
+					$this->same( [ [ 'key' => 'Other', 'value' => 'kept' ] ], CustomerCart::session_details( [ [ 'key' => 'Other', 'value' => 'kept' ] ], $cart_item ), "cart item {$label}: existing metadata returned unchanged" );
+				}
+				$this->same( [], CustomerCart::session_details( [] ), 'one argument only: unchanged' );
+				$string = static fn() => 'not an array';
+				add_filter( 'woocommerce_get_item_data', $string, 50 );
+				try {
+					$this->same( '', wc_get_formatted_cart_item_data( $item ), 'an earlier filter returning a string: passed through, WooCommerce prints nothing' );
+				} finally {
+					remove_filter( 'woocommerce_get_item_data', $string, 50 );
+				}
+			} );
+			$this->same( [], $warnings, 'unexpected shapes: no PHP warning or notice' );
+
+			// Non-list item data (e.g. another filter's associative or sparse array) on this verified Package
+			// line is returned exactly as received, before CartSelection::line() or any database read.
+			$entry   = $this->entry( $star['label'] );
+			$queries = 0;
+			$count   = static function ( $sql ) use ( &$queries ) { ++$queries; return $sql; };
+			$call    = function ( array $incoming ) use ( $item, $count, &$queries ): array {
+				$result  = null;
+				$queries = 0;
+				add_filter( 'query', $count );
+				try {
+					$warnings = $this->collect_warnings( static function () use ( &$result, $incoming, $item ): void { $result = CustomerCart::session_details( $incoming, $item ); } );
+				} finally {
+					remove_filter( 'query', $count );
+				}
+				return [ $result, $warnings, $queries ];
+			};
+			foreach ( [
+				'an associative array' => [ 'unexpected' => 'value' ],
+				'a sparse array'       => [ 2 => [ 'key' => 'Other', 'value' => 'kept' ] ],
+			] as $label => $incoming ) {
+				[ $result, $warnings, $read ] = $call( $incoming );
+				$this->same( $incoming, $result, "item data as {$label}: returned exactly as received, keys included" );
+				$this->ok( is_array( $result ) && [] === array_filter( $result, static fn( $value ): bool => is_array( $value ) && 'Bingo Session' === ( $value['key'] ?? null ) ), "item data as {$label}: no Bingo Session entry appended" );
+				$this->same( [], $warnings, "item data as {$label}: no PHP warning or notice" );
+				$this->same( 0, $read, "item data as {$label}: no database query (returned before CartSelection::line())" );
+			}
+			// Control: a list keeps its entry and gets exactly one Bingo entry, after verification and the Session read.
+			[ $result, $warnings, $read ] = $call( [ [ 'key' => 'Other', 'value' => 'kept' ] ] );
+			$this->same( [ [ 'key' => 'Other', 'value' => 'kept' ], $entry ], $result, 'control, a list: its entry kept, exactly one Bingo Session entry appended' );
+			$this->ok( [] === $warnings && $read > 0, "control, a list: no PHP warning; verification and the Session read queried the database ({$read} queries), so the counter observes those reads" );
+		} finally {
+			$this->clear();
+			restore_current_blog();
+		}
+	}
+
+	/** A line that fails CartSelection::line(): no Bingo entry in any display, and the existing validation result is unchanged. */
+	private function label_unverified( string $label, string $key ): void {
+		$this->same( [], $this->store_line( $key )['item_data'] ?? null, "{$label}: no Session details in the Store API" );
+		$this->same( '', wc_get_formatted_cart_item_data( WC()->cart->cart_contents[ $key ] ), "{$label}: none in the classic displays" );
+		$on  = [ CartSelection::inspect( WC()->cart->get_cart() )['errors']->get_error_codes(), $this->store_errors() ];
+		$off = $this->without_labels( fn(): array => [ CartSelection::inspect( WC()->cart->get_cart() )['errors']->get_error_codes(), $this->store_errors() ] );
+		$this->ok( [] !== $on[0] && $on === $off, "{$label}: existing validation still reports it, identically with and without the label callback (" . implode( ',', $on[0] ) . ')' );
+	}
+
+	/** Every native display: placement, one entry per Package, existing metadata and variation details, escaping. */
+	private function label_displays( array $a, array $x ): void {
+		$this->group( 'Cart Session labels: classic displays and Store API metadata' );
+		switch_to_blog( $a['site'] );
+		$before = static function ( $data, $item ) { if ( is_array( $data ) ) { $data[] = [ 'key' => 'Fixture before', 'value' => 'kept' ]; } return $data; };
+		$after  = static function ( $data, $item ) { if ( is_array( $data ) ) { $data[] = [ 'key' => 'Fixture after', 'value' => 'kept' ]; } return $data; };
+		try {
+			wp_set_current_user( 0 );
+			WC()->initialize_session();
+			WC()->initialize_cart();
+			$friday = $x['a']['sessions']['friday'];
+			$this->label_cart( $a, $friday['id'] );
+			WC()->cart->add_to_cart( $x['a']['variable'], 1, $x['a']['variation'], [ 'attribute_colour' => 'Blue', 'attribute_size' => 'Large', 'attribute_material' => 'Cotton' ] );
+			WC()->cart->calculate_totals();
+			// Classic lines are keyed by the parent product; Store API lines by the variation.
+			$variation       = 'merch:' . $x['a']['variable'];
+			$variation_store = 'merch:' . $x['a']['variation'];
+			$details         = [ [ 'Colour', 'Blue' ], [ 'Size', 'Large' ], [ 'Material', 'Cotton' ] ];
+			$classic         = $this->classic_lines();
+			$this->same( $details, $classic[ $variation ] ?? null, 'variation line: WooCommerce’s own variation details (classic)' );
+			$this->same( $classic[ $variation ], $this->without_labels( fn() => $this->classic_lines()[ $variation ] ?? null ), 'variation line: identical with and without the label callback' );
+			$store = $this->store_lines();
+			$this->same( [ [], [ [ 'raw_attribute' => 'attribute_colour', 'attribute' => 'Colour', 'value' => 'Blue' ], [ 'raw_attribute' => 'attribute_size', 'attribute' => 'Size', 'value' => 'Large' ], [ 'raw_attribute' => 'attribute_material', 'attribute' => 'Material', 'value' => 'Cotton' ] ] ], [ $store[ $variation_store ]['item_data'] ?? null, $store[ $variation_store ]['variation'] ?? null ], 'variation line: Store API variation details kept, no item data added' );
+
+			// Displays rendered with and without the callback: the only difference is the Package's one entry, in its native place.
+			$on  = $this->classic_templates();
+			$off = $this->without_labels( fn(): array => $this->classic_templates() );
+			$pkg = $this->package_name( $a );
+			foreach ( [
+				'classic cart'            => [ 'cart', '//tr[contains(@class,"cart_item")][.//td[contains(@class,"product-name")]/a[normalize-space()="' . $pkg . '"]]/td[contains(@class,"product-name")]', 'a[normalize-space()="' . $pkg . '"]', null ],
+				'classic checkout review' => [ 'review', '//table[contains(@class,"woocommerce-checkout-review-order-table")]//tr[contains(@class,"cart_item")]/td[contains(@class,"product-name")][starts-with(normalize-space(),"' . $pkg . '")]', 'strong[contains(@class,"product-quantity")]', null ],
+				'classic mini-cart'       => [ 'minicart', '//li[contains(@class,"mini_cart_item")][a[not(contains(@class,"remove"))][contains(normalize-space(),"' . $pkg . '")]]', 'a[not(contains(@class,"remove"))]', 'span[contains(@class,"quantity")]' ],
+			] as $display => [ $template, $container, $previous, $next ] ) {
+				$dom   = $this->xpath( $on[ $template ] );
+				$cells = $dom->query( $container );
+				$this->same( 1, $cells->length, "{$display}: one Package line found" );
+				$cell = $cells->item( 0 );
+				$dls  = $dom->query( 'dl[contains(@class,"variation")]', $cell );
+				$this->same( [ 1, [ [ 'Bingo Session', $friday['label'] ] ] ], [ $dls->length, $dls->length ? $this->dl_pairs( $dls->item( 0 ) ) : null ], "{$display}: one native item-data list with the one Bingo Session entry" );
+				$this->ok( $dls->length && 1 === $dom->query( 'preceding-sibling::' . $previous, $dls->item( 0 ) )->length && ( null === $next || 1 === $dom->query( 'following-sibling::' . $next, $dls->item( 0 ) )->length ), "{$display}: after the " . ( 'classic checkout review' === $display ? 'name and the quantity text' : 'name link' ) . ( null === $next ? '' : ', before the quantity and price text' ) );
+				$this->same( 1, $dom->query( '//dl[contains(@class,"variation")]/dt[normalize-space()="Bingo Session:"]' )->length, "{$display}: exactly one Bingo Session entry in the whole display (add-on and merchandise lines have none)" );
+				$this->same( $this->normalized( $off[ $template ] ), $this->normalized( $this->without_node( $on[ $template ], $container . '/dl[contains(@class,"variation")][dt[normalize-space()="Bingo Session:"]]' ) ), "{$display}: identical to the display without the callback once that one list is removed (prices, quantities, removal controls, totals unchanged)" );
+			}
+			$this->same( 0, $this->xpath( $on['review'] )->query( '//table[contains(@class,"woocommerce-checkout-review-order-table")]//a[contains(@class,"remove")]|//table[contains(@class,"woocommerce-checkout-review-order-table")]//input' )->length, 'classic checkout review: still no removal or quantity control' );
+
+			// Store API: every line's complete item data; only the Package's entry differs from the response without the callback.
+			$json_on  = $this->store_json();
+			$json_off = $this->without_labels( fn(): array => $this->store_json() );
+			$this->same( $json_off, $this->strip_label( $json_on ), 'Store API cart: identical to the response without the callback once the Package’s entry is removed (keys, quantities, limits, prices, totals, variation, extensions, errors)' );
+			$items = [];
+			foreach ( $json_on['items'] as $item ) { $items[ $this->store_key( $item ) ] = $item['item_data']; }
+			$this->same( [ 'merch:' . $a['merch'] => [], 'package:' . $a['packages']['paper'] => [ $this->entry( $friday['label'] ) ], 'addon:' . $a['relations']['paper_shared'] => [], $variation_store => [] ], $items, 'Store API: complete item data for every line (merchandise, Package, add-on, variation)' );
+
+			$this->group( 'Cart Session labels: existing metadata from other filters' );
+			add_filter( 'woocommerce_get_item_data', $before, 5, 2 );
+			add_filter( 'woocommerce_get_item_data', $after, 200, 2 );
+			$note_before = [ 'key' => 'Fixture before', 'value' => 'kept' ];
+			$note_after  = [ 'key' => 'Fixture after', 'value' => 'kept' ];
+			$items = [];
+			foreach ( $this->store_json()['items'] as $item ) { $items[ $this->store_key( $item ) ] = $item['item_data']; }
+			$this->same( [ $note_before, $this->entry( $friday['label'] ), $note_after ], $items[ 'package:' . $a['packages']['paper'] ], 'Store API Package line: an earlier entry, the Bingo entry, then a later entry — appended once, nothing replaced or reordered' );
+			$this->same( [ [ $note_before, $note_after ], [ $note_before, $note_after ], [ $note_before, $note_after ] ], [ $items[ 'addon:' . $a['relations']['paper_shared'] ], $items[ 'merch:' . $a['merch'] ], $items[ $variation_store ] ], 'Store API other lines: their entries unchanged, no Bingo entry' );
+			$classic = $this->classic_lines();
+			$this->same( [ [ 'Fixture before', 'kept' ], [ 'Bingo Session', $friday['label'] ], [ 'Fixture after', 'kept' ] ], $classic[ 'package:' . $a['packages']['paper'] ], 'classic Package line: the three entries in filter order' );
+			$this->same( array_merge( $details, [ [ 'Fixture before', 'kept' ], [ 'Fixture after', 'kept' ] ] ), $classic[ $variation ], 'classic variation line: variation details first, then the other entries; no Bingo entry' );
+			remove_filter( 'woocommerce_get_item_data', $before, 5 );
+			remove_filter( 'woocommerce_get_item_data', $after, 200 );
+
+			$this->group( 'Cart Session labels: one entry per verified Package line' );
+			$item = $this->package_item();
+			$this->same( [ $this->entry( $friday['label'] ) ], apply_filters( 'woocommerce_get_item_data', apply_filters( 'woocommerce_get_item_data', [], $item ), $item ), 'the filter applied twice to the same list still holds one Bingo entry' );
+			// The existing one-Package rule: a second, otherwise valid Package line (forged in the cart) blocks the cart.
+			$copy = $item;
+			$copy[ CartSelection::META ]['selection_id'] = wp_generate_uuid4();
+			$copy[ CartSelection::META ]['addon_ids']    = [];
+			$copy['key'] = str_repeat( 'f', 32 );
+			WC()->cart->cart_contents[ $copy['key'] ] = $copy;
+			$json     = $this->store_json();
+			$packages = array_values( array_filter( $json['items'], static fn( array $i ): bool => 'package' === ( $i['extensions']['bingocommerce-selection']['role'] ?? null ) ) );
+			$this->ok( 2 === count( $packages ) && in_array( 'bc_cart_package_limit', CartSelection::inspect( WC()->cart->get_cart() )['errors']->get_error_codes(), true ) && [] !== $json['errors'], 'two Package lines: the existing one-Package rule blocks the cart' );
+			$this->same( [ [ $this->entry( $friday['label'] ) ], [ $this->entry( $friday['label'] ) ] ], array_column( $packages, 'item_data' ), 'blocked cart: each verified Package line shows exactly one entry' );
+			unset( WC()->cart->cart_contents[ $copy['key'] ] );
+		} finally {
+			remove_filter( 'woocommerce_get_item_data', $before, 5 );
+			remove_filter( 'woocommerce_get_item_data', $after, 200 );
+			$this->clear();
+			restore_current_blog();
+		}
+	}
+
+	/** Session A in the cart, then Session B viewed and the cart opened with B's parameters: the label stays A's. */
+	private function label_switching( array $a, array $b, array $x ): void {
+		$this->group( 'Cart Session labels: Session A in the cart, Session B viewed' );
+		foreach ( [ 'a' => [ $a, 'friday', 'star' ], 'b' => [ $b, 'friday', 'saturday' ] ] as $label => [ $hall, $first, $second ] ) {
+			switch_to_blog( $hall['site'] );
+			$previous = [ $_GET, $_REQUEST ];
+			try {
+				wp_set_current_user( 0 );
+				WC()->initialize_session();
+				WC()->initialize_cart();
+				$this->clear( $hall['merch'] );
+				$s1 = $x[ $label ]['sessions'][ $first ];
+				$s2 = $x[ $label ]['sessions'][ $second ];
+				$this->same( 200, $this->extension( $this->selection( $s1['id'], $hall['packages']['paper'], [ [ $hall['relations']['paper_shared'], 1 ] ] ) )->get_status(), "Hall {$label}: Session A’s Package added through the real cart-extension route" );
+				[ $xpath ] = $this->render( [ 'bc_session' => (string) $s2['id'] ] );
+				$form = $xpath->query( '//form[@data-bingo-purchase]' )->item( 0 );
+				$this->ok( $form instanceof DOMElement && (string) $s2['id'] === $form->getAttribute( 'data-session-id' ), "Hall {$label}: the homepage now shows Session B’s purchase step" );
+				$_GET     = [ 'bc_session' => (string) $s2['id'], 'bc_date' => $s2['date'] ];
+				$_REQUEST = $_GET;
+				$this->same( [ $this->entry( $s1['label'] ) ], $this->package_store_data(), "Hall {$label}: with Session B’s parameters on the request, the Store API still names Session A ({$s1['label']})" );
+				$this->same( [ [ 'Bingo Session', $s1['label'] ] ], $this->classic_lines()[ 'package:' . $hall['packages']['paper'] ] ?? null, "Hall {$label}: classic displays still name Session A" );
+				$this->ok( ! str_contains( wp_json_encode( $this->store_json() ), $s2['name'] ), "Hall {$label}: Session B’s name appears nowhere in the cart" );
+			} finally {
+				[ $_GET, $_REQUEST ] = $previous;
+				$this->clear();
+				restore_current_blog();
+			}
+		}
+	}
+
+	/** Colliding Hall-local IDs, forged foreign-Hall metadata and the current Hall's own table. */
+	private function label_isolation( array $a, array $b, array $x ): void {
+		global $wpdb;
+		$this->group( 'Cart Session labels: Hall isolation' );
+		$star     = $x['a']['sessions']['star'];
+		$saturday = $x['b']['sessions']['saturday'];
+		$this->same( $star['id'], $saturday['id'], 'Hall-local Session IDs collide: Hall A “Star Evening” and Hall B “Saturday Bingo” share an ID' );
+		$this->same( $x['a']['sessions']['legacy']['id'], $x['b']['sessions']['long']['id'], 'and another pair: a Hall A legacy Session and Hall B’s long-name Session' );
+		foreach ( [ 'a' => [ $a, [ $star, $x['a']['sessions']['legacy'] ] ], 'b' => [ $b, [ $saturday, $x['b']['sessions']['long'] ] ] ] as $label => [ $hall, $sessions ] ) {
+			switch_to_blog( $hall['site'] );
+			$tables = [];
+			$trace  = static function ( $sql ) use ( &$tables ) { if ( is_string( $sql ) && preg_match_all( '/`?(\w*bingo_sessions)`?/', $sql, $m ) ) { array_push( $tables, ...$m[1] ); } return $sql; };
+			$switches = did_action( 'switch_blog' );
+			try {
+				wp_set_current_user( 0 );
+				WC()->initialize_session();
+				WC()->initialize_cart();
+				foreach ( $sessions as $s ) {
+					$this->clear();
+					$this->same( 200, $this->extension( $this->selection( $s['id'], $hall['packages']['paper'], [] ) )->get_status(), "Hall {$label}: Session ID {$s['id']} added" );
+					add_filter( 'query', $trace );
+					try { $data = $this->package_store_data(); } finally { remove_filter( 'query', $trace ); }
+					$this->same( [ $this->entry( $s['label'] ) ], $data, "Hall {$label}: Session ID {$s['id']} shows this Hall’s own Session ({$s['label']})" );
+				}
+				$this->same( [ $wpdb->prefix . 'bingo_sessions' ], array_values( array_unique( $tables ) ), "Hall {$label}: every Session read used this Hall’s own table ({$wpdb->prefix}bingo_sessions)" );
+				$this->same( $switches, did_action( 'switch_blog' ), "Hall {$label}: no site switch while labelling" );
+				$parent = $this->package_key();
+				WC()->cart->cart_contents[ $parent ][ CartSelection::META ]['site_id'] = 'a' === $label ? $b['site'] : $a['site'];
+				$this->same( [], $this->store_line( $parent )['item_data'] ?? null, "Hall {$label}: metadata naming the other Hall’s site: no Session details" );
+				$this->same( '', wc_get_formatted_cart_item_data( WC()->cart->cart_contents[ $parent ] ), "Hall {$label}: none in the classic displays either" );
+			} finally {
+				$this->clear();
+				restore_current_blog();
+			}
+		}
+	}
+
+	/** Guest and signed-in customers, including a persistent cart restored for the signed-in customer. */
+	private function label_customers( array $a, array $x ): void {
+		$this->group( 'Cart Session labels: guest and signed-in customers' );
+		switch_to_blog( $a['site'] );
+		try {
+			$friday = $x['a']['sessions']['friday'];
+			wp_set_current_user( 0 );
+			WC()->initialize_session();
+			WC()->initialize_cart();
+			$this->clear();
+			$this->same( 200, $this->extension( $this->selection( $friday['id'], $a['packages']['paper'], [] ) )->get_status(), 'guest: added through the cart-extension route' );
+			$this->same( [ 0, [ $this->entry( $friday['label'] ) ] ], [ get_current_user_id(), $this->package_store_data() ], 'guest: the label' );
+			$this->clear();
+			wp_set_current_user( $x['customer'] );
+			$this->ok( is_user_logged_in() && user_can( $x['customer'], 'customer' ) && ! current_user_can( 'bc_manage_products' ), 'signed in as the disposable customer (no Manager capability)' );
+			$this->same( 200, $this->extension( $this->selection( $friday['id'], $a['packages']['paper'], [ [ $a['relations']['paper_shared'], 1 ] ] ) )->get_status(), 'signed-in customer: added with their own Store API nonce' );
+			WC()->cart->calculate_totals();
+			$this->same( [ $this->entry( $friday['label'] ) ], $this->package_store_data(), 'signed-in customer: the label (Store API)' );
+			$this->same( [ [ 'Bingo Session', $friday['label'] ] ], $this->classic_lines()[ 'package:' . $a['packages']['paper'] ] ?? null, 'signed-in customer: the label (classic)' );
+			$saved = get_user_meta( $x['customer'], '_woocommerce_persistent_cart_' . get_current_blog_id(), true );
+			$this->same( 2, count( (array) ( $saved['cart'] ?? [] ) ), 'signed-in customer: WooCommerce saved the persistent cart (Package and add-on)' );
+			WC()->session->set( 'cart', null );
+			WC()->cart->set_cart_contents( [] );
+			WC()->cart->get_cart_from_session();
+			$this->same( [ 2, [ $this->entry( $friday['label'] ) ] ], [ count( WC()->cart->get_cart() ), $this->package_store_data() ], 'signed-in customer: a cart restored from the persistent cart shows the same label' );
+		} finally {
+			$this->clear();
+			// The browser stage signs this customer in afresh: no saved cart carried over from here.
+			delete_user_meta( $x['customer'], '_woocommerce_persistent_cart_' . get_current_blog_id() );
+			wp_set_current_user( 0 );
+			restore_current_blog();
+		}
+	}
+
+	/** Unchanged cart state, checkout validation (including with the neutral entry) and Remove/Undo. */
+	private function label_behaviour( array $a, array $x ): void {
+		$this->group( 'Cart Session labels: cart behaviour unchanged' );
+		switch_to_blog( $a['site'] );
+		try {
+			wp_set_current_user( 0 );
+			WC()->initialize_session();
+			WC()->initialize_cart();
+			$friday = $x['a']['sessions']['friday'];
+			$parent = $this->label_cart( $a, $friday['id'] );
+			$state  = $this->cart_state();
+			foreach ( WC()->cart->get_cart() as $item ) { apply_filters( 'woocommerce_get_item_data', [], $item ); }
+			$this->store_json();
+			$this->classic_lines();
+			$this->same( $state, $this->cart_state(), 'rendering every line’s item data (callback, Store API, classic) leaves contents, linkage, prices, quantities, hash, totals, notices, validation and session data unchanged' );
+			$extensions = static fn( array $json ): array => array_column( $json['items'], 'extensions', 'key' );
+			$this->same( $extensions( $this->without_labels( fn(): array => $this->store_json() ) ), $extensions( $this->store_json() ), 'Store API extension data (Session, Package, relationship, role, parent key) unchanged' );
+
+			$outcome = function (): array {
+				wc_clear_notices();
+				$store = 'ok';
+				try { ( new CartController() )->validate_cart(); } catch ( InvalidCartException $error ) { $store = implode( ',', $error->getError()->get_error_codes() ); }
+				$checkout = new WP_Error();
+				CustomerCart::checkout_errors( [], $checkout );
+				// As the classic cart and checkout shortcodes do before rendering.
+				do_action( 'woocommerce_check_cart_items' );
+				$classic = wc_get_notices();
+				wc_clear_notices();
+				return [ $store, CartSelection::inspect( WC()->cart->get_cart() )['errors']->get_error_codes(), $checkout->get_error_codes(), $classic ];
+			};
+			$valid = $outcome();
+			$this->same( [ 'ok', [], [], [] ], $valid, 'valid cart: Store API cart validation (as at checkout), classic checkout validation and classic cart checks pass' );
+			$this->same( $valid, $this->without_labels( $outcome ), 'valid cart: identical without the label callback' );
+			$this->same( $valid, $this->with_label_row( 'fail', $outcome ), 'valid cart while the neutral entry is displayed: identical — the fallback adds no checkout rule' );
+			$this->with_label_row( 'fail', fn() => $this->same( [ $this->entry( 'Session details can’t be shown right now.' ) ], $this->package_store_data(), 'control: the neutral entry was being displayed' ) );
+			wp_set_current_user( $this->admin );
+			( new SessionService( $this->audit ) )->setAvailableForSale( $friday['id'], false );
+			wp_set_current_user( 0 );
+			try {
+				$blocked = $outcome();
+				$this->ok( 'ok' !== $blocked[0] && [] !== $blocked[1] && [] !== $blocked[3], 'invalid cart (Session OFF): still blocked by the existing validation' );
+				$this->same( $blocked, $this->without_labels( $outcome ), 'invalid cart: the same result without the label callback' );
+			} finally {
+				wp_set_current_user( $this->admin );
+				( new SessionService( $this->audit ) )->setAvailableForSale( $friday['id'], true );
+				wp_set_current_user( 0 );
+			}
+
+			$this->group( 'Cart Session labels: Remove and Undo' );
+			$child = $this->addon_key();
+			$this->ok( WC()->cart->remove_cart_item( $child ), 'remove the add-on (existing behaviour)' );
+			$this->same( [ 2, [ $this->entry( $friday['label'] ) ] ], [ count( WC()->cart->get_cart() ), $this->package_store_data() ], 'the Package keeps its label after its add-on is removed' );
+			$this->ok( WC()->cart->restore_cart_item( $child ), 'Undo the add-on' );
+			$this->ok( WC()->cart->remove_cart_item( $parent ), 'remove the Package' );
+			$this->same( [ 'merch:' . $a['merch'] => [] ], array_map( static fn( array $line ): array => $line['item_data'], $this->store_lines() ), 'Package removal cascades its add-on (existing behaviour); only the merchandise remains, with no label' );
+			$this->ok( WC()->cart->restore_cart_item( $parent ), 'Undo the Package' );
+			$this->same( [ 3, [ $this->entry( $friday['label'] ) ] ], [ count( WC()->cart->get_cart() ), $this->package_store_data() ], 'Undo restores the Package with its add-on and the same label' );
+		} finally {
+			$this->clear();
+			restore_current_blog();
+		}
+	}
+
+	/** Order facts keep their existing format, and saved orders are byte-identical after every label render. */
+	private function label_orders( array $a, array $x ): void {
+		global $wpdb;
+		$this->group( 'Cart Session labels: order facts unchanged' );
+		switch_to_blog( $a['site'] );
+		try {
+			wp_set_current_user( 0 );
+			WC()->initialize_session();
+			WC()->initialize_cart();
+			$friday = $x['a']['sessions']['friday'];
+			$order  = $this->label_order( $a, $friday['id'] );
+			$label  = DateTimeImmutable::createFromFormat( '!Y-m-d', $friday['date'] )->format( 'm/d/Y' ) . ' — Friday Night Bingo — 18:00 — 18:00 America/New_York';
+			$this->same( [ $label, $label ], $this->order_session_labels( $order ), 'native order creation (WC_Checkout::create_order, no payment): every Bingo line saves the EXISTING “Bingo Session” format, time repeated as before' );
+			$facts = wc_get_order( $order )->get_meta( \BingoCommerce\Sessions\CustomerOrder::META, true );
+			$this->same( [ 'Friday Night Bingo — 18:00', '18:00:00', self::NY ], [ $facts['session_name'], $facts['start_time_local'], $facts['timezone_name'] ], 'saved purchase facts: the stored occurrence name (with its time), structured time and zone, as before' );
+			$snapshot = $this->order_snapshot( $order );
+			foreach ( [ 'star', 'legacy', 'long', 'unsafe' ] as $key ) {
+				$this->label_cart( $a, $x['a']['sessions'][ $key ]['id'] );
+				$this->store_json();
+				$this->classic_templates();
+				$this->with_label_row( 'fail', fn() => $this->store_json() );
+			}
+			$this->same( $snapshot, $this->order_snapshot( $order ), 'the saved order, its items and their metadata are byte-identical after every cart, checkout and mini-cart render (including neutral entries)' );
+			$later = $this->label_order( $a, $x['a']['sessions']['star']['id'] );
+			$star  = DateTimeImmutable::createFromFormat( '!Y-m-d', $x['a']['sessions']['star']['date'] )->format( 'm/d/Y' ) . ' — Star Evening — 19:30 — 19:30 America/New_York';
+			$this->same( [ $star, $star ], $this->order_session_labels( $later ), 'an order recorded after the label renders still uses the existing format' );
+			$this->ok( ! str_contains( (string) $wpdb->get_var( $wpdb->prepare( 'SELECT GROUP_CONCAT(meta_value) FROM %i WHERE meta_key = %s', $wpdb->prefix . 'woocommerce_order_itemmeta', 'bc_bingo_session' ) ), ' · ' ), 'no order item ever saves the cart label format' );
+		} finally {
+			$this->clear();
+			restore_current_blog();
+		}
+	}
+
+	private function label_order( array $hall, int $session ): int {
+		$this->label_cart( $hall, $session );
+		$id = WC()->checkout()->create_order( [ 'payment_method' => 'bacs', 'billing_email' => 'guest@example.invalid', 'billing_first_name' => 'Fixture', 'billing_last_name' => 'Customer', 'billing_country' => 'US', 'billing_state' => 'NY', 'billing_postcode' => '12207', 'billing_city' => 'Albany', 'billing_address_1' => '1 Test Street' ] );
+		if ( ! is_int( $id ) || $id < 1 ) { throw new RuntimeException( 'Order fixture failed: ' . wp_json_encode( is_wp_error( $id ) ? $id->get_error_messages() : $id ) ); }
+		$this->clear();
+		return $id;
+	}
+
+	/** @return array<int,string> Each Bingo order line's saved "Bingo Session" metadata, as stored. */
+	private function order_session_labels( int $order ): array {
+		$labels = [];
+		foreach ( wc_get_order( $order )->get_items() as $item ) {
+			if ( '' !== $item->get_meta( \BingoCommerce\Sessions\CustomerOrder::META, true ) ) { $labels[] = (string) $item->get_meta( 'bc_bingo_session', true ); }
+		}
+		return $labels;
+	}
+
+	/** The order's stored rows, read directly: order record, order metadata, items and every item's metadata. */
+	private function order_snapshot( int $order ): string {
+		global $wpdb;
+		$hpos  = \Automattic\WooCommerce\Utilities\OrderUtil::custom_orders_table_usage_is_enabled();
+		$items = $wpdb->get_results( $wpdb->prepare( 'SELECT * FROM %i WHERE order_id = %d ORDER BY order_item_id', $wpdb->prefix . 'woocommerce_order_items', $order ), ARRAY_A );
+		$ids   = array_map( 'intval', array_column( $items, 'order_item_id' ) );
+		$meta  = $ids ? $wpdb->get_results( 'SELECT * FROM ' . $wpdb->prefix . 'woocommerce_order_itemmeta WHERE order_item_id IN (' . implode( ',', $ids ) . ') ORDER BY meta_id', ARRAY_A ) : [];
+		$record = $hpos
+			? [ $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM %i WHERE id = %d', $wpdb->prefix . 'wc_orders', $order ), ARRAY_A ), $wpdb->get_results( $wpdb->prepare( 'SELECT * FROM %i WHERE order_id = %d ORDER BY id', $wpdb->prefix . 'wc_orders_meta', $order ), ARRAY_A ) ]
+			: [ $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM %i WHERE ID = %d', $wpdb->posts, $order ), ARRAY_A ), $wpdb->get_results( $wpdb->prepare( 'SELECT * FROM %i WHERE post_id = %d ORDER BY meta_id', $wpdb->postmeta, $order ), ARRAY_A ) ];
+		if ( '' !== $wpdb->last_error || [] === $items || [] === $meta ) { throw new RuntimeException( 'Order snapshot failed.' ); }
+		return hash( 'sha256', serialize( [ $record, $items, $meta ] ) );
+	}
+
+	/* ---- Label helpers ---- */
+
+	/** A fresh cart: merchandise, then this Session's Paper Package (and one add-on) through CustomerCart::add(). */
+	private function label_cart( array $hall, int $session, bool $addon = true ): string {
+		$this->clear( $hall['merch'] );
+		$parent = CustomerCart::add( $this->selection( $session, $hall['packages']['paper'], $addon ? [ [ $hall['relations']['paper_shared'], 1 ] ] : [] ) );
+		if ( ! is_string( $parent ) ) { throw new RuntimeException( 'Label cart fixture failed for Session ' . $session . ': ' . wp_json_encode( is_wp_error( $parent ) ? $parent->get_error_code() : $parent ) ); }
+		WC()->cart->calculate_totals();
+		return $parent;
+	}
+
+	/** The native item-data entry for this text, as WooCommerce receives it (key, value and display, escaped). */
+	private function entry( string $text, string $key = 'Bingo Session' ): array {
+		$value = esc_html( $text );
+		return [ 'key' => esc_html( $key ), 'value' => $value, 'display' => $value ];
+	}
+
+	/** @return array<string,mixed> The Store API cart, as the Cart, Checkout and Mini-Cart blocks receive it (JSON round trip). */
+	private function store_json(): array {
+		return json_decode( (string) wp_json_encode( $this->store( '/cart', null, 'GET', null )->get_data() ), true );
+	}
+
+	private function store_key( array $item ): string {
+		$x    = $item['extensions']['bingocommerce-selection'] ?? [];
+		$role = $x['role'] ?? null;
+		return 'package' === $role ? 'package:' . $x['package_id'] : ( 'addon' === $role ? 'addon:' . $x['addon_id'] : 'merch:' . $item['id'] );
+	}
+
+	/** @return array<string,array<string,mixed>> Store API lines keyed like line_key(). */
+	private function store_lines(): array {
+		$lines = [];
+		foreach ( $this->store_json()['items'] ?? [] as $item ) { $lines[ $this->store_key( $item ) ] = $item; }
+		return $lines;
+	}
+
+	/** @return array<int,mixed> The Store API cart's errors. */
+	private function store_errors(): array {
+		return (array) ( $this->store_json()['errors'] ?? [] );
+	}
+
+	/** The Store API line with this cart key, whatever its metadata now says. */
+	private function store_line( string $key ): ?array {
+		foreach ( $this->store_json()['items'] ?? [] as $item ) {
+			if ( $key === $item['key'] ) { return $item; }
+		}
+		return null;
+	}
+
+	/** @return mixed The Package line's Store API item_data. */
+	private function package_store_data() {
+		return $this->store_line( $this->package_key() )['item_data'] ?? null;
+	}
+
+	/** @return array<string,array<int,array{0:string,1:string}>> Classic formatted item data (heading, text) per line, as wc_get_formatted_cart_item_data() prints it. */
+	private function classic_lines(): array {
+		$lines = [];
+		foreach ( WC()->cart->get_cart() as $item ) {
+			$html = wc_get_formatted_cart_item_data( $item );
+			$dl   = '' === trim( $html ) ? null : $this->xpath( $html )->query( '//dl' )->item( 0 );
+			$lines[ $this->line_key( $item ) ] = $dl instanceof DOMElement ? $this->dl_pairs( $dl ) : [];
+		}
+		return $lines;
+	}
+
+	/** @return array<int,array{0:string,1:string}> */
+	private function dl_pairs( DOMElement $dl ): array {
+		$pairs = [];
+		$key   = null;
+		foreach ( $dl->childNodes as $node ) {
+			if ( ! $node instanceof DOMElement ) { continue; }
+			if ( 'dt' === $node->nodeName ) { $key = rtrim( trim( $node->textContent ), ':' ); }
+			elseif ( 'dd' === $node->nodeName ) { $pairs[] = [ (string) $key, trim( $node->textContent ) ]; }
+		}
+		return $pairs;
+	}
+
+	/** @return array<string,string> The classic cart, checkout review and mini-cart templates as WooCommerce renders them. */
+	private function classic_templates(): array {
+		wc_clear_notices();
+		return [
+			'cart'     => wc_get_template_html( 'cart/cart.php' ),
+			'review'   => wc_get_template_html( 'checkout/review-order.php' ),
+			'minicart' => wc_get_template_html( 'cart/mini-cart.php', [ 'list_class' => '' ] ),
+		];
+	}
+
+	private function xpath( string $html ): DOMXPath {
+		$dom      = new DOMDocument();
+		$internal = libxml_use_internal_errors( true );
+		try { $dom->loadHTML( '<?xml encoding="UTF-8"><body>' . $html . '</body>', LIBXML_NONET ); }
+		finally { libxml_clear_errors(); libxml_use_internal_errors( $internal ); }
+		return new DOMXPath( $dom );
+	}
+
+	/** The rendered HTML with one element removed. */
+	private function without_node( string $html, string $query ): string {
+		$xpath = $this->xpath( $html );
+		foreach ( iterator_to_array( $xpath->query( $query ) ) as $node ) { $node->parentNode->removeChild( $node ); }
+		return (string) $xpath->document->saveHTML( $xpath->document->getElementsByTagName( 'body' )->item( 0 ) );
+	}
+
+	/**
+	 * Markup compared without inter-tag whitespace (removing a node leaves its surrounding
+	 * newlines) and with the classic quantity inputs' per-render uniqid() IDs made equal.
+	 */
+	private function normalized( string $html ): string {
+		$xpath = $this->xpath( $html );
+		$body  = (string) $xpath->document->saveHTML( $xpath->document->getElementsByTagName( 'body' )->item( 0 ) );
+		return trim( (string) preg_replace( [ '/>\s+</', '/\s+/', '/quantity_[0-9a-f]{13}/' ], [ '><', ' ', 'quantity_ID' ], $body ) );
+	}
+
+	/** The Store API cart with only the Package lines' Bingo Session entries removed. */
+	private function strip_label( array $json ): array {
+		foreach ( $json['items'] as &$item ) {
+			if ( 'package' === ( $item['extensions']['bingocommerce-selection']['role'] ?? null ) ) {
+				$item['item_data'] = array_values( array_filter( $item['item_data'], static fn( array $e ): bool => 'Bingo Session' !== ( $e['key'] ?? null ) ) );
+			}
+		}
+		unset( $item );
+		return $json;
+	}
+
+	/** @return mixed $fn's result with the label callback removed. */
+	private function without_labels( callable $fn ) {
+		remove_filter( 'woocommerce_get_item_data', [ CustomerCart::class, 'session_details' ], 100 );
+		try { return $fn(); }
+		finally { add_filter( 'woocommerce_get_item_data', [ CustomerCart::class, 'session_details' ], 100, 2 ); }
+	}
+
+	/**
+	 * Runs $fn while the label's own Session read returns $row as literal values (a row the
+	 * column types might never store), no row (null) or a database error ('fail').
+	 *
+	 * @param array<string,mixed>|string|null $row
+	 * @return mixed
+	 */
+	private function with_label_row( $row, callable $fn ) {
+		global $wpdb;
+		$read   = 'SELECT session_id, session_date, display_name, schedule_id, start_time_local, timezone_name, starts_at_utc FROM `' . Migrations::sessions_table() . '` WHERE session_id = ';
+		$filter = static function ( $sql ) use ( $read, $row, $wpdb ) {
+			if ( ! is_string( $sql ) || ! str_starts_with( $sql, $read ) ) { return $sql; }
+			if ( 'fail' === $row ) { return 'SELECT session_id FROM `bc_label_fixture_missing_table`'; }
+			if ( null === $row ) { return 'SELECT 1 AS session_id FROM DUAL WHERE 1 = 0'; }
+			$columns = [];
+			foreach ( [ 'session_id', 'session_date', 'display_name', 'schedule_id', 'start_time_local', 'timezone_name', 'starts_at_utc' ] as $column ) {
+				$value     = $row[ $column ];
+				$columns[] = ( null === $value ? 'NULL' : ( is_array( $value ) ? "X'" . $value['hex'] . "'" : $wpdb->prepare( '%s', $value ) ) ) . ' AS ' . $column;
+			}
+			return 'SELECT ' . implode( ', ', $columns );
+		};
+		$suppress = $wpdb->suppress_errors( true );
+		add_filter( 'query', $filter );
+		try { return $fn(); }
+		finally { remove_filter( 'query', $filter ); $wpdb->suppress_errors( $suppress ); }
+	}
+
+	/** @return array<int,string> PHP warnings, notices and deprecations raised while $fn ran. */
+	private function collect_warnings( callable $fn ): array {
+		$warnings = [];
+		set_error_handler( static function ( int $level, string $message, string $file, int $line ) use ( &$warnings ): bool { $warnings[] = $message . ' @ ' . basename( $file ) . ':' . $line; return true; } );
+		try { $fn(); }
+		finally { restore_error_handler(); }
+		return $warnings;
+	}
+
+	/** @return array<string,mixed> Cart state that rendering must never change. */
+	private function cart_state(): array {
+		$lines = [];
+		foreach ( WC()->cart->get_cart() as $key => $item ) {
+			$copy = $item;
+			unset( $copy['data'] );
+			$lines[ $key ] = [ $copy, $item['data']->get_price(), $item['data']->get_regular_price(), $item['data']->get_sale_price() ];
+		}
+		return [
+			'lines' => $lines, 'hash' => WC()->cart->get_cart_hash(), 'totals' => WC()->cart->get_totals(), 'notices' => wc_get_notices(),
+			'errors' => CartSelection::inspect( WC()->cart->get_cart() )['errors']->get_error_codes(),
+			'session' => WC()->session ? WC()->session->get_session_data() : null, 'removed' => array_keys( WC()->cart->get_removed_cart_contents() ),
+		];
+	}
+
+	private function package_key(): string {
+		foreach ( WC()->cart->cart_contents as $key => $item ) {
+			if ( 'package' === ( $item[ CartSelection::META ]['role'] ?? null ) ) { return (string) $key; }
+		}
+		throw new RuntimeException( 'No Package line.' );
+	}
+
+	private function addon_key(): string {
+		foreach ( WC()->cart->cart_contents as $key => $item ) {
+			if ( 'addon' === ( $item[ CartSelection::META ]['role'] ?? null ) ) { return (string) $key; }
+		}
+		throw new RuntimeException( 'No add-on line.' );
+	}
+
+	private function merch_key(): string {
+		foreach ( WC()->cart->cart_contents as $key => $item ) {
+			if ( ! isset( $item[ CartSelection::META ] ) ) { return (string) $key; }
+		}
+		throw new RuntimeException( 'No merchandise line.' );
+	}
+
+	private function package_item(): array {
+		return WC()->cart->cart_contents[ $this->package_key() ];
+	}
+
+	private function package_name( array $hall ): string {
+		return (string) wc_get_product( $this->package_product( $hall['packages']['paper'] ) )->get_name();
+	}
+
+	private function stored_name( int $session ): string {
+		global $wpdb;
+		return (string) $wpdb->get_var( $wpdb->prepare( 'SELECT display_name FROM %i WHERE session_id = %d', Migrations::sessions_table(), $session ) );
+	}
+
+	/** @return mixed $fn's result inside this Hall. */
+	private function in_hall( array $hall, callable $fn ) {
+		switch_to_blog( $hall['site'] );
+		try { return $fn(); }
+		finally { restore_current_blog(); }
+	}
+
+	private function callback_count( string $hook, array $callback ): int {
+		$count = 0;
+		foreach ( $GLOBALS['wp_filter'][ $hook ]->callbacks ?? [] as $callbacks ) {
+			foreach ( $callbacks as $entry ) { $count += $entry['function'] === $callback ? 1 : 0; }
+		}
+		return $count;
+	}
+
+	/* ================================================================== *
 	 * Optional browser check
 	 * ================================================================== */
 
-	private function browser( array $a, array $b ): void {
+	private function browser( array $a, array $b, array $labels = [] ): void {
 		$this->group( 'Browser (optional)' );
 		if ( '1' !== getenv( 'BC_SESSION_PURCHASE_BROWSER' ) ) {
 			$this->notes[] = 'Browser coverage SKIPPED: set BC_SESSION_PURCHASE_BROWSER=1 with BC_NODE_EXECUTABLE, BC_PLAYWRIGHT_MODULE, BC_CHROME_EXECUTABLE and BC_SESSION_PURCHASE_ARTIFACTS.';
@@ -944,6 +1916,7 @@ final class HomepageSessionPurchaseTest {
 					$names[ $item['id'] ] = [ 'name' => $item['name'], 'price' => $this->text( $item['price_html'] ), 'contents' => $item['contents'], 'addons' => array_map( fn( array $x ): array => [ 'id' => $x['id'], 'name' => $x['name'], 'max' => $x['max_quantity'], 'price' => $this->text( $x['price_html'] ) ], $item['addons']['items'] ) ];
 				}
 				$bingo = array_values( array_filter( array_map( static fn( int $id ): string => ( $x = wc_get_product( $id ) ) instanceof WC_Product && 'publish' === $x->get_status() ? (string) $x->get_name() : '', ShopListing::bingo_product_ids() ) ) );
+				$extra = $labels[ $hall['label'] ] ?? [];
 				$halls[ $hall['label'] ] = [
 					'site' => $hall['site'], 'host' => $hall['host'], 'cart_page' => $hall['cart_page'], 'cart_url' => $hall['cart_url'], 'cart_path' => (string) wp_parse_url( $hall['cart_url'], PHP_URL_PATH ),
 					'shop_url' => $hall['shop_url'], 'shop_path' => (string) wp_parse_url( $hall['shop_url'], PHP_URL_PATH ), 'category_path' => (string) wp_parse_url( $hall['category_url'], PHP_URL_PATH ), 'bingo_products' => $bingo,
@@ -951,7 +1924,19 @@ final class HomepageSessionPurchaseTest {
 					'packages' => $hall['packages'], 'relations' => $hall['relations'], 'merch' => $hall['merch'], 'names' => $names,
 					'session_name' => $model['session']['name'], 'session_url' => $model['session']['packages_url'],
 					'only_relation' => $hall['only_relation'] ?? null,
+					// Cart Session labels: each label Session's ID, date and expected text; the checkout and Mini-Cart pages; the variation.
+					'labels' => array_map( static fn( array $s ): array => [ 'id' => $s['id'], 'date' => $s['date'], 'name' => $s['name'], 'label' => $s['label'] ], $extra['sessions'] ?? [] ),
+					'checkout_url' => $extra['checkout_url'] ?? '', 'checkout_path' => (string) wp_parse_url( (string) ( $extra['checkout_url'] ?? '' ), PHP_URL_PATH ), 'checkout_mode' => $extra['checkout_mode'] ?? '',
+					'minicart_url' => $extra['minicart_url'] ?? '', 'minicart_path' => (string) wp_parse_url( (string) ( $extra['minicart_url'] ?? '' ), PHP_URL_PATH ),
+					'variable' => $extra['variable'] ?? 0, 'variation' => $extra['variation'] ?? 0, 'package_name' => $this->package_name( $hall ),
+					'neutral' => 'Session details can’t be shown right now.',
 				];
+				if ( 'a' === $hall['label'] && ! empty( $labels['customer'] ) ) {
+					// The disposable customer's own login cookie for Hall A (a real session token, verified by WordPress on every request).
+					$expires = time() + 2 * HOUR_IN_SECONDS;
+					$token   = WP_Session_Tokens::get_instance( $labels['customer'] )->create( $expires );
+					$halls['a']['customer'] = [ 'name' => LOGGED_IN_COOKIE, 'value' => wp_generate_auth_cookie( $labels['customer'], $expires, 'logged_in', $token ), 'expires' => $expires ];
+				}
 			} finally {
 				restore_current_blog();
 			}
@@ -1321,6 +2306,13 @@ final class HomepageSessionPurchaseTest {
 			}
 			$this->same( null, get_site( $site ), 'owned disposable Hall deleted' );
 			$this->same( [], $wpdb->get_col( $wpdb->prepare( 'SHOW TABLES LIKE %s', $wpdb->esc_like( $prefix ) . '%' ) ), 'owned Hall tables removed (sessions included)' );
+		}
+		require_once ABSPATH . 'wp-admin/includes/ms.php';
+		foreach ( $this->users as $user ) {
+			if ( $user === $this->admin || $this->token !== get_user_meta( $user, self::OWNER, true ) ) { throw new RuntimeException( 'Fixture customer ownership refused.' ); }
+			wpmu_delete_user( $user );
+			clean_user_cache( $user );
+			$this->same( [ null, '0' ], [ $wpdb->get_var( $wpdb->prepare( 'SELECT ID FROM %i WHERE ID = %d', $wpdb->users, $user ) ), (string) $wpdb->get_var( $wpdb->prepare( 'SELECT COUNT(*) FROM %i WHERE user_id = %d', $wpdb->usermeta, $user ) ) ], 'owned disposable customer and all its user metadata deleted (persistent cart and session tokens included)' );
 		}
 	}
 

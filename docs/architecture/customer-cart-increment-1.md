@@ -91,8 +91,97 @@ header and the cookie-based guest session, retried once only after a confirmed
   eligible add-ons and sends them through this endpoint (addition 2026-10-02;
   reference two-column layout, Package contents and local add-on search added
   the same day, request format unchanged);
-  visual nesting and Session/date labels on cart lines remain frontend work. The BingoThemev1 shell (ADR-045) renders the native cart and checkout
-  but adds no Bingo line labels.
+  visual nesting of add-on lines remains frontend work. Since the same-day
+  cart-label addition each verified Package line also carries one native
+  "Bingo Session" item-data entry (see "Cart Session labels" below); the
+  BingoThemev1 shell (ADR-045) still renders the native cart and checkout.
+
+## Cart Session labels (ADR-045 / BR-084 addition 2026-10-02)
+
+`CustomerCart::session_details()` is a read-only `woocommerce_get_item_data`
+callback (priority 100, behind the existing registration guard). Installed
+WooCommerce 11.1.2 applies that filter in exactly two places:
+`wc_get_formatted_cart_item_data()` (`includes/wc-template-functions.php:4558`;
+the classic `cart/cart.php`, `checkout/review-order.php` and `cart/mini-cart.php`
+templates) and the Store API cart item schema
+(`src/StoreApi/Schemas/V1/CartItemSchema.php:170`), whose `item_data` the Cart,
+Checkout and Mini-Cart blocks render. The entry therefore appears in each
+display's own item-metadata place: in the classic cart's `td.product-name` after
+the product link; in the classic checkout review after the name and its
+quantity text; in the classic mini-cart after the name link and before the
+quantity/price text; in the Cart and Mini-Cart blocks after the name and
+per-item price, before the quantity controls (and, in the Mini-Cart, before
+variation details); and in the Checkout block's summary after the name and
+per-item price. Order creation does not use this filter.
+
+- **Gate.** Only a line `CartSelection::line()` verifies as a Package (its own
+  version, current-Hall `site_id`, exact Session/Package eligibility, product
+  and quantity) gets the entry. Merchandise, add-on lines, malformed or foreign
+  metadata, unverified lines and unexpected shapes are returned unchanged, so
+  the existing cart validation alone reports their errors. Other extensions'
+  entries and WooCommerce's variation details keep their places; the Bingo
+  entry is appended once.
+- **Read.** One prepared primary-key read of the line's own `session_id` from
+  the current Hall's `bingo_sessions` (`session_id, session_date, display_name,
+  schedule_id, start_time_local, timezone_name, starts_at_utc`). No homepage
+  parameter, viewed Session, product name, current schedule definition or Portal
+  template is used, and no site is switched.
+- **Text.** A generated Session: `MM/DD/YYYY · HH:MM Zone · Name` (translatable
+  `%1$s · %2$s %3$s · %4$s`); a legacy Session: `MM/DD/YYYY · Name`
+  (`%1$s · %2$s`). The date comes from `HomepageSessionCalendar::date_label()`,
+  the 24-hour time from `ScheduleTimezone::display_time()` (never the WordPress
+  time format), the zone exactly as stored; the whole value is escaped. The
+  generated name's own " — HH:MM" ending (`ScheduleExpansion::occurrence_display_name()`)
+  is left off the screen only when it equals " — " plus the verified structured
+  time, so the time is not shown twice; nothing is parsed from the name.
+- **Checks.** A generated row needs a positive `schedule_id`, a canonical date,
+  `start_time_local` exactly `canonical_start_time( display_time( $t ) )`, a
+  `timezone_name` that `validate_zone()` returns unchanged, a `starts_at_utc`
+  equal to `exact_instant( date, time, zone )`, and the exact name ending above;
+  a legacy row needs all four structured columns NULL. The name must be valid
+  UTF-8, non-empty under SessionService's whitespace rule and at most 191
+  characters. Any failure, a missing row, a different returned identity, a read
+  failure or a formatting exception shows the translated neutral entry
+  "Session details can’t be shown right now." — never invented details.
+- **No side effects.** No database write, cart or WooCommerce session change,
+  notice or checkout rule; cart hash, totals, quantities, prices, linkage,
+  Store API extension data and checkout validation are unchanged, including
+  while the neutral entry is displayed.
+- **Order labels unchanged.** `CustomerOrder` still saves
+  `MM/DD/YYYY — name — HH:MM Zone` as the order line's "Bingo Session" (the
+  generated name keeps its time, so the time appears twice there, as before).
+- **Mini-Cart.** WooCommerce's Mini-Cart block (Interactivity API version, on
+  pages other than Cart and Checkout) shows only the first 15 words of an
+  item-data value, followed by "…"; the date, time and zone come first so they
+  stay visible. The Store API keeps the full value. On Cart and Checkout pages
+  WooCommerce renders its Mini-Cart block only as a hidden, disabled button.
+  BingoThemev1 itself shows no Mini-Cart.
+- **Wrapping.** Measured at 320–375px, a long label's unbroken 30-character
+  zone (`America/North_Dakota/New_Salem`) widened the Cart block, Mini-Cart and
+  classic cart and review columns (up to 77px of page overflow). BingoThemev1's
+  one rule, `overflow-wrap: anywhere` on `.wc-block-components-product-details__value`
+  and `.woocommerce td.product-name dl.variation dd`, lets it wrap within its
+  column; afterwards the label adds no overflow anywhere. WooCommerce's own
+  layouts still overflow by up to 12px at 320px (the Cart block's line-items
+  table and the Mini-Cart drawer's table), with or without the label; that is
+  unchanged.
+- **Other native behaviour observed.** Below its large breakpoint WooCommerce's
+  Checkout block renders its order summary twice (the collapsible summary and
+  a second copy); each copy shows the one entry. WordPress core's emoji script
+  may draw an emoji in a name as an image whose alternative text is the emoji.
+
+Verification: `tests/homepage-session-purchase.php` section 7 (in-process: every
+format, field check, fallback, verification failure, display and isolation
+case, with the classic cart, checkout review and mini-cart templates rendered in
+the PHP process) and, with `BC_SESSION_PURCHASE_BROWSER=1`, its browser stage.
+The browser stage renders five displays and checks the entry's text, placement
+and overflow (measured with and without the entry) at 1440, 375 and 320px: the
+Cart block, the Checkout block, the Mini-Cart block, the classic cart and the
+classic checkout review. The classic mini-cart is checked only through
+WooCommerce's cart-fragments HTML parsed into a detached document — its text,
+escaping and markup order, not its responsive layout (BingoThemev1 shows no
+classic mini-cart). A signed-in customer is checked in the three blocks; the
+other browser checks run as guests.
 
 ## Installed WooCommerce integration evidence
 

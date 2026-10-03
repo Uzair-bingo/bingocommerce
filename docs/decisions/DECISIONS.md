@@ -6484,6 +6484,66 @@ by construction, never deleted by anything.
   choose a different Package." The limit itself is unchanged and still
   enforced per Hall-local Game Type.
 
+- **ADR-045 / BR-084 addition — [2026-10-02] — Cart Session Labels (user-approved, implemented):**
+
+  This dated addition is display only. The entries above remain the historical
+  record; every purchase, validation, order, refund, entitlement and QR rule
+  they record is unchanged. No schema, setting, endpoint, script, template
+  override or dependency is added.
+
+  **Where.** `bingocommerce-sessions`' `CustomerCart` adds one translated
+  "Bingo Session" entry through WooCommerce's native `woocommerce_get_item_data`
+  to a cart line that `CartSelection::line()` verifies as a Bingo Package. In
+  installed WooCommerce 11.1.2 that filter feeds the classic cart, checkout
+  review and mini-cart templates and the Store API `item_data` that the Cart,
+  Checkout and Mini-Cart blocks render, so the entry appears beneath the
+  Package in each display's own item-metadata place. Merchandise and add-on
+  lines, other extensions' entries and variation details are unchanged; the
+  Bingo entry is appended once.
+
+  **Text.** A generated Session: `MM/DD/YYYY · HH:MM Zone · Name` (for example
+  `10/15/2026 · 18:30 America/New_York · Star Evening`); a legacy Session
+  without structured time: `MM/DD/YYYY · Name`. Both are translatable formats.
+  The time is the 24-hour structured start time, never the WordPress time
+  format; the zone is the occurrence's stored identifier; the whole value is
+  escaped.
+
+  **Which Session.** The cart line's own validated Session, read by primary key
+  from the current Hall's `bingo_sessions` row: its own date, structured time,
+  stored zone and stored name. Never homepage parameters, the viewed Session,
+  the product, the current schedule definition or the Portal template, and
+  never another Hall.
+
+  **Display-only name adjustment.** A generated occurrence's stored name ends
+  with " — HH:MM" (§4.2). The label leaves exactly that ending off the screen
+  when it equals " — " plus the verified structured time, so the time is not
+  shown twice. The time shown always comes from the structured field; nothing
+  is parsed from the name. A generated name without that exact ending is
+  inconsistent with its time and gets the neutral message. Stored names are
+  unchanged, legacy names are shown complete (including text such as
+  "6:30 PM"), and saved order labels keep their existing format
+  (`MM/DD/YYYY — name — HH:MM Zone`, the time repeated as before).
+
+  **Checks and fallback.** Fields are checked with the existing validators
+  (`HomepageSessionCalendar::date_label()`,
+  `ScheduleTimezone::canonical_start_time()`, `validate_zone()` and
+  `exact_instant()` against the stored UTC start) and the existing name rules
+  (valid UTF-8, non-empty, at most 191 characters). A line that fails
+  verification gets no entry, and the existing cart validation keeps reporting
+  it. A verified Package whose Session read or formatting fails shows
+  "Session details can’t be shown right now." instead of invented details. The
+  callback adds no notice, cart or session change, or checkout rule.
+
+  **Presentation.** WooCommerce's Mini-Cart block (Interactivity API version)
+  shows only the first 15 words of an item-data value, then "…"; the date,
+  time and zone come first, so they remain visible. BingoThemev1 shows no
+  Mini-Cart itself; on Cart and Checkout pages WooCommerce's Mini-Cart fallback
+  is a hidden button. A long unbroken value (a 30-character zone name) widened
+  the cart columns at 320–375px, so BingoThemev1 adds one presentation rule:
+  `overflow-wrap: anywhere` on block item-data values and on classic
+  `td.product-name` item data. No layout, font, colour, spacing or width
+  changes.
+
 ---
 
 ## Business Rules (BR)
@@ -8288,9 +8348,9 @@ delete_users.
   Details; the homepage Session → Package → add-on purchase step and its
   customer add-on listing read are implemented (ADR-045 / BR-084 addition
   2026-10-02), as are its reference two-column layout, each Package's "What's
-  included", the ordinary Shop's exclusion of Bingo Packages and Play Products
-  and the add-on price presentation correction (same-day addition), while Bingo
-  cart-line labels, automatic theme assignment for new
+  included", the ordinary Shop's exclusion of Bingo Packages and Play Products,
+  the add-on price presentation correction and the Package lines' Bingo
+  Session labels (same-day additions), while automatic theme assignment for new
   Halls, and the remaining homepage sections and homepage editing controls
   (BR-084) remain pending. ADR-044 and BR-079 business decisions are unchanged; no real
   Hall migration, deployment or production readiness is claimed.

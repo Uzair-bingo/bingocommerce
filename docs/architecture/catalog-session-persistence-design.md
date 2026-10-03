@@ -14,7 +14,9 @@ Session → Package display and its purchase step (one Package, optional eligibl
 add-ons, the existing Store API cart-extension route; addition 2026-10-02), with
 each Package's "What's included" read from its saved base composition and the
 ordinary Shop leaving out the Hall's Package and Play Product products by
-Catalog membership (same-day addition); Bingo cart-line labels remain pending. No real Hall migration or deployment is
+Catalog membership (same-day addition), and each verified Package cart line shows
+its own dated Session as native cart item data (same-day addition, display
+only). No real Hall migration or deployment is
 claimed. The
 additive Session schedule/occurrence model exists under approved ADR-043;
 production deployment is not claimed.

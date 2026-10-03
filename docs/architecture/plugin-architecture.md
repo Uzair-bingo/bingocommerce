@@ -59,8 +59,7 @@ current Hall's existing Store API cart-extension and cart-read endpoints,
 validates that data, renders a hidden, disabled radio/add-on form, and its
 optional `homepage-purchase.js` posts the selection to WooCommerce's route,
 where `CustomerCart` validates it again; a refused add's rollback also drops
-only the WooCommerce notices that attempt recorded. Bingo cart-line labels
-remain pending.
+only the WooCommerce notices that attempt recorded.
 
 The same-day presentation addition (2026-10-02) keeps those boundaries: the
 Sessions provider also gives each listed Package its read-only `contents` (the
@@ -73,6 +72,15 @@ Package and Play Product products out of the ordinary Shop (by Catalog
 membership; listing only, no product change). `bingocommerce-sessions`'
 `CartSelection::relation_priced()` gives add-on cart lines their relationship
 price as price and regular price with no sale price.
+
+The cart-label addition (2026-10-02) adds no route, script or template:
+`bingocommerce-sessions`' `CustomerCart` adds one read-only
+`woocommerce_get_item_data` entry ("Bingo Session") to a cart line that
+`CartSelection::line()` verifies as a Package, from that line's own Session row
+in the current Hall, and WooCommerce renders it natively in the classic cart,
+checkout review and mini-cart and in the Cart, Checkout and Mini-Cart blocks.
+BingoThemev1 adds only a presentation rule so long item-data values wrap within
+their column; it decides nothing.
 
 Plugin boundaries are locked by ADR-026, narrowed by ADR-035, and extended for
 automatic Commerce enable/suspend by ADR-042:

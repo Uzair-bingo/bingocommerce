@@ -16,9 +16,14 @@ final class CustomerCart {
 	private static ?array $pending = null;
 	private static ?array $store_update = null;
 
+	/** SessionService::DISPLAY_NAME_MAX (private there): the varchar(191) display_name column. */
+	private const SESSION_NAME_MAX = 191;
+
 	public static function register(): void {
 		if ( self::$registered ) { return; }
 		self::$registered = true;
+		// Read-only display: the classic cart, checkout review and mini-cart templates and the Store API (Cart, Checkout and Mini-Cart blocks).
+		add_filter( 'woocommerce_get_item_data', [ self::class, 'session_details' ], 100, 2 );
 		// BOTH WC_Cart and Store API CartController call this before inserting a line.
 		add_filter( 'woocommerce_add_cart_item_data', [ self::class, 'guard_add' ], 100, 4 );
 		add_filter( 'woocommerce_product_get_price', [ self::class, 'pending_price' ], 100, 2 );
@@ -93,6 +98,88 @@ final class CustomerCart {
 			$schema[ $key ] = [ 'description' => $key, 'type' => $type, 'readonly' => true ];
 		}
 		return $schema;
+	}
+
+	/**
+	 * The selected Bingo Session beneath its Package (ADR-045 / BR-084 addition 2026-10-02).
+	 * WooCommerce 11.1.2 applies this filter in wc_get_formatted_cart_item_data() (classic
+	 * cart, checkout review and mini-cart) and in the Store API cart item schema (Cart,
+	 * Checkout and Mini-Cart blocks), so one native entry appears in each display's own place.
+	 *
+	 * Display only: no write, cart or session change, notice or checkout rule. Only a line
+	 * CartSelection::line() verifies as a Package gets the entry, from that line's own Session
+	 * in the current Hall; merchandise, add-ons, unverified lines and unexpected shapes are
+	 * returned unchanged, so existing validation stays responsible for errors. Existing entries
+	 * keep their place; the Bingo entry is appended once.
+	 *
+	 * @param mixed $item_data
+	 * @param mixed $cart_item
+	 * @return mixed
+	 */
+	public static function session_details( $item_data, $cart_item = null ) {
+		if ( ! is_array( $item_data ) || ! array_is_list( $item_data ) || ! is_array( $cart_item ) || ! isset( $cart_item[ CartSelection::META ] ) ) { return $item_data; }
+		try {
+			$line = CartSelection::line( $cart_item );
+		} catch ( \Throwable $error ) {
+			return $item_data;
+		}
+		if ( is_wp_error( $line ) || 'package' !== ( $line['kind'] ?? null ) ) { return $item_data; }
+		try {
+			$text = self::session_text( $cart_item[ CartSelection::META ]['session_id'] );
+		} catch ( \Throwable $error ) {
+			$text = null;
+		}
+		// A verified Package whose Session details cannot be proven: a neutral entry, never invented details.
+		$value = esc_html( $text ?? __( 'Session details can’t be shown right now.', 'bingocommerce-sessions' ) );
+		$entry = [ 'key' => esc_html__( 'Bingo Session', 'bingocommerce-sessions' ), 'value' => $value, 'display' => $value ];
+		if ( ! in_array( $entry, $item_data, true ) ) { $item_data[] = $entry; }
+		return $item_data;
+	}
+
+	/**
+	 * The label for one exact dated Session, or null when any field fails the existing checks
+	 * (presence alone proves nothing). The time comes only from the verified structured field;
+	 * nothing is read from the schedule, the Portal template, the product or the request.
+	 */
+	private static function session_text( int $session_id ): ?string {
+		global $wpdb;
+		$row = $wpdb->get_row( $wpdb->prepare(
+			'SELECT session_id, session_date, display_name, schedule_id, start_time_local, timezone_name, starts_at_utc FROM %i WHERE session_id = %d',
+			Migrations::sessions_table(), $session_id
+		), ARRAY_A );
+		if ( '' !== $wpdb->last_error || ! is_array( $row ) || CartSelection::integer( $row['session_id'] ?? null ) !== $session_id ) { return null; }
+		$date = is_string( $row['session_date'] ?? null ) ? HomepageSessionCalendar::date_label( $row['session_date'] ) : '';
+		$name = $row['display_name'] ?? null;
+		if ( '' === $date || ! is_string( $name ) || ! mb_check_encoding( $name, 'UTF-8' ) || self::blank( $name ) || mb_strlen( $name, 'UTF-8' ) > self::SESSION_NAME_MAX ) { return null; }
+		$schedule = $row['schedule_id'] ?? null;
+		$time     = $row['start_time_local'] ?? null;
+		$zone     = $row['timezone_name'] ?? null;
+		$utc      = $row['starts_at_utc'] ?? null;
+		if ( null === $schedule ) {
+			// A legacy Session has no structured time, so none is shown.
+			if ( null !== $time || null !== $zone || null !== $utc ) { return null; }
+			/* translators: 1: Session date (MM/DD/YYYY), 2: Session name. */
+			return sprintf( __( '%1$s · %2$s', 'bingocommerce-sessions' ), $date, $name );
+		}
+		if ( CartSelection::integer( $schedule ) < 1 || ! is_string( $time ) || ! is_string( $zone ) || ! is_string( $utc ) ) { return null; }
+		// Exactly a stored minute-precise HH:MM:00, a named zone, and the UTC start generation computed from them.
+		if ( ScheduleTimezone::canonical_start_time( ScheduleTimezone::display_time( $time ) ) !== $time
+			|| ScheduleTimezone::validate_zone( $zone ) !== $zone
+			|| ScheduleTimezone::exact_instant( $row['session_date'], $time, $zone ) !== $utc ) { return null; }
+		$clock = ScheduleTimezone::display_time( $time );
+		// Display only: a generated name ends with " — HH:MM" of this same verified time
+		// (ScheduleExpansion::occurrence_display_name()). That exact ending is left off the
+		// screen, never parsed; any other generated name is inconsistent with its time.
+		$suffix = ' — ' . $clock;
+		$base   = str_ends_with( $name, $suffix ) ? substr( $name, 0, -strlen( $suffix ) ) : '';
+		if ( self::blank( $base ) ) { return null; }
+		/* translators: 1: Session date (MM/DD/YYYY), 2: start time (HH:MM, 24-hour), 3: time zone name, 4: Session name. */
+		return sprintf( __( '%1$s · %2$s %3$s · %4$s', 'bingocommerce-sessions' ), $date, $clock, $zone, $base );
+	}
+
+	/** Empty under SessionService's own name rule (whitespace collapsed, then trimmed). */
+	private static function blank( string $text ): bool {
+		return '' === trim( (string) preg_replace( '/\s+/u', ' ', $text ) );
 	}
 
 	/** Existing Woo /cart/extensions owns guest session, nonce/Cart-Token and Hall gate. */

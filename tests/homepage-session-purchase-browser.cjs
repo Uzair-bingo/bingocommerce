@@ -41,6 +41,8 @@ let cgiRequests = 0;
 const api = [];
 const refused = [];
 let intercept = null;
+/** Cart Session labels: the request worker adds fixture item-data entries before and after the Bingo entry (BC_HSP_ITEM_NOTES). */
+let itemNotes = false;
 
 function check(condition, label) {
 	assert.ok(condition, label);
@@ -56,11 +58,12 @@ function cgi(hall, url, method, headers, body) {
 	const env = {
 		PATH: process.env.PATH, BC_TEST_DB: 'bingocommerce_state_recon', BC_FIXTURE_CGI: '1', BC_FIXTURE_WOOCOMMERCE: '1',
 		BC_HSP_SITE: String(hall.site), BC_HSP_OWNER: config.owner, BC_HSP_CART_PATH: hall.cart_path, BC_HSP_SHOP_PATH: hall.shop_path, BC_HSP_CATEGORY_PATH: hall.category_path,
+		BC_HSP_CHECKOUT_PATH: hall.checkout_path || '', BC_HSP_MINICART_PATH: hall.minicart_path || '', BC_HSP_ITEM_NOTES: itemNotes ? '1' : '0',
 		HTTP_HOST: hall.host, SERVER_NAME: hall.host, SERVER_PORT: '80', REQUEST_URI: url.pathname + url.search,
 		QUERY_STRING: url.search.replace(/^\?/, ''), REQUEST_METHOD: method, SCRIPT_NAME: '/index.php', PHP_SELF: '/index.php',
 		SCRIPT_FILENAME: config.worker, REDIRECT_STATUS: '1',
 	};
-	for (const [name, variable] of [['cookie', 'HTTP_COOKIE'], ['nonce', 'HTTP_NONCE'], ['accept', 'HTTP_ACCEPT'], ['user-agent', 'HTTP_USER_AGENT'], ['x-requested-with', 'HTTP_X_REQUESTED_WITH'], ['referer', 'HTTP_REFERER']]) {
+	for (const [name, variable] of [['cookie', 'HTTP_COOKIE'], ['nonce', 'HTTP_NONCE'], ['accept', 'HTTP_ACCEPT'], ['user-agent', 'HTTP_USER_AGENT'], ['x-requested-with', 'HTTP_X_REQUESTED_WITH'], ['referer', 'HTTP_REFERER'], ['x-http-method-override', 'HTTP_X_HTTP_METHOD_OVERRIDE']]) {
 		if ('string' === typeof headers[name] && '' !== headers[name]) env[variable] = headers[name];
 	}
 	if (body && body.length) {
@@ -121,7 +124,7 @@ async function router(route) {
 		return route.fulfill({contentType: type, body: fs.readFileSync(file)});
 	}
 	const rest = url.pathname.startsWith('/wp-json/') ? url.pathname.slice('/wp-json'.length) : ('/' === url.pathname ? url.searchParams.get('rest_route') : null);
-	if (!hall || !('/' === url.pathname || rest || [hall.cart_path, hall.shop_path, hall.category_path].includes(url.pathname))) return route.abort();
+	if (!hall || !('/' === url.pathname || rest || [hall.cart_path, hall.shop_path, hall.category_path, hall.checkout_path, hall.minicart_path].filter(Boolean).includes(url.pathname))) return route.abort();
 	const info = {hall, url, method: request.method(), rest, headers: {...await request.allHeaders()}, body: request.postDataBuffer(), json: null, status: null, responseHeaders: [], at: api.length};
 	if (info.body && /json/.test(info.headers['content-type'] || '')) {
 		try { info.json = JSON.parse(info.body.toString('utf8')); } catch (error) { info.json = null; }
@@ -1072,6 +1075,474 @@ async function responsive(browser) {
 	await ctx.close();
 }
 
+/* ================================================================== *
+ * Cart Session labels (ADR-045 / BR-084 addition 2026-10-02)
+ *
+ * One native "Bingo Session" item-data entry beneath the Package line in every
+ * display WooCommerce 11.1.2 renders from `woocommerce_get_item_data`: the Cart,
+ * Checkout and Mini-Cart blocks (Store API item_data) and the classic cart,
+ * checkout review and mini-cart templates. Each reader below uses that
+ * renderer's own markup; placement is checked by document order inside the
+ * line's own container, and by screen position only where the entry shares that
+ * container with the price and quantity it is compared to.
+ * ================================================================== */
+
+const LABEL = 'Bingo Session';
+/** Every overflow measurement, written to the artifacts directory for the review. */
+const overflow = [];
+/** Page overflow that exists with or without the label (reported, not attributed to it). */
+const preexisting = [];
+/** Overflow the label causes, collected across displays and asserted at the end. */
+const overflowFailures = [];
+const DISPLAYS = {
+	'Cart block': {root: '.wp-block-woocommerce-cart', rows: '.wp-block-woocommerce-cart .wc-block-cart-items__row', container: '.wc-block-cart-item__product', name: '.wc-block-components-product-name', prices: '.wc-block-cart-item__prices', quantity: '.wc-block-cart-item__quantity', kind: 'block'},
+	'Checkout block': {root: '.wp-block-woocommerce-checkout', rows: '.wp-block-woocommerce-checkout .wc-block-components-order-summary-item', container: '.wc-block-components-order-summary-item__description', name: '.wc-block-components-product-name', prices: '.wc-block-cart-item__prices', quantity: null, kind: 'block'},
+	'Mini-Cart block': {root: '.wc-block-mini-cart__drawer', rows: '.wc-block-mini-cart__drawer .wc-block-cart-items__row', container: '.wc-block-cart-item__product', name: '.wc-block-components-product-name', prices: '.wc-block-cart-item__prices', quantity: '.wc-block-cart-item__quantity', kind: 'block'},
+	'classic cart': {root: 'form.woocommerce-cart-form', rows: 'form.woocommerce-cart-form tr.cart_item', container: 'td.product-name', name: 'td.product-name > a', prices: null, quantity: null, kind: 'classic'},
+	'classic checkout': {root: 'table.woocommerce-checkout-review-order-table', rows: 'table.woocommerce-checkout-review-order-table tr.cart_item', container: 'td.product-name', name: 'td.product-name > strong.product-quantity', prices: null, quantity: null, kind: 'classic'},
+};
+/** WooCommerce 11.1.2's Mini-Cart (Interactivity API) item-data value: its first 15 whitespace-separated words, then "…" — only when there are more. */
+const miniCartText = value => { const words = value.trim().split(/\s+/); return words.length <= 15 ? value : words.slice(0, 15).join(' ') + '…'; };
+
+/** Each line of one rendered display: name, every item-data entry in order, and the Bingo entries' text, markup, order, position and overflow. */
+async function displayLines(page, display) {
+	return page.evaluate(({display, spec, LABEL}) => {
+		const shown = element => Boolean(element) && !element.closest('[hidden]') && element.getClientRects().length > 0 && 'hidden' !== getComputedStyle(element).visibility;
+		// WordPress core's emoji script may draw an emoji as <img class="emoji" alt="…"> from s.w.org; read it as its character.
+		const coreEmoji = element => 'IMG' === element.tagName && element.classList.contains('emoji') && String(element.getAttribute('src')).startsWith('https://s.w.org/images/core/emoji/');
+		const textOf = element => {
+			if (!element) return '';
+			const copy = element.cloneNode(true);
+			copy.querySelectorAll('img').forEach(image => { if (coreEmoji(image)) image.replaceWith(image.getAttribute('alt') || ''); });
+			return copy.textContent;
+		};
+		const clean = value => (typeof value === 'string' ? value : textOf(value)).replace(/\s+/g, ' ').trim();
+		const precedes = (a, b) => Boolean(a && b && (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING));
+		const rect = element => { const r = element.getBoundingClientRect(); return {top: r.top, bottom: r.bottom, left: r.left, right: r.right}; };
+		// WooCommerce's Checkout block can render its order summary more than once (narrow screens); each copy is its own render.
+		const summaries = [...document.querySelectorAll('.wc-block-components-order-summary')].filter(shown);
+		return [...document.querySelectorAll(spec.rows)].filter(shown).map(row => {
+			const container = row.querySelector(spec.container);
+			const name = [...row.querySelectorAll(spec.name)].find(shown) || null;
+			const prices = spec.prices ? row.querySelector(spec.prices) : null;
+			const quantity = spec.quantity ? row.querySelector(spec.quantity) : null;
+			const groups = [...row.querySelectorAll('.wc-block-components-product-details')];
+			const entries = 'block' === spec.kind
+				? [...row.querySelectorAll('.wc-block-components-product-details__name')].filter(shown).map(label => ({element: label.parentElement, key: clean(label.textContent).replace(/:$/, ''), value: clean(label.parentElement.querySelector('.wc-block-components-product-details__value')), group: groups.indexOf(label.closest('.wc-block-components-product-details'))}))
+				: [...row.querySelectorAll('dl.variation > dt')].map(dt => ({element: dt.nextElementSibling, list: dt.parentElement, key: clean(dt.textContent).replace(/:$/, ''), value: clean(dt.nextElementSibling), group: 0}));
+			const bingo = entries.filter(entry => entry.key === LABEL);
+			const box = container ? rect(container) : null;
+			return {
+				name: clean(name && name.textContent),
+				render: summaries.indexOf(row.closest('.wc-block-components-order-summary')),
+				entries: entries.map(({key, value, group}) => ({key, value, group})),
+				bingo: bingo.map(entry => {
+					const element = entry.element;
+					const value = 'block' === spec.kind ? element.querySelector('.wc-block-components-product-details__value') : element;
+					const lines = [...element.getClientRects()];
+					const own = rect(element);
+					const holder = 'block' === spec.kind ? element.closest('.wc-block-components-product-details') : entry.list;
+					return {
+						value: entry.value,
+						markup: value ? [...value.querySelectorAll('*:not(p)')].filter(element => !coreEmoji(element)).length : -1,
+						inContainer: Boolean(container && container.contains(element)),
+						otherCells: 'classic' === spec.kind ? [...row.children].filter(cell => cell !== container && cell.contains(element)).length : 0,
+						afterName: precedes(name, element),
+						afterPrices: null === spec.prices ? null : precedes(prices, element),
+						beforeQuantity: null === spec.quantity ? null : precedes(element, quantity),
+						beforeVariation: groups[1] ? precedes(element, groups[1]) : null,
+						belowPrices: prices && shown(prices) ? own.top >= rect(prices).bottom - 1 : null,
+						aboveQuantity: quantity && shown(quantity) ? own.bottom <= rect(quantity).top + 1 : null,
+						withinContainer: Boolean(box) && lines.every(line => line.left >= box.left - 1 && line.right <= box.right + 1),
+						holderFits: holder ? holder.scrollWidth <= holder.clientWidth + 1 : false,
+						lines: lines.length,
+						containerWidth: box ? Math.round(box.right - box.left) : null,
+						overflowRight: box && lines.length ? Math.round(Math.max(...lines.map(line => line.right)) - box.right) : null,
+						holderScroll: holder ? [holder.scrollWidth, holder.clientWidth] : null,
+						words: [...(value ? value.textContent : '').matchAll(/\S+/g)].map(match => match[0]),
+					};
+				}),
+				quantityControls: row.querySelectorAll('.wc-block-components-quantity-selector, .wc-block-cart-item__remove-link, input.qty, a.remove').length,
+				cells: 'classic' === spec.kind ? [...row.children].map(cell => cell.className) : null,
+			};
+		});
+	}, {display, spec: DISPLAYS[display], LABEL});
+}
+
+/** The classic mini-cart (woocommerce_mini_cart()) as WooCommerce's cart-fragments response delivers it; the theme shows no mini-cart widget. */
+async function classicMiniCart(page) {
+	return page.evaluate(async LABEL => {
+		const response = await fetch('/?wc-ajax=get_refreshed_fragments', {method: 'POST', credentials: 'same-origin'});
+		const json = await response.json();
+		const html = (json.fragments || {})['div.widget_shopping_cart_content'] || '';
+		const doc = new DOMParser().parseFromString(`<div>${html}</div>`, 'text/html');
+		const clean = value => (value || '').replace(/\s+/g, ' ').trim();
+		const precedes = (a, b) => Boolean(a && b && (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING));
+		return {status: response.status, lines: [...doc.querySelectorAll('li.mini_cart_item')].map(item => {
+			const link = item.querySelector(':scope > a:not(.remove)');
+			const entries = [...item.querySelectorAll('dl.variation > dt')].map(dt => ({key: clean(dt.textContent).replace(/:$/, ''), value: clean(dt.nextElementSibling && dt.nextElementSibling.textContent), dd: dt.nextElementSibling, dl: dt.parentElement}));
+			return {
+				name: clean(link && link.textContent),
+				entries: entries.map(({key, value}) => ({key, value})),
+				bingo: entries.filter(entry => entry.key === LABEL).map(entry => ({value: entry.value, markup: entry.dd.querySelectorAll('*:not(p)').length, afterRemove: precedes(item.querySelector(':scope > a.remove'), entry.dl), afterName: precedes(link, entry.dl), beforeQuantity: precedes(entry.dl, item.querySelector(':scope > span.quantity'))})),
+			};
+		})};
+	}, LABEL);
+}
+
+/** Rendered, not a loading skeleton: every visible row of the display has its product name. */
+async function displayReady(page, display) {
+	await page.waitForFunction(selector => {
+		if (document.querySelector('.wp-block-woocommerce-cart.is-loading, .wc-block-cart--is-loading, .wp-block-woocommerce-checkout.is-loading, .wc-block-mini-cart__drawer.is-loading')) return false;
+		const rows = [...document.querySelectorAll(selector)].filter(row => row.getClientRects().length > 0);
+		return rows.length > 0 && rows.every(row => [...row.querySelectorAll('.wc-block-components-product-name, td.product-name')].some(name => name.getClientRects().length > 0 && '' !== name.textContent.trim()));
+	}, DISPLAYS[display].rows, {timeout: 60000});
+}
+
+/** A new viewport width; the Checkout block collapses its summary below its large breakpoint, so it is opened again. */
+async function resizeDisplay(page, display, width) {
+	await page.setViewportSize({width, height: 1000});
+	await sleep(300);
+	if ('Checkout block' === display) {
+		const toggle = await page.$('.wc-block-components-checkout-order-summary__title[aria-expanded="false"]');
+		if (toggle && await toggle.isVisible()) { await toggle.click(); }
+	}
+	await displayReady(page, display);
+	await sleep(250);
+}
+
+async function gotoDisplay(page, hall, display, query = '') {
+	if ('Cart block' === display || 'classic cart' === display) {
+		await page.goto(hall.cart_url + query, {waitUntil: 'load'});
+	} else if ('Checkout block' === display) {
+		await page.goto(hall.checkout_url + query, {waitUntil: 'load'});
+		await page.waitForFunction(() => document.querySelector('.wc-block-components-checkout-order-summary__title, .wc-block-components-order-summary-item') && !document.querySelector('.wp-block-woocommerce-checkout.is-loading'), null, {timeout: 60000});
+		// Narrow screens collapse the order summary behind its own toggle.
+		const toggle = await page.$('.wc-block-components-checkout-order-summary__title[aria-expanded="false"]');
+		if (toggle && await toggle.isVisible()) { await toggle.click(); }
+	} else if ('classic checkout' === display) {
+		await page.goto(hall.checkout_url + query, {waitUntil: 'load'});
+		// The classic checkout refreshes its review table once (?wc-ajax=update_order_review) after loading.
+		await page.waitForFunction(() => document.querySelectorAll('table.woocommerce-checkout-review-order-table tr.cart_item').length > 0 && !document.querySelector('.blockUI, .woocommerce-checkout-review-order-table.processing, form.checkout.processing'), null, {timeout: 60000});
+	} else if ('Mini-Cart block' === display) {
+		await page.goto(hall.minicart_url, {waitUntil: 'load'});
+		await page.click('.wc-block-mini-cart__button');
+	}
+	await displayReady(page, display);
+	await sleep(400);
+}
+
+/** The Package line's one Bingo entry in this display (in each rendered copy of it): text, no markup, native placement. Returns that line. */
+function checkPackageLine(lines, display, hall, expected, label) {
+	const renders = [...new Set(lines.map(line => line.render))];
+	if (renders.length > 1) {
+		check(renders.every(render => 1 === lines.filter(line => line.render === render && line.bingo.length > 0).length), `${label} — ${display}: WooCommerce renders ${renders.length} copies of the order summary here; each shows the Package line with one entry`);
+		renders.forEach(render => checkPackageLine(lines.filter(line => line.render === render), display, hall, expected, `${label} (summary ${render + 1} of ${renders.length})`));
+		return lines.find(line => line.bingo.length > 0);
+	}
+	const packages = lines.filter(line => line.bingo.length > 0);
+	const others = lines.filter(line => 0 === line.bingo.length);
+	check(1 === packages.length && 1 === packages[0].bingo.length, `${label} — ${display}: exactly one Bingo Session entry, on one line (${lines.map(line => `${line.name}:${line.bingo.length}`).join(', ')})`);
+	const line = packages[0];
+	const entry = line.bingo[0];
+	const shown = 'Mini-Cart block' === display ? miniCartText(expected) : expected;
+	check(entry.value === shown && 0 === entry.markup, `${label} — ${display}: “${entry.value}”, plain text`);
+	check(line.name.includes(hall.package_name) || 'classic checkout' === display, `${label} — ${display}: on the Package line (${line.name})`);
+	check(others.every(other => other.entries.every(e => e.key !== LABEL)), `${label} — ${display}: add-on and merchandise lines have no Session entry`);
+	if ('classic cart' === display) {
+		check(entry.inContainer && 0 === entry.otherCells && entry.afterName && same(line.cells.filter(Boolean).map(cell => cell.split(' ').find(c => c.startsWith('product-'))), ['product-remove', 'product-thumbnail', 'product-name', 'product-price', 'product-quantity', 'product-subtotal']), `${label} — classic cart: inside td.product-name after the product link; the separate remove, price, quantity and subtotal columns unchanged`);
+	} else if ('classic checkout' === display) {
+		check(entry.inContainer && 0 === entry.otherCells && entry.afterName && 0 === line.quantityControls && same(line.cells.filter(Boolean).map(cell => cell.split(' ').find(c => c.startsWith('product-'))), ['product-name', 'product-total']), `${label} — classic checkout review: inside td.product-name after the name and its quantity text; no removal or quantity control; total column unchanged`);
+	} else if ('Checkout block' === display) {
+		check(entry.inContainer && entry.afterName && entry.afterPrices && false !== entry.belowPrices && 0 === line.quantityControls, `${label} — Checkout block: in the summary description after the name and per-item price (and below it); no editing control added`);
+	} else {
+		check(entry.inContainer && entry.afterName && entry.afterPrices && entry.beforeQuantity && false !== entry.belowPrices && false !== entry.aboveQuantity, `${label} — ${display}: in the product container after the name and per-item price, before the quantity wrapper (and on screen between them)`);
+		if ('Mini-Cart block' === display) check(null === entry.beforeVariation || entry.beforeVariation, `${label} — Mini-Cart block: before the variation details`);
+	}
+	return line;
+}
+
+/** No CSS overflow: the page has no horizontal scroll, the entry stays inside its line's container and its list fits. Expected Mini-Cart truncation is not overflow. */
+async function checkOverflow(page, lines, display, label) {
+	const all = lines.flatMap(line => line.bingo);
+	// Every rendered copy must fit; the first one's measurements are reported.
+	const entry = {...all[0], withinContainer: all.every(e => e.withinContainer), holderFits: all.every(e => e.holderFits)};
+	const width = page.viewportSize().width;
+	// Overflow of the page and of the display's own box (the Mini-Cart drawer is its own fixed panel), with the
+	// entry and then with the Bingo entries hidden for a moment: the label must add none to either.
+	const page_ = await page.evaluate(({LABEL, root}) => {
+		const box = document.querySelector(root);
+		const visible = element => element.getClientRects().length > 0 && 'hidden' !== getComputedStyle(element).visibility;
+		const inner = () => {
+			if (!box) return 0;
+			const right = box.getBoundingClientRect().right;
+			return Math.max(0, Math.round(Math.max(right, ...[...box.querySelectorAll('*')].filter(visible).map(element => element.getBoundingClientRect().right)) - right));
+		};
+		const overflow = () => Math.max(0, document.documentElement.scrollWidth - window.innerWidth);
+		const withLabel = overflow();
+		const rootWith = inner();
+		const hidden = [];
+		for (const name of document.querySelectorAll('.wc-block-components-product-details__name, dl.variation > dt')) {
+			if (name.textContent.trim().replace(/:$/, '') !== LABEL) continue;
+			hidden.push(...('DT' === name.tagName ? [name, name.nextElementSibling] : [name.parentElement]));
+		}
+		hidden.forEach(element => element.style.setProperty('display', 'none', 'important'));
+		const without = overflow();
+		const rootWithout = inner();
+		// What sticks out: the display's own descendants beyond its box, else page elements beyond the viewport.
+		const beyond = rootWithout > 0 && box ? [...box.querySelectorAll('*')].filter(element => visible(element) && element.getBoundingClientRect().right > box.getBoundingClientRect().right + 0.5)
+			: [...document.querySelectorAll('body *')].filter(element => visible(element) && element.getBoundingClientRect().right > window.innerWidth + 0.5);
+		const culprits = beyond.map(element => `${element.tagName.toLowerCase()}.${String(element.className).trim().split(/\s+/).slice(0, 2).join('.')}`).slice(0, 4);
+		hidden.forEach(element => element.style.removeProperty('display'));
+		return {withLabel, without, rootWith, rootWithout, culprits, root: Boolean(box)};
+	}, {LABEL, root: DISPLAYS[display].root});
+	const fits = page_.root && entry.withinContainer && entry.holderFits && page_.withLabel <= page_.without && page_.rootWith <= page_.rootWithout;
+	const measured = `${label} — ${display} at ${width}px: the entry (${entry.lines} line${1 === entry.lines ? '' : 's'}) stays inside its ${entry.containerWidth}px line container and adds no overflow to the page or the display (${JSON.stringify({withinContainer: entry.withinContainer, overflowRight: entry.overflowRight, holderScroll: entry.holderScroll, pageOverflow: page_.withLabel, pageOverflowWithoutLabel: page_.without, displayOverflow: page_.rootWith, displayOverflowWithoutLabel: page_.rootWithout})})`;
+	if (fits) {
+		check(true, measured);
+	} else {
+		// Collected, so every display's measurement is reported; the run still fails at the end.
+		overflowFailures.push(measured);
+		await page.screenshot({path: path.join(config.artifacts, `label-overflow-${display.toLowerCase().replace(/[^a-z]+/g, '-')}-${width}-${Date.now()}.png`), fullPage: true});
+		console.log('OVERFLOW [Browser] ' + measured);
+	}
+	if (page_.without > 0 || page_.rootWithout > 0) preexisting.push(`${display} at ${width}px: ${page_.without}px page overflow and ${page_.rootWithout}px beyond the display's own box, with or without the label (${page_.culprits.join(', ')})`);
+	return {pageOverflow: page_.withLabel, pageOverflowWithoutLabel: page_.without, displayOverflow: page_.rootWith, displayOverflowWithoutLabel: page_.rootWithout, culprits: page_.culprits, ...entry};
+}
+
+async function addSelection(page, hall, session, addons = []) {
+	await page.goto(`http://${hall.host}/?bc_session=${session}#session-packages`, {waitUntil: 'load'});
+	await page.waitForSelector('form[data-bingo-purchase]');
+	const nonce = await nonceOf(page);
+	return page.evaluate(async ({url, nonce, body}) => (await fetch(url, {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json', Nonce: nonce}, body: JSON.stringify(body)})).status, {url: hall.endpoint, nonce, body: {namespace: NS, data: {session_id: session, package_id: hall.packages.paper, addons: addons.map(([rel, quantity]) => ({package_addon_id: hall.relations[rel], quantity}))}}});
+}
+
+async function addVariation(page, hall) {
+	const nonce = await nonceOf(page);
+	return page.evaluate(async ({url, nonce, id}) => (await fetch(url, {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json', Nonce: nonce}, body: JSON.stringify({id, quantity: 1, variation: [{attribute: 'Colour', value: 'Blue'}, {attribute: 'Size', value: 'Large'}, {attribute: 'Material', value: 'Cotton'}]})})).status, {url: `${hall.cart_endpoint}/add-item`, nonce, id: hall.variation});
+}
+
+/** Session A in the cart; Session B viewed; every display opened with B's parameters still names A. */
+async function labelSessionSwitch(browser) {
+	for (const [label, hall, displays, second] of [['A', A, ['Cart block', 'Checkout block', 'Mini-Cart block'], 'star'], ['B', B, ['classic cart', 'classic checkout'], 'saturday']]) {
+		const {ctx, page, errors} = await fresh(browser);
+		const first = hall.labels.friday;
+		const other = hall.labels[second];
+		await open(page, hall);
+		check(201 === await seed(page, hall), `Hall ${label}: merchandise in the cart`);
+		await page.check(radio(hall, 'paper'));
+		await page.check(box(hall, 'paper', 'paper_shared'));
+		await submit(page);
+		await settled(page);
+		check((await result(page)).kind.includes('is-success'), `Hall ${label}: Session A (${first.name}) Package and add-on added through the purchase step`);
+		await page.goto(`http://${hall.host}/?bc_session=${other.id}#session-packages`, {waitUntil: 'load'});
+		await page.waitForSelector('form[data-bingo-purchase]');
+		check(String(other.id) === await page.getAttribute('form[data-bingo-purchase]', 'data-session-id'), `Hall ${label}: Session B (${other.name}) is now the Session shown on the homepage`);
+		const query = `?bc_session=${other.id}&bc_date=${other.date}`;
+		const json = await cart(page, hall);
+		const store = json.items.find(item => 'package' === ((item.extensions || {})[NS] || {}).role);
+		check(Boolean(store) && same(store.item_data, [{key: LABEL, value: escapeHtml(first.label), display: escapeHtml(first.label)}]) && json.items.filter(item => item !== store).every(item => 0 === item.item_data.length), `Hall ${label}: Store API item_data — the Package’s one entry names Session A; add-on and merchandise none`);
+		for (const display of displays) {
+			await page.setViewportSize({width: 1280, height: 1000});
+			await gotoDisplay(page, hall, display, query);
+			const lines = await displayLines(page, display);
+			checkPackageLine(lines, display, hall, first.label, `Hall ${label} A→B`);
+			check(!JSON.stringify(lines).includes(other.name), `Hall ${label} A→B — ${display}: Session B’s name appears nowhere`);
+			check(3 === lines.length || ('Checkout block' === display && lines.length >= 3), `Hall ${label} A→B — ${display}: merchandise, Package and add-on lines (${lines.length})`);
+			for (const width of [1440, 375, 320]) {
+				await resizeDisplay(page, display, width);
+				const resized = await displayLines(page, display);
+				checkPackageLine(resized, display, hall, first.label, `Hall ${label} A→B ${width}px`);
+				await checkOverflow(page, resized, display, `Hall ${label} A→B`);
+				if (1440 === width || 375 === width) await labelShot(page, display, `label-${display.toLowerCase().replace(/[^a-z]+/g, '-')}-${width}.png`);
+			}
+		}
+		if ('B' === label) {
+			const mini = await classicMiniCart(page);
+			check(200 === mini.status && 1 === mini.lines.filter(line => line.bingo.length).length, 'Hall B A→B — classic mini-cart (cart fragments): one Package line with a Session entry');
+			const entry = mini.lines.find(line => line.bingo.length).bingo[0];
+			check(entry.value === first.label && 0 === entry.markup && entry.afterRemove && entry.afterName && entry.beforeQuantity, `Hall B A→B — classic mini-cart: “${entry.value}” after the remove control and name link, before the quantity and price text`);
+			// The Mini-Cart block on this classic Checkout page renders WooCommerce's hidden Cart/Checkout fallback.
+			await gotoDisplay(page, hall, 'classic checkout', query);
+			check(await fallbackHidden(page), 'Hall B classic Checkout page with a Mini-Cart block: its fallback is hidden, holds no Session entry, and the page shows one visible entry');
+		}
+		check(0 === errors.length, 'no page errors: ' + errors.join('; '));
+		await ctx.close();
+	}
+}
+
+/** The Mini-Cart block's Cart/Checkout fallback: present but hidden, no Session entry inside, and exactly one visible Bingo entry on the page. */
+async function fallbackHidden(page) {
+	return page.evaluate(LABEL => {
+		const fallback = document.querySelector('.wc-block-mini-cart');
+		const visible = [...document.querySelectorAll('.wc-block-components-product-details__name, dl.variation > dt')].filter(label => label.textContent.trim().replace(/:$/, '') === LABEL && label.getClientRects().length > 0 && 'hidden' !== getComputedStyle(label).visibility);
+		return Boolean(fallback) && 'hidden' === getComputedStyle(fallback).visibility && !fallback.textContent.includes(LABEL) && !fallback.querySelector('.wc-block-cart-items__row') && 1 === visible.length;
+	}, LABEL);
+}
+
+async function labelShot(page, display, name) {
+	const target = {'Cart block': '.wp-block-woocommerce-cart', 'Checkout block': '.wc-block-components-sidebar, .wp-block-woocommerce-checkout-order-summary-block', 'Mini-Cart block': '.wc-block-mini-cart__drawer', 'classic cart': 'form.woocommerce-cart-form', 'classic checkout': 'table.woocommerce-checkout-review-order-table'}[display];
+	await page.addStyleTag({content: '.site-header { position: static !important; }'});
+	const element = await page.$(target.split(', ').map(selector => selector).join(', '));
+	if (element) await element.screenshot({path: path.join(config.artifacts, name)});
+}
+
+function escapeHtml(value) {
+	return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+}
+
+/** Other extensions' entries and variation details keep their places around the one Bingo entry. */
+async function labelOtherMetadata(browser) {
+	itemNotes = true;
+	try {
+		for (const [label, hall, displays] of [['A', A, ['Cart block', 'Checkout block', 'Mini-Cart block']], ['B', B, ['classic cart', 'classic checkout']]]) {
+			const {ctx, page, errors} = await fresh(browser);
+			const first = hall.labels.friday;
+			check(200 === await addSelection(page, hall, first.id, [['paper_shared', 1]]), `Hall ${label} (fixture filters before/after): Package and add-on added`);
+			check(201 === await seed(page, hall) && 201 === await addVariation(page, hall), `Hall ${label}: merchandise and a variation (Colour, Size, Material) added through WooCommerce’s add-item route`);
+			const notes = [['Fixture before', 'kept'], [LABEL, first.label], ['Fixture after', 'kept']];
+			const json = await cart(page, hall);
+			const pkg = json.items.find(item => 'package' === ((item.extensions || {})[NS] || {}).role);
+			check(same(pkg.item_data.map(entry => [entry.key, entry.value]), notes.map(([key, value]) => [key, escapeHtml(value)])), `Hall ${label} Store API: the Package’s entries in filter order — an earlier one, the Bingo entry once, a later one`);
+			for (const display of displays) {
+				await page.setViewportSize({width: 1280, height: 1000});
+				await gotoDisplay(page, hall, display);
+				const lines = await displayLines(page, display);
+				const packageLine = lines.find(line => line.bingo.length);
+				check(Boolean(packageLine) && same(packageLine.entries.map(entry => [entry.key, entry.value]), 'Mini-Cart block' === display ? notes.map(([key, value]) => [key, miniCartText(value)]) : notes), `Hall ${label} — ${display}: Package line shows “Fixture before”, the Bingo entry, then “Fixture after” (${packageLine && packageLine.entries.map(entry => entry.key).join(' / ')})`);
+				const variationLine = lines.find(line => line.entries.some(entry => 'Colour' === entry.key));
+				const variation = [['Colour', 'Blue'], ['Material', 'Cotton'], ['Size', 'Large']];
+				const pairs = entries => entries.map(entry => [entry.key, entry.value]);
+				// Blocks: item data, then WooCommerce's own variation details (in its own attribute order); classic: variation details first.
+				const kept = variationLine && ('block' === DISPLAYS[display].kind
+					? same(pairs(variationLine.entries.filter(entry => 0 === entry.group)), [['Fixture before', 'kept'], ['Fixture after', 'kept']]) && same(pairs(variationLine.entries.filter(entry => 1 === entry.group)).sort(), variation)
+					: same(pairs(variationLine.entries.slice(0, 3)).sort(), variation) && same(pairs(variationLine.entries.slice(3)), [['Fixture before', 'kept'], ['Fixture after', 'kept']]));
+				check(Boolean(kept) && 0 === variationLine.bingo.length, `Hall ${label} — ${display}: the variation line keeps its variation details and other entries, no Bingo entry (${variationLine && variationLine.entries.map(entry => entry.key).join(' / ')})`);
+				check(lines.filter(line => line !== packageLine && line !== variationLine).every(line => same(line.entries.map(entry => entry.key), ['Fixture before', 'Fixture after'])), `Hall ${label} — ${display}: add-on and merchandise keep only their own entries`);
+				if ('Cart block' === display) {
+					const rendered = await page.$$eval(`${DISPLAYS[display].rows} .wc-block-components-product-metadata`, elements => elements.map(element => element.textContent.replace(/\s+/g, ' ').trim()).find(text => text.includes('Bingo Session:')) || '');
+					check(rendered === `Fixture before: kept / Bingo Session: ${first.label} / Fixture after: kept`, `Cart block: several entries render as WooCommerce’s own inline “ / ”-separated list (${rendered})`);
+					await labelShot(page, display, 'label-cart-block-with-other-metadata.png');
+				}
+			}
+			if ('B' === label) {
+				const mini = await classicMiniCart(page);
+				const line = mini.lines.find(item => item.bingo.length);
+				check(Boolean(line) && same(line.entries.map(entry => [entry.key, entry.value]), notes), 'Hall B classic mini-cart: the same three entries in order');
+			}
+			check(0 === errors.length, 'no page errors: ' + errors.join('; '));
+			await ctx.close();
+		}
+	} finally {
+		itemNotes = false;
+	}
+}
+
+/** Long, multibyte and maximum-length names, a 30-character zone, unsafe markup and the legacy format: the five rendered displays at each width; the classic mini-cart's fragment HTML as text only. */
+async function labelTexts(browser) {
+	const dialogs = [];
+	const cases = [['A', A, ['Cart block', 'Checkout block', 'Mini-Cart block']], ['B', B, ['classic cart', 'classic checkout']]];
+	for (const [label, hall, displays] of cases) {
+		for (const key of Object.keys(hall.labels).filter(name => ['long', 'multibyte', 'max', 'unsafe', 'legacy'].includes(name))) {
+			const {ctx, page, errors} = await fresh(browser);
+			page.on('dialog', dialog => { dialogs.push(dialog.message()); dialog.dismiss().catch(() => {}); });
+			const session = hall.labels[key];
+			check(200 === await addSelection(page, hall, session.id, [['paper_shared', 1]]), `Hall ${label} ${key}: Package added`);
+			for (const display of displays) {
+				await page.setViewportSize({width: 1440, height: 1000});
+				await gotoDisplay(page, hall, display);
+				for (const width of [1440, 375, 320]) {
+					await resizeDisplay(page, display, width);
+					const lines = await displayLines(page, display);
+					checkPackageLine(lines, display, hall, session.label, `Hall ${label} ${key} ${width}px`);
+					const measured = await checkOverflow(page, lines, display, `Hall ${label} ${key}`);
+					overflow.push({hall: label, key, display, width, ...measured});
+					if ('long' === key) await labelShot(page, display, `label-long-${display.toLowerCase().replace(/[^a-z]+/g, '-')}-${width}.png`);
+				}
+				if ('Mini-Cart block' === display) {
+					const shown = (await displayLines(page, display)).find(line => line.bingo.length).bingo[0].value;
+					const words = session.label.trim().split(/\s+/).length;
+					check(words > 15 ? shown.endsWith('…') && shown.length < session.label.length : shown === session.label, `Hall ${label} ${key} — Mini-Cart block: ${words > 15 ? `WooCommerce’s own 15-word truncation applies (${words} words → “…”), date, time and zone still visible` : `${words} words, shown in full without an ellipsis`}`);
+				}
+			}
+			if ('B' === label) {
+				const mini = await classicMiniCart(page);
+				const entry = (mini.lines.find(line => line.bingo.length) || {bingo: [{}]}).bingo[0];
+				check(entry.value === session.label && 0 === entry.markup, `Hall B ${key} — classic mini-cart: full text, plain`);
+			}
+			check(0 === errors.length, 'no page errors: ' + errors.join('; '));
+			await ctx.close();
+		}
+	}
+	check(0 === dialogs.length, `unsafe Session names never execute: no dialog opened (${dialogs.join(', ')})`);
+	const expectedLong = `${A.labels.long.label.split(' · ').slice(0, 2).join(' · ')} · Saturday Super Jackpot Early Bird Special Session with Bonus Rounds…`;
+	check(miniCartText(A.labels.long.label) === expectedLong, `reviewed Mini-Cart example: “${expectedLong}”`);
+}
+
+/** The Mini-Cart block's Cart/Checkout fallback on Hall A's own Cart and Checkout block pages. */
+async function labelMiniCartFallback(browser) {
+	const {ctx, page, errors} = await fresh(browser);
+	check(200 === await addSelection(page, A, A.labels.friday.id), 'fallback: Hall A Package added');
+	check('ok' === await control('minicart', A, 'pages', 'on'), 'fixture: a Mini-Cart block appended to Hall A’s own Cart and Checkout pages');
+	try {
+		for (const display of ['Cart block', 'Checkout block']) {
+			await page.setViewportSize({width: 1280, height: 1000});
+			await gotoDisplay(page, A, display);
+			check(await fallbackHidden(page), `${display} page with a Mini-Cart block: WooCommerce’s fallback is hidden and holds no Session entry; one visible entry on the page`);
+		}
+	} finally {
+		check('ok' === await control('minicart', A, 'pages', 'off'), 'fixture: Hall A’s Cart and Checkout pages restored');
+	}
+	check(0 === errors.length, 'no page errors: ' + errors.join('; '));
+	await ctx.close();
+}
+
+/** A signed-in customer (their own login cookie and session token) sees the same label, also in a later browser session. */
+async function labelSignedIn(browser) {
+	const login = async ctx => ctx.addCookies([{name: A.customer.name, value: A.customer.value, domain: A.host, path: '/', expires: A.customer.expires, httpOnly: true, sameSite: 'Lax'}]);
+	{
+		const {ctx, page, errors} = await fresh(browser);
+		await login(ctx);
+		await open(page, A);
+		check(await page.evaluate(() => document.body.classList.contains('logged-in')), 'signed in as the disposable customer (WordPress verified the cookie and its session token)');
+		check(0 === lines(await cart(page, A)).length, 'signed-in customer: starts with an empty cart');
+		await page.check(radio(A, 'paper'));
+		await page.check(box(A, 'paper', 'paper_shared'));
+		await submit(page);
+		await settled(page);
+		const outcome = await result(page);
+		check(outcome.kind.includes('is-success'), `signed-in customer: Package and add-on added through the purchase step (${outcome.message})`);
+		for (const display of ['Cart block', 'Checkout block', 'Mini-Cart block']) {
+			await gotoDisplay(page, A, display);
+			checkPackageLine(await displayLines(page, display), display, A, A.labels.friday.label, 'signed-in customer');
+		}
+		check(0 === errors.length, 'no page errors: ' + errors.join('; '));
+		await ctx.close();
+	}
+	{
+		// A later visit in a new browser session: WooCommerce restores the signed-in customer's cart.
+		const {ctx, page, errors} = await fresh(browser);
+		await login(ctx);
+		await gotoDisplay(page, A, 'Cart block');
+		checkPackageLine(await displayLines(page, 'Cart block'), 'Cart block', A, A.labels.friday.label, 'signed-in customer, new browser session (restored cart)');
+		check(0 === errors.length, 'no page errors: ' + errors.join('; '));
+		await ctx.close();
+	}
+}
+
+/** One browser, colliding Hall-local Session IDs: each Hall's cart names its own Session. */
+async function labelCollisions(browser) {
+	const {ctx, page, errors} = await fresh(browser);
+	check(A.labels.star.id === B.labels.saturday.id, `Hall A “Star Evening” and Hall B “Saturday Bingo” share Session ID ${A.labels.star.id}`);
+	check(200 === await addSelection(page, A, A.labels.star.id) && 200 === await addSelection(page, B, B.labels.saturday.id), 'the same numeric Session ID added in each Hall');
+	await gotoDisplay(page, A, 'Cart block');
+	checkPackageLine(await displayLines(page, 'Cart block'), 'Cart block', A, A.labels.star.label, 'colliding ID, Hall A');
+	await gotoDisplay(page, B, 'classic cart');
+	checkPackageLine(await displayLines(page, 'classic cart'), 'classic cart', B, B.labels.saturday.label, 'colliding ID, Hall B');
+	check(0 === errors.length, 'no page errors: ' + errors.join('; '));
+	await ctx.close();
+}
+
 (async () => {
 	const browser = await chromium.launch({headless: true, ...(process.env.BC_CHROME_EXECUTABLE ? {executablePath: process.env.BC_CHROME_EXECUTABLE} : {})});
 	try {
@@ -1092,6 +1563,15 @@ async function responsive(browser) {
 		await noScript(browser);
 		await shopListing(browser);
 		await responsive(browser);
+		await labelSessionSwitch(browser);
+		await labelOtherMetadata(browser);
+		await labelTexts(browser);
+		await labelMiniCartFallback(browser);
+		await labelSignedIn(browser);
+		await labelCollisions(browser);
+		fs.writeFileSync(path.join(config.artifacts, 'label-overflow.json'), JSON.stringify({measurements: overflow, preexisting: [...new Set(preexisting)]}, null, 2));
+		for (const note of new Set(preexisting)) console.log('NOTE [Browser] pre-existing, not caused by the label: ' + note);
+		check(0 === overflowFailures.length, `no Session label causes horizontal overflow in the five rendered displays at 1440, 375 or 320px (${overflowFailures.length} failing: ${overflowFailures.join(' | ')})`);
 		check(0 === refused.length, 'the worker refused no browser request: ' + refused.join(' | '));
 	} finally {
 		await browser.close();

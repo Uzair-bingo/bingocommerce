@@ -183,9 +183,11 @@ Three roles — do not conflate or merge:
 - Shop, product, cart, checkout, account and order pages use native
   WooCommerce output. The homepage calendar presents date → Session → Package,
   and its purchase step adds the selection through the existing cart (rather
-  than native product Add to cart controls, which the backend refuses). Bingo
-  Session/date labels on cart lines remain the next presentation work.
-  (BR-081, BR-084)
+  than native product Add to cart controls, which the backend refuses). In the
+  cart, checkout and mini-cart each Bingo Package line shows its own dated
+  Session — date, structured start time and time zone, and name, or date and
+  name for a Session without structured time — as one "Bingo Session" detail
+  beneath the Package (addition 2026-10-02). (BR-081, BR-084)
 
 Portal Global Admin is an external Portal authority, not a fourth
 BingoCommerce role. Its ADR-035/BR-075 authority here is the platform-level
@@ -365,7 +367,8 @@ identity/role mapping remain deferred.
   display is implemented (ADR-045 / BR-084 addition 2026-10-01), and its
   Package/add-on purchase step — with its reference layout, each Package's
   "What's included" and the Shop's exclusion of Bingo products — is
-  implemented (additions 2026-10-02); Bingo cart-line labels remain pending. No real Hall migration
+  implemented (additions 2026-10-02), as are the Bingo Session labels on
+  Package cart lines (same-day addition). No real Hall migration
   or deployment is claimed. The
   additive Portal-template and Commerce-schedule tables in Session schema v3 do
   not replace them.

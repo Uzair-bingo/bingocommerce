@@ -45,8 +45,9 @@ BingoCommerce is a hosted multi-tenant e-commerce platform for bingo halls, chur
   (ADR-045 / BR-084 addition 2026-10-02), with the reference two-column layout,
   each Package's "What's included" (saved base composition), the ordinary Shop
   leaving out Bingo Packages and Play Products by Catalog membership, and add-on
-  lines priced without a false sale (same-day addition); Bingo Session/date
-  labels on cart lines remain pending. No real Hall migration or deployment is claimed. Add-on prices
+  lines priced without a false sale (same-day addition); each verified Bingo
+  Package cart line shows its own dated Session as one native "Bingo Session"
+  item-data entry (same-day addition, display only). No real Hall migration or deployment is claimed. Add-on prices
   are canonical `DECIMAL(19,2)` values. The new-row UI
   prefill loads the linked product with `\wc_get_product( $wc_product_id )`,
   requires `\WC_Product`, and reads the unfiltered edit-context string with
@@ -129,8 +130,8 @@ Custom code lives ONLY in:
    (ADR-045, slider addition 2026-09-30), as is the homepage Session calendar
    with informational Package display (addition 2026-10-01) and its purchase
    step through the existing cart-extension route (addition 2026-10-02; its
-   reference layout, Package contents and the Shop's exclusion of Bingo
-   products the same day); Bingo cart-line labels remain pending. The
+   reference layout, Package contents, the Shop's exclusion of Bingo
+   products and the Package lines' Bingo Session labels the same day). The
    current additive Session schema also uses `bingo_portal_session_templates`,
    `bingo_session_schedules`,
    `bingo_session_schedule_dates`, and `bingo_session_schedule_packages` for

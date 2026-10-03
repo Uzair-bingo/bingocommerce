@@ -4304,3 +4304,96 @@ customer selection screens.
   at 450px); the purchase suites run no checkout (the order-recording and
   entitlement suites above do).
 - Nothing was staged, committed, pushed or deployed.
+
+### Cart Session labels — branch `bingotheme`, uncommitted (2026-10-02)
+
+- Started from clean HEAD `6d80a16dafe5b1134bfa89e446d9ea5567b381b5`; installed
+  WooCommerce 11.1.2 and the existing validator signatures verified before
+  editing. Implements the reviewed plan with its placement and Mini-Cart
+  corrections (ADR-045 / BR-084 addition 2026-10-02). No schema, setting,
+  endpoint, script, template override, dependency or order-format change.
+- Production: Sessions' `CustomerCart::session_details()` — one read-only
+  `woocommerce_get_item_data` callback (priority 100, existing registration
+  guard) — adds one translated "Bingo Session" entry to a line
+  `CartSelection::line()` verifies as a Package. A prepared primary-key read of
+  that line's own Session from the current Hall's `bingo_sessions` gives
+  `MM/DD/YYYY · HH:MM Zone · Name` (generated) or `MM/DD/YYYY · Name` (legacy),
+  escaped; the generated name's exact " — HH:MM" ending is left off the screen
+  only when it matches the verified structured time. Fields are checked with
+  `HomepageSessionCalendar::date_label()`, `ScheduleTimezone::canonical_start_time()`,
+  `display_time()`, `validate_zone()` and `exact_instant()` (against the stored
+  UTC start) and the existing name rules; any failure, missing row, different
+  returned identity, read failure or formatting exception shows "Session
+  details can’t be shown right now."; unverified lines get nothing and existing
+  validation keeps reporting them. Merchandise, add-on lines, other entries and
+  variation details are unchanged. Saved order labels keep their format.
+- Displays (WooCommerce's own markup and places): Cart block, Checkout block
+  summary, Mini-Cart block (Interactivity API; its native 15-word "…" applies,
+  with date, time and zone first), classic cart, classic checkout review and
+  classic mini-cart (cart-fragments HTML; BingoThemev1 shows no mini-cart).
+- BingoThemev1 `main.css`: one rule, `overflow-wrap: anywhere` on
+  `.wc-block-components-product-details__value` and
+  `.woocommerce td.product-name dl.variation dd`, after measurement showed a
+  long label's unbroken 30-character zone widening the line (rule removed /
+  present, page or display-box overflow with the label vs without it): Cart
+  block 375px 3/0 → 0/0 and 320px page 42/12, box 58/28 → 12/12, 28/28;
+  Mini-Cart drawer 320px 42/12 → 12/12; classic cart 320px 4/0 → 0/0; classic
+  review 375px 22/0 → 0/0 and 320px 77/0 → 0/0. No layout, font, colour,
+  spacing or width change.
+- Tests: `tests/homepage-session-purchase.php` section 7 plus its browser and
+  request worker (checkout and Mini-Cart test pages, the homepage's own
+  parameters on cart/checkout, the classic `update_order_review` refresh, the
+  Checkout block's `__experimental_calc_totals` PUT only with
+  `X-HTTP-Method-Override`, opt-in fixture item-data filters) and a `minicart`
+  control action. Guarded `bingocommerce_state_recon` results: purchase suite
+  **559 / 0** with `BC_SESSION_PURCHASE_BROWSER=1` (browser stage **1087 / 0**
+  over 379 live php-cgi requests) and **556 / 0** without it. Regressions:
+  customer cart **140 / 0**, electronic limits **679 / 0**, order recording
+  **1098 / 0**, digital entitlement snapshot **1330 / 0**, storefront
+  **106 / 0**, calendar **357 / 0** (its browser stage not run). PHP/JS syntax
+  and whitespace checks pass.
+- Observed, not changed (pre-existing, identical with or without the label):
+  at 320px WooCommerce's Cart block line-items table overflows the page by
+  12px and the Mini-Cart drawer's table its drawer by 12px (right-hand prices
+  clipped); below its large breakpoint the Checkout block renders its order
+  summary twice (each copy shows the one entry); WordPress core's emoji script
+  may draw an emoji in a name as an image (its alternative text is the emoji).
+- Limitations: labels are current reads, not snapshots (a renamed legacy
+  Session shows its new name until checkout records the order); a zone later
+  dropped from PHP's named-zone list shows the neutral message; browser checks
+  do not prove screen-reader output; checkout pages were displayed and the
+  Checkout block's own totals refresh served, but no checkout was submitted
+  (orders in section 7 come from `WC_Checkout::create_order()` without payment).
+- Disposable Halls, their tables (sessions included) and the disposable
+  customer with all its user metadata removed; persistent fixture Halls 2/3/4,
+  the main site's WooCommerce session table and the network electronic-limit
+  setting unchanged. Nothing was staged, committed, pushed or deployed.
+
+### Cart Session labels — review corrections, uncommitted (2026-10-02)
+
+- `CustomerCart::session_details()` now also returns non-list item data
+  (`! array_is_list( $item_data )`, right after `! is_array( $item_data )`)
+  exactly as received, before `CartSelection::line()` or any database read.
+  New regressions on a verified Package line — an associative and a sparse
+  array (identical result with keys, no Bingo entry, no PHP warning, zero
+  queries) and a list control (its entry kept, one Bingo entry, 14 queries) —
+  failed six times against the previous guard (an entry appended at key `0` /
+  `3`, 14 queries each) and pass now.
+- Coverage wording corrected (the overstated "six displays at 1440, 375 and
+  320px" was in the cart architecture document): the browser stage renders
+  five displays and checks the entry's text, placement and overflow at 1440,
+  375 and 320px — Cart, Checkout and Mini-Cart blocks, classic cart and
+  classic checkout review. The classic mini-cart is checked only through
+  cart-fragments HTML parsed into a detached document (text, escaping and
+  markup order, not responsive layout). Fixed in
+  `docs/architecture/customer-cart-increment-1.md` and in two browser-suite
+  strings; no visual fixture or Mini-Cart change.
+- Fresh guarded `bingocommerce_state_recon` results: purchase suite
+  **566 / 0** without the browser stage and **569 / 0** with it (browser stage
+  **1087 / 0** over 379 live php-cgi requests; same pre-existing overflow notes
+  as above). `php -l` on the changed PHP files, `node --check` on the browser
+  script and `git diff --check` pass. Disposable Halls (tables included) and
+  the disposable customer with all its user metadata removed; persistent
+  fixture Halls 2/3/4, the main site's WooCommerce session table and the
+  network electronic-limit setting unchanged. Nothing was staged, committed,
+  pushed or deployed.

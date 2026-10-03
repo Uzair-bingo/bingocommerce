@@ -36,7 +36,8 @@ Request -> hallname.parent-domain.com
            cart-extension route, JavaScript only) is implemented (2026-10-02),
            with the reference two-column layout, each Package's "What's
            included" and the ordinary Shop listing only merchandise (same-day
-           addition); Bingo cart-line labels remain pending
+           addition); Package cart lines show their own Bingo Session as
+           native cart item data (same-day addition, display only)
         -> order records exact Session, Package, add-on links/quantities and
            saved digital-face totals by Game Type; Woo line amounts, discounts
            and taxes remain the financial record (BR-083)

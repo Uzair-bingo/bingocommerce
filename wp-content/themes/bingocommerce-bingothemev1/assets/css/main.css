@@ -737,6 +737,10 @@ a.visit-contact__item:hover { color: var(--color-blue-dark); }
 }
 .wc-block-components-button:not(.is-link):hover { background: var(--color-navy); color: #fff; }
 .wc-block-components-product-name { color: var(--color-navy); font-weight: 600; }
+/* Cart line details (item data such as the Bingo Session label): a long unbroken value, e.g. a time zone
+   name, wraps within its own column instead of widening the line (measured at 320–375px, 2026-10-02). */
+.wc-block-components-product-details__value,
+.woocommerce td.product-name dl.variation dd { overflow-wrap: anywhere; }
 
 .woocommerce-store-notice, p.demo_store { background: var(--color-navy); font-size: 14px; }
 

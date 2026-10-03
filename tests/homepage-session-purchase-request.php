@@ -21,18 +21,30 @@
  *   GET  /                                   homepage (bc_session, bc_date, bc_month)
  *   GET  /?post_type=product&s=<text>        WooCommerce's product search
  *   GET  <BC_HSP_CART_PATH>                  the fixture's cart page (Cart block or classic shortcode)
+ *   GET  <BC_HSP_CHECKOUT_PATH>              the fixture's checkout page (Checkout block or classic
+ *                                            shortcode); cart and checkout also accept the homepage's own
+ *                                            bc_session, bc_date and bc_month parameters, which must
+ *                                            never change what the cart shows
+ *   GET  <BC_HSP_MINICART_PATH>              a fixture page holding WooCommerce's Mini-Cart block
  *   GET  <BC_HSP_SHOP_PATH>                  the Shop (product archive)
  *   GET  <BC_HSP_CATEGORY_PATH>              the fixture's product category archive
  *   GET  /wp-json/wc/store/v1/cart           (or ?rest_route=, as rest_url() builds it)
  *   POST /wp-json/wc/store/v1/cart/extensions   JSON
  *   POST /wp-json/wc/store/v1/cart/add-item     JSON, merchandise seeding only
+ *   POST /wp-json/wc/store/v1/checkout?__experimental_calc_totals=true&_locale=site
+ *        JSON with X-HTTP-Method-Override: PUT or PATCH only — the Checkout block's own
+ *        totals refresh, which WooCommerce 11.1.2 serves without placing an order
  *   POST /?wc-ajax=get_refreshed_fragments
+ *   POST /?wc-ajax=update_order_review       the classic checkout's own review refresh (never ?wc-ajax=checkout)
  *
  * Environment: BC_TEST_DB=bingocommerce_state_recon BC_FIXTURE_CGI=1
  * BC_FIXTURE_WOOCOMMERCE=1 BC_HSP_SITE BC_HSP_OWNER BC_HSP_CART_PATH, optionally
- * BC_HSP_SHOP_PATH and BC_HSP_CATEGORY_PATH, plus the CGI request variables
- * (HTTP_HOST, REQUEST_URI, QUERY_STRING, REQUEST_METHOD, HTTP_COOKIE,
- * HTTP_NONCE, CONTENT_TYPE, CONTENT_LENGTH).
+ * BC_HSP_CHECKOUT_PATH, BC_HSP_MINICART_PATH, BC_HSP_SHOP_PATH and
+ * BC_HSP_CATEGORY_PATH, plus the CGI request variables (HTTP_HOST, REQUEST_URI,
+ * QUERY_STRING, REQUEST_METHOD, HTTP_COOKIE, HTTP_NONCE, CONTENT_TYPE,
+ * CONTENT_LENGTH). BC_HSP_ITEM_NOTES=1 adds two fixture item-data entries to
+ * every cart line, one before and one after the Bingo Session entry (priorities
+ * 5 and 200), so the browser can check that other metadata keeps its place.
  */
 declare(strict_types=1);
 
@@ -54,14 +66,19 @@ $bc_hsp_value  = static fn( string $key ): string => is_string( $_GET[ $key ] ??
 $bc_hsp_json   = 0 === strpos( (string) ( $_SERVER['CONTENT_TYPE'] ?? '' ), 'application/json' );
 $bc_hsp_kind   = null;
 $bc_hsp_route  = null;
+// The Checkout block's own totals refresh: a PUT sent as POST with X-HTTP-Method-Override (WordPress apiFetch).
+// WooCommerce 11.1.2 serves it from get_route_update_response(), which places no order; a plain POST is never served.
+$bc_hsp_calc_totals = [ '__experimental_calc_totals', '_locale' ] === $bc_hsp_keys && 'true' === $bc_hsp_value( '__experimental_calc_totals' ) && 'site' === $bc_hsp_value( '_locale' )
+	&& in_array( strtoupper( (string) ( $_SERVER['HTTP_X_HTTP_METHOD_OVERRIDE'] ?? '' ) ), [ 'PUT', 'PATCH' ], true );
 if ( '/' === $bc_hsp_path && [ 'rest_route' ] === $bc_hsp_keys ) {
 	$bc_hsp_route = $bc_hsp_value( 'rest_route' );
-} elseif ( 0 === strpos( $bc_hsp_path, '/wp-json/' ) && [] === $bc_hsp_keys ) {
+} elseif ( 0 === strpos( $bc_hsp_path, '/wp-json/' ) && ( [] === $bc_hsp_keys || $bc_hsp_calc_totals ) ) {
 	$bc_hsp_route = substr( $bc_hsp_path, strlen( '/wp-json' ) );
 }
 if ( null !== $bc_hsp_route ) {
-	if ( ( 'GET' === $bc_hsp_method && '/wc/store/v1/cart' === $bc_hsp_route )
-		|| ( 'POST' === $bc_hsp_method && $bc_hsp_json && in_array( $bc_hsp_route, [ '/wc/store/v1/cart/extensions', '/wc/store/v1/cart/add-item' ], true ) ) ) {
+	if ( ( 'GET' === $bc_hsp_method && '/wc/store/v1/cart' === $bc_hsp_route && [] === array_diff( $bc_hsp_keys, [ 'rest_route' ] ) )
+		|| ( 'POST' === $bc_hsp_method && $bc_hsp_json && ! $bc_hsp_calc_totals && in_array( $bc_hsp_route, [ '/wc/store/v1/cart/extensions', '/wc/store/v1/cart/add-item' ], true ) )
+		|| ( 'POST' === $bc_hsp_method && $bc_hsp_json && $bc_hsp_calc_totals && '/wc/store/v1/checkout' === $bc_hsp_route ) ) {
 		$bc_hsp_kind = 'rest';
 	}
 } elseif ( '/' === $bc_hsp_path ) {
@@ -69,12 +86,17 @@ if ( null !== $bc_hsp_route ) {
 		$bc_hsp_kind = 'document';
 	} elseif ( 'GET' === $bc_hsp_method && [ 'post_type', 's' ] === $bc_hsp_keys && 'product' === $bc_hsp_value( 'post_type' ) ) {
 		$bc_hsp_kind = 'document';
-	} elseif ( 'POST' === $bc_hsp_method && [ 'wc-ajax' ] === $bc_hsp_keys && 'get_refreshed_fragments' === $bc_hsp_value( 'wc-ajax' ) ) {
+	} elseif ( 'POST' === $bc_hsp_method && [ 'wc-ajax' ] === $bc_hsp_keys && in_array( $bc_hsp_value( 'wc-ajax' ), [ 'get_refreshed_fragments', 'update_order_review' ], true ) ) {
 		$bc_hsp_kind = 'document';
 	}
-} elseif ( 'GET' === $bc_hsp_method && [] === $bc_hsp_keys
-	&& in_array( $bc_hsp_path, array_values( array_filter( [ (string) getenv( 'BC_HSP_CART_PATH' ), (string) getenv( 'BC_HSP_SHOP_PATH' ), (string) getenv( 'BC_HSP_CATEGORY_PATH' ) ], static fn( string $path ): bool => 1 === preg_match( '#\A/[a-z0-9/-]*\z#', $path ) && '/' !== $path ) ), true ) ) {
-	$bc_hsp_kind = 'document';
+} elseif ( 'GET' === $bc_hsp_method ) {
+	$bc_hsp_page  = static fn( string $name ): string => 1 === preg_match( '#\A/[a-z0-9/-]*\z#', (string) getenv( $name ) ) && '/' !== (string) getenv( $name ) ? (string) getenv( $name ) : '';
+	$bc_hsp_plain = array_values( array_filter( [ $bc_hsp_page( 'BC_HSP_CART_PATH' ), $bc_hsp_page( 'BC_HSP_CHECKOUT_PATH' ), $bc_hsp_page( 'BC_HSP_MINICART_PATH' ), $bc_hsp_page( 'BC_HSP_SHOP_PATH' ), $bc_hsp_page( 'BC_HSP_CATEGORY_PATH' ) ] ) );
+	$bc_hsp_cart  = array_values( array_filter( [ $bc_hsp_page( 'BC_HSP_CART_PATH' ), $bc_hsp_page( 'BC_HSP_CHECKOUT_PATH' ) ] ) );
+	if ( ( [] === $bc_hsp_keys && in_array( $bc_hsp_path, $bc_hsp_plain, true ) )
+		|| ( [] === array_diff( $bc_hsp_keys, [ 'bc_session', 'bc_date', 'bc_month' ] ) && in_array( $bc_hsp_path, $bc_hsp_cart, true ) ) ) {
+		$bc_hsp_kind = 'document';
+	}
 }
 if ( null === $bc_hsp_kind ) {
 	bc_hsp_refuse( $bc_hsp_method . ' ' . (string) ( $_SERVER['REQUEST_URI'] ?? '' ) );
@@ -95,6 +117,18 @@ function bc_hsp_load_plugins(): void {
 	foreach ( [ 'bingocommerce-core/bingocommerce-core.php', 'bingocommerce-catalog/bingocommerce-catalog.php', 'bingocommerce-sessions/bingocommerce-sessions.php' ] as $file ) {
 		require_once ABSPATH . 'wp-content/plugins/' . $file;
 	}
+	if ( '1' === getenv( 'BC_HSP_ITEM_NOTES' ) ) {
+		add_filter( 'woocommerce_get_item_data', 'bc_hsp_note_before', 5, 2 );
+		add_filter( 'woocommerce_get_item_data', 'bc_hsp_note_after', 200, 2 );
+	}
+}
+
+/** Fixture item-data entries around the Bingo Session entry (another extension's metadata). */
+function bc_hsp_note_before( $data, $item ) {
+	return is_array( $data ) ? array_merge( $data, [ [ 'key' => 'Fixture before', 'value' => 'kept' ] ] ) : $data;
+}
+function bc_hsp_note_after( $data, $item ) {
+	return is_array( $data ) ? array_merge( $data, [ [ 'key' => 'Fixture after', 'value' => 'kept' ] ] ) : $data;
 }
 $GLOBALS['wp_filter']['muplugins_loaded'][ PHP_INT_MIN ][] = [ 'function' => 'bc_hsp_load_plugins', 'accepted_args' => 0 ];
 
