@@ -460,7 +460,7 @@ final class CustomerElectronicLimitsTest {
 			$response = $this->request( '/checkout', [ 'billing_address' => $address ] );
 			$this->same( $allowed, $reached, $label . ': Store API reaches post-validation boundary only when valid' );
 			$this->same( $allowed ? 418 : 409, $response->get_status(), $label . ': Store API checkout response ' . ( 409 === $response->get_status() || 418 === $response->get_status() ? '' : wp_json_encode( $response->get_data() ) ) );
-			if ( $configuration_failure ) { $this->ok( str_contains( wp_json_encode( $response->get_data() ), 'The Hall electronic-face limit could not be verified.' ), $label . ': Store API reports configuration failure through its existing cart-error envelope' ); }
+			if ( $configuration_failure ) { $this->ok( str_contains( wp_json_encode( $response->get_data() ), 'be purchased at this Hall right now. Please try again later, or choose a Paper Package.' ), $label . ': Store API reports configuration failure through its existing cart-error envelope' ); }
 		} finally { remove_action( 'woocommerce_store_api_cart_errors', $stop_api, PHP_INT_MAX ); }
 		wc_clear_notices(); WC()->cart->cart_context = 'shortcode';
 	}

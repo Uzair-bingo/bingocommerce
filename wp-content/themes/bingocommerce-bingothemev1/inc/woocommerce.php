@@ -56,6 +56,28 @@ final class WooCommerce {
 	}
 
 	/**
+	 * The Cart and Checkout blocks print no stored WooCommerce notices, yet the
+	 * Store API re-raises every stored error on each checkout attempt (409) until
+	 * a page prints it, e.g. the notice WooCommerce stores when it removes an item
+	 * that is no longer purchasable while loading the cart. Print them once with
+	 * WooCommerce's own output, before the block renders and reads the cart, so
+	 * the block never shows the same notice again. Classic pages and endpoints
+	 * (order received, order pay) already print their notices.
+	 */
+	public static function block_page_notices(): void {
+		if ( ! function_exists( 'woocommerce_output_all_notices' ) || is_wc_endpoint_url() ) {
+			return;
+		}
+		$page = (int) get_the_ID();
+		foreach ( [ 'cart' => 'woocommerce/cart', 'checkout' => 'woocommerce/checkout' ] as $type => $block ) {
+			if ( $page > 0 && wc_get_page_id( $type ) === $page && has_block( $block, $page ) ) {
+				woocommerce_output_all_notices();
+				return;
+			}
+		}
+	}
+
+	/**
 	 * WooCommerce 7.8+ no longer loads cart fragments on every page; the header
 	 * count relies on them after classic AJAX add-to-cart and for stale counts.
 	 */

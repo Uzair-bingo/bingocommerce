@@ -54,7 +54,10 @@ final class CartSelection {
 	/** @return array<string,mixed>|\WP_Error */
 	private static function package( int $session_id, int $package_id ) {
 		if ( ! class_exists( CustomerCartCatalog::class ) || ! class_exists( HallContext::class ) || ! HallContext::is_hall() || ! Migrations::is_current() ) { return self::error(); }
-		if ( true !== CustomerPackageEligibility::is_available( $session_id, $package_id ) ) { return self::error(); }
+		$available = CustomerPackageEligibility::is_available( $session_id, $package_id );
+		// An unreadable dependency is an established read failure, not a closed Session or Package.
+		if ( is_wp_error( $available ) ) { return self::unverified(); }
+		if ( true !== $available ) { return self::error(); }
 		$package = ( new PackageGateway() )->getForCustomerPackageEligibility( $package_id );
 		return is_array( $package ) ? $package : self::error();
 	}
@@ -104,7 +107,10 @@ final class CartSelection {
 		foreach ( $contents as $key => $item ) {
 			$line = self::line( $item );
 			if ( is_wp_error( $line ) ) {
-				$errors->add( 'bc_cart_invalid', self::error()->get_error_message() );
+				self::add_once( $errors, 'bc_cart_invalid', self::unreadable( $line ) ? self::unverified() : self::error() );
+				// An add-on line that is still in the cart is reported here, never also as missing from its Package.
+				$meta = $item[ self::META ] ?? null;
+				if ( self::valid_meta( $meta ) && 'addon' === $meta['role'] ) { $children[ $meta['parent_key'] ][] = $meta['addon_id']; }
 				continue;
 			}
 			if ( 'regular' !== $line['kind'] ) {
@@ -117,11 +123,11 @@ final class CartSelection {
 					$parent = $contents[ $meta['parent_key'] ] ?? [];
 					$parent_meta = $parent[ self::META ] ?? null;
 					if ( ! self::valid_meta( $parent_meta ) || 'package' !== $parent_meta['role'] || isset( $addons[ $meta['addon_id'] ] ) ) {
-						$errors->add( 'bc_cart_invalid', self::error()->get_error_message() );
+						self::add_once( $errors, 'bc_cart_invalid', self::error() );
 						continue;
 					}
 					foreach ( [ 'site_id', 'selection_id', 'session_id', 'package_id' ] as $field ) {
-						if ( $meta[ $field ] !== $parent_meta[ $field ] ) { $errors->add( 'bc_cart_invalid', self::error()->get_error_message() ); }
+						if ( $meta[ $field ] !== $parent_meta[ $field ] ) { self::add_once( $errors, 'bc_cart_invalid', self::error() ); }
 					}
 					$addons[ $meta['addon_id'] ] = true;
 					$selected_addons[ $meta['addon_id'] ] = (int) $item['quantity'];
@@ -129,13 +135,13 @@ final class CartSelection {
 				}
 				$product = wc_get_product( $line['product_id'] );
 				if ( ! $product instanceof \WC_Product || ! $product->is_type( 'simple' ) ) {
-					$errors->add( 'bc_cart_invalid', self::error()->get_error_message() );
+					self::add_once( $errors, 'bc_cart_invalid', self::error() );
 					continue;
 				}
 				$product = clone $product;
 				if ( isset( $line['price'] ) ) { self::relation_priced( $product, $line['price'] ); }
 				if ( ! $product->is_purchasable() || ! $product->is_in_stock() || ! $product->has_enough_stock( $item['quantity'] ) || ( $product->is_sold_individually() && 1 !== (int) $item['quantity'] ) ) {
-					$errors->add( 'bc_cart_invalid', self::error()->get_error_message() );
+					self::add_once( $errors, 'bc_cart_invalid', self::error() );
 				}
 				$line['product'] = $product;
 			}
@@ -145,7 +151,7 @@ final class CartSelection {
 		foreach ( $expected as $key => $ids ) {
 			$actual = $children[ $key ] ?? [];
 			sort( $ids ); sort( $actual );
-			if ( $ids !== $actual ) { $errors->add( 'bc_cart_incomplete', self::error()->get_error_message() ); }
+			if ( $ids !== $actual ) { $errors->add( 'bc_cart_incomplete', __( 'Part of your Bingo selection is no longer in your cart. Remove the Bingo Package from your cart, then choose it again with the add-ons you want.', 'bingocommerce-sessions' ) ); }
 		}
 		if ( ! $errors->has_errors() && 1 === $packages ) {
 			$faces = self::electronic_faces( $package_id, $selected_addons );
@@ -190,6 +196,23 @@ final class CartSelection {
 	}
 
 	public static function error(): \WP_Error {
-		return new \WP_Error( 'bc_cart_selection_invalid', __( 'This Bingo selection cannot be verified for purchase. Remove it and select an available Session, Package and eligible add-ons again.', 'bingocommerce-sessions' ) );
+		return new \WP_Error( 'bc_cart_selection_invalid', __( 'This Bingo selection is no longer available. Remove the Bingo Package from your cart, then choose an available Session and Package.', 'bingocommerce-sessions' ) );
+	}
+
+	/** Same code as error(), so callers mapping codes are unaffected; only the wording says to try again. */
+	private static function unverified(): \WP_Error {
+		return new \WP_Error( 'bc_cart_selection_invalid', __( 'We couldn’t check your Bingo selection right now. Please try again in a moment.', 'bingocommerce-sessions' ), [ 'unverified' => true ] );
+	}
+
+	/** Only an established read failure; any other refusal reads as no longer available. */
+	private static function unreadable( \WP_Error $error ): bool {
+		$data = $error->get_error_data();
+		return ( is_array( $data ) && true === ( $data['unverified'] ?? null ) ) || 'bc_cart_catalog_unavailable' === $error->get_error_code();
+	}
+
+	/** Several lines failing for the same reason are one customer error. */
+	private static function add_once( \WP_Error $errors, string $code, \WP_Error $cause ): void {
+		$message = $cause->get_error_message();
+		if ( ! in_array( $message, $errors->get_error_messages( $code ), true ) ) { $errors->add( $code, $message ); }
 	}
 }

@@ -785,6 +785,99 @@ historical backfill, or zero-total policy is implemented. Future redemption must
 coordinate its mutation with terminal evidence, not rely on a previously read
 or displayed QR. Provider-dashboard/status-only refund gaps remain unchanged.
 
+## Checkout recovery, reorder and error wording (2026-10-03)
+
+**Stored notices on block pages.** When a Session closes, the next cart load
+can make WooCommerce remove an add-on that is only purchasable at its
+relationship price, with a stored error notice. The Cart and Checkout blocks
+never print stored notices, and Store API checkout converts every stored error
+into a 409 on each attempt, so even a merchandise-only cart could not be
+checked out until a classic page was visited. BingoThemev1's `page.php` now
+calls `WooCommerce::block_page_notices()`: on the Hall's own block Cart or
+Checkout page (not an endpoint such as order received or order pay) it prints
+WooCommerce's native `woocommerce_output_all_notices()` once, before the block
+reads the cart, so the notice is shown and consumed once. Nothing is cleared or
+suppressed globally; current Bingo validation still rejects an invalid
+selection.
+
+**Native "Order again".** `CustomerReorder` (Sessions) decides each
+`order_again` request the way WooCommerce would, from the current Hall's own
+order tables (signed-in customer, `woocommerce-order_again` nonce, valid order
+status, `order_again` ownership capability), and acts at two points:
+
+- `wp_loaded` priority 5, explicitly before WooCommerce's cart loader
+  (`WC_Cart_Session::get_cart_from_session`, priority 10), on frontend requests
+  that have WooCommerce's cart; it never loads the cart itself. An order with
+  Bingo purchase markers (order facts or any line's `bc_purchase`,
+  `bc_bingo_session` or `bc_package`, the markers `CustomerRefund` uses),
+  including a mixed order, redirects to the cart with the cart unchanged and a
+  notice linking to the Hall's Session calendar (`home_url( '/' ) . '#calendar'`).
+  A request WooCommerce would refuse (another customer's order, an unknown or
+  non-order ID, a malformed ID string) redirects with the cart unchanged and
+  says nothing about any order; WooCommerce 11.1.2 would otherwise empty the
+  cart with a PHP warning or end with a fatal error.
+- `woocommerce_load_cart_from_session` priority 1, at the top of every cart
+  load before WooCommerce reads the request: the same Bingo and refused
+  requests lose `order_again`, with no redirect or notice. This covers Store
+  API (REST) requests, which have no cart at `wp_loaded` and load it later from
+  inside the Store API (`CartController::load_cart()` → `get_cart()`); the
+  independent security review of 2026-10-03 found that gap.
+
+Before any redirect `order_again` is removed from the request: `exit` runs
+WooCommerce's shutdown hook (`WC_Cart_Session::maybe_set_cart_cookies` →
+`get_cart()`), which loads the cart and would otherwise still reorder (or fail)
+before the session, and the notice, are saved; a real-request check found
+exactly that.
+
+Two kinds of bad input are handled differently. An invalid nonce *string* is
+rejected the way WooCommerce rejects it: the guard leaves the request alone and
+WooCommerce ignores it (cart unchanged, no redirect). Array-valued
+`order_again` and/or `_wpnonce` parameters are handled *defensively*: natively
+an array nonce raises "Array to string conversion" and an array order ID is
+coerced by `absint()` to order 1, so the guard treats them as refused (frontend:
+redirect to the cart; any cart load: parameter removed), without a nonce or
+ownership decision and without any notice. Merchandise-only orders reorder
+natively. The native button is replaced by a wrapper (same hook and priority,
+only where WooCommerce still registers it) that omits it for Bingo orders.
+
+**One message per distinct error.** `CartSelection::inspect()` adds each
+message once per code. A read failure whose cause is established (eligibility's
+unreadable result, Catalog's `bc_cart_catalog_unavailable`) is worded as
+temporary, keeping the `bc_cart_selection_invalid` / `bc_cart_invalid` codes so
+the homepage's code mapping is unchanged; anything else reads as no longer
+available. An add-on line still in the cart is no longer also reported as
+missing from its Package (rejection is unchanged: the line's own error remains).
+Classic `checkout_errors()` drops the identical notice `classic_errors()` stored
+earlier in the same request, so each Bingo error shows once while its code
+stays in WooCommerce's validation errors. WooCommerce's own errors, field links
+and statuses are untouched. Recorder refusal still stops before payment and
+keeps the draft; its message says only that payment was not attempted.
+
+Wording (customer-facing): unavailable selection, temporary check failure,
+incomplete selection, digital face limit exceeded, digital bingo unavailable at
+this Hall, digital faces not confirmed, Hall Packages not checked, recorder
+refusal and the reorder notice; see `CartSelection`, `ElectronicLimit`,
+`CustomerCartCatalog`, `CustomerOrder` and `CustomerReorder`.
+
+**CSS.** On order received and My Account order views
+(`.woocommerce-table--order-details .wc-item-meta`), an item whose value is a
+single paragraph (the Bingo Session label) flows with its label as one line of
+text, with `overflow-wrap: anywhere` (WooCommerce floats the label beside a
+block value, whose first word would otherwise be split to fit beside it), so
+only a word too long for the column, such as a time zone name, breaks. The rules
+are scoped with `li:has(> p:only-of-type)`: metadata with several paragraphs
+keeps WooCommerce's own block paragraphs and wrapping (browsers without `:has()`
+fall back to WooCommerce's layout). At ≤360px the Cart block row grid becomes
+`64px minmax(0, 1fr)` (WooCommerce's fixed `80px 132px` columns overflowed the
+288px content box at 320px). Nothing changes above 360px; labels are not
+truncated or rewritten. `tests/checkout-recovery.php` checks both order pages
+at 320, 375 and 1440px through real php-cgi requests when
+`BC_CHECKOUT_RECOVERY_BROWSER=1`.
+
+**Pending (not implemented):** invalid-selection price fallback; the fixed "1"
+Package quantity display; missing-ticket feedback and offline-payment QR
+issuance; the old-order payment policy and suspension access; coupons (last).
+
 ## Verification and next boundary
 
 Run `BC_TEST_DB=bingocommerce_state_recon php tests/customer-cart-increment-1.php`.

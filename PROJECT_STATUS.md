@@ -3247,6 +3247,12 @@ Everything below is tracked work that is NOT a blocker to that demo.
    copy runs until that deferred mechanism is separately designed.
 8. Package hard delete, including BR-065's mandatory linked-product
    disposition. No hard delete exists in any Catalog entity today.
+9. Checkout review follow-ups still pending after the 2026-10-03 recovery
+   increment (not implemented): the invalid-selection price fallback, the
+   fixed "1" Package quantity display, missing-ticket feedback and
+   offline-payment QR issuance, the old-order payment policy and suspension
+   access, and coupons (last). The header capture, repeated time text and the
+   bank-transfer/QR wording remain clarifications only.
 
 ## Production Hardening / Technical Follow-ups
 1. Platform Admin network identity Disable/Reactivate/Permanent Delete remains
@@ -4397,3 +4403,97 @@ customer selection screens.
   fixture Halls 2/3/4, the main site's WooCommerce session table and the
   network electronic-limit setting unchanged. Nothing was staged, committed,
   pushed or deployed.
+
+### Checkout recovery, Bingo reorder and error wording — branch `bingotheme`, uncommitted (2026-10-03)
+
+- Started from clean HEAD `1d18ffb`. Implements the confirmed items of the
+  2026-10-03 checkout review. Each functional defect was reproduced first by
+  the new `tests/checkout-recovery.php` (**32 passed / 39 failed** before any
+  production change). No schema, setting, route, dependency, template
+  override, shipping method, pricing, payment/ticket or Hall configuration
+  change; saved order facts unchanged.
+- Recovery: a stored WooCommerce removal notice (an add-on purchasable only at
+  its relationship price, removed while the cart loads after its Session
+  closed) made every Store API checkout fail with 409 until a classic page
+  printed it, so even merchandise-only carts were stuck. BingoThemev1
+  `page.php` now calls `WooCommerce::block_page_notices()`, which prints
+  WooCommerce's native notices once on the Hall's own block Cart and Checkout
+  pages (not endpoints), before the block reads the cart. Nothing is cleared
+  globally; current Bingo validation still rejects.
+- Reorder: new `BingoCommerce\Sessions\CustomerReorder`, a `wp_loaded`
+  priority 5 guard (WooCommerce's loader is at 10) that never loads the cart
+  and acts only where WooCommerce would (its cart present, signed in, valid
+  native nonce). Orders with Bingo purchase markers, mixed orders included,
+  redirect to the cart unchanged with a notice linking to the Session
+  calendar. Requests WooCommerce would refuse (another customer's, unknown,
+  non-order or malformed IDs; previously an emptied cart plus PHP warning, or
+  a fatal error) redirect with the cart unchanged and nothing disclosed.
+  Before redirecting it removes `order_again` from the request: the first
+  real-request preview showed WooCommerce's shutdown hook
+  (`maybe_set_cart_cookies` → `get_cart()`) still acting on it after the
+  guard's exit (missing order: fatal error; Bingo order: notice lost), and the
+  regression now models that shutdown load. Merchandise-only reorders stay
+  native; the native button is omitted for Bingo orders.
+- Errors: one message per distinct cause and code; established read failures
+  are worded as temporary (codes unchanged, so the homepage mapping is
+  unaffected); an add-on line still in the cart is not also reported as
+  missing; classic checkout no longer repeats the notice `classic_errors()`
+  stored. Plain wording for unavailable, temporary, incomplete,
+  electronic-limit, Catalog and recorder messages. The recorder still stops
+  before payment and keeps the draft.
+- CSS (BingoThemev1 `main.css`): on order received and My Account order views
+  the item-meta label and value flow inline with `overflow-wrap: anywhere`
+  (with WooCommerce's floated label, the value's first word was split beside
+  it), so only the too-long zone name breaks; at ≤360px the Cart block row
+  grid is `64px minmax(0, 1fr)`. Labels are not truncated or rewritten.
+- Final guarded `bingocommerce_state_recon` results on the final code:
+  checkout recovery **82 / 0** (current and persistent cart preserved on every blocked or refused reorder), customer cart **140 / 0**, electronic limits
+  **679 / 0**, order recording **1098 / 0** (also **1098 / 0** with Digital
+  Tickets loaded), digital entitlement snapshot **1330 / 0**, purchase suite
+  **569 / 0** with its browser stage (**1087 / 0**, 379 live php-cgi requests),
+  storefront **106 / 0**. `php -l`, `node --check` and `git diff --check`
+  pass. Real-request previews (disposable harness Halls): recovery for Cart
+  arrival, direct Checkout arrival and a Session closing mid-checkout; reorder
+  of Bingo, missing, malformed and merchandise orders; Cart page overflow at
+  320px 12px → 0 (unchanged at 361/375/1440); order views at 320/375px
+  114/59px → 0.
+- Fixture cleanup: every disposable Hall (tables included) and customer was
+  removed, including the residue of one purchase-suite run stopped
+  mid-browser-stage (token-verified Halls 1513/1514 and customer 870). The
+  fixture table list, Halls 1–4, users and network electronic limit (48), and
+  checksums of all 439 development database tables match the pre-run
+  baseline. Nothing was staged, committed, pushed or deployed.
+- Pending: see "Before Customer-Facing Digital Launch" item 9 (coupons last).
+  The reorder guard is security-relevant (nonce/ownership); per `CLAUDE.md`
+  it needs the code-reviewer subagent before merging (not yet run).
+
+### Checkout recovery follow-up — order metadata CSS, malformed reorder input, security review, uncommitted (2026-10-03)
+
+- Order views: the inline label/value rules and `overflow-wrap: anywhere` are
+  now scoped to single-paragraph metadata (`li:has(> p:only-of-type)`), so
+  multi-paragraph merchandise metadata keeps WooCommerce's block paragraphs.
+  New browser stage in `tests/checkout-recovery.php`
+  (`BC_CHECKOUT_RECOVERY_BROWSER=1`; `tests/checkout-recovery-browser.cjs` and
+  `tests/checkout-recovery-request.php`, real php-cgi requests) checks Order
+  Received and the My Account order view at 320/375/1440px with the long Bingo
+  Session label and two-paragraph "Gift message" metadata. It failed 12 times
+  against the previous CSS (paragraphs inline) and passes now.
+- Reorder: array-valued `order_again`, `_wpnonce` and both are covered through
+  the guard and WooCommerce's later cart loads (no warning, no native reorder,
+  session and persistent carts unchanged, no notice). The documentation now
+  separates invalid-string nonce rejection (left to WooCommerce) from the
+  defensive handling of array input.
+- Security review: no `code-reviewer` subagent is defined in this project or
+  user configuration, so the `CLAUDE.md` requirement remains unfulfilled. An
+  independent read-only review by a general-purpose subagent was run instead.
+  It confirmed one low-severity gap: Store API requests had no guard, so a
+  customer could natively reorder their own Bingo order into their own cart
+  (checkout still blocked it). Fixed with a `woocommerce_load_cart_from_session`
+  priority 1 hook that removes `order_again` for Bingo and refused requests;
+  regression fails 6 times without it.
+- Results (guarded `bingocommerce_state_recon`): checkout recovery
+  **171 / 0** with the browser stage; customer cart **140 / 0**, electronic
+  limits **679 / 0**, order recording **1098 / 0** (also with Digital
+  Tickets), entitlement snapshot **1330 / 0**, storefront **106 / 0**, purchase
+  suite **569 / 0** with its browser stage (**1087 / 0**). Fixtures cleaned up.
+  Nothing staged, committed, pushed or deployed.

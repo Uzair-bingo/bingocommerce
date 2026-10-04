@@ -662,7 +662,7 @@ final class HomepageSessionPurchaseTest {
 			}
 			$this->clear( $a['merch'] );
 			delete_site_option( ElectronicLimit::PLATFORM_OPTION );
-			$this->rejected( $this->extension( $this->selection( $s, $p['digital'], [] ) ), 'bc_electronic_limit_unavailable', 'The Hall electronic-face limit could not be verified. Digital selections cannot be purchased until the configuration is corrected.', 1, 'unreadable electronic-limit configuration' );
+			$this->rejected( $this->extension( $this->selection( $s, $p['digital'], [] ) ), 'bc_electronic_limit_unavailable', 'Digital bingo can’t be purchased at this Hall right now. Please try again later, or choose a Paper Package.', 1, 'unreadable electronic-limit configuration' );
 			$this->same( 200, $this->extension( $this->selection( $s, $p['paper'], [] ) )->get_status(), 'Paper selection does not depend on the electronic limit' );
 			update_site_option( ElectronicLimit::PLATFORM_OPTION, 48 );
 

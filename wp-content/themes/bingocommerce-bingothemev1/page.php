@@ -19,6 +19,7 @@ while ( have_posts() ) :
 		</header>
 		<div class="entry-content">
 			<?php
+			\BingoCommerce\BingoThemeV1\WooCommerce::block_page_notices();
 			the_content();
 			wp_link_pages();
 			?>

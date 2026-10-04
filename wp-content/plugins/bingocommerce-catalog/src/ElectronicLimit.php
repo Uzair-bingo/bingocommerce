@@ -72,7 +72,7 @@ final class ElectronicLimit {
 			if ( $total > $limit ) {
 				return new \WP_Error(
 					'bc_electronic_limit_exceeded',
-					__( 'This selection exceeds the Hall electronic-face limit for a Game Type. Reduce digital add-ons or choose another Bingo Package.', 'bingocommerce-catalog' ),
+					__( 'Your selection exceeds this Hall’s digital bingo face limit. Reduce the digital add-ons or choose a different Package.', 'bingocommerce-catalog' ),
 					[ 'game_type_id' => $game_type_id, 'faces' => $total, 'limit' => $limit ]
 				);
 			}
@@ -102,10 +102,10 @@ final class ElectronicLimit {
 	}
 
 	private static function configuration_error(): \WP_Error {
-		return new \WP_Error( 'bc_electronic_limit_unavailable', __( 'The Hall electronic-face limit could not be verified. Digital selections cannot be purchased until the configuration is corrected.', 'bingocommerce-catalog' ) );
+		return new \WP_Error( 'bc_electronic_limit_unavailable', __( 'Digital bingo can’t be purchased at this Hall right now. Please try again later, or choose a Paper Package.', 'bingocommerce-catalog' ) );
 	}
 
 	private static function dependency_error(): \WP_Error {
-		return new \WP_Error( 'bc_electronic_faces_unknown', __( 'The digital faces in this Bingo selection could not be verified. Please select an available Package and eligible add-ons again.', 'bingocommerce-catalog' ) );
+		return new \WP_Error( 'bc_electronic_faces_unknown', __( 'We couldn’t confirm the digital bingo in this selection. Remove the Bingo Package from your cart, then choose an available Session and Package.', 'bingocommerce-catalog' ) );
 	}
 }

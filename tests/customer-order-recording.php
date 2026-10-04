@@ -255,7 +255,7 @@ final class CustomerOrderRecordingTest {
 			$old = $wpdb->suppress_errors( true );
 			try {
 				$result = WC()->checkout()->create_order( [ 'payment_method' => 'bacs' ] );
-				$this->ok( is_wp_error( $result ) && str_contains( $result->get_error_message(), 'The Bingo purchase could not be recorded.' ), $case . ': actual classic order creation refuses invalid recorded facts' );
+				$this->ok( is_wp_error( $result ) && str_contains( $result->get_error_message(), 'your Bingo selection couldn’t be saved, so payment wasn’t attempted.' ), $case . ': actual classic order creation refuses invalid recorded facts' );
 			} finally { remove_action( 'woocommerce_checkout_create_order', $change, 99 ); remove_filter( 'query', $break ); $wpdb->suppress_errors( $old ); }
 		}
 		$this->clear();

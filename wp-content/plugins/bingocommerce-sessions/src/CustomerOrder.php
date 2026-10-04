@@ -166,6 +166,6 @@ final class CustomerOrder {
 	}
 
 	private static function refuse(): never {
-		throw new \Exception( __( 'The Bingo purchase could not be recorded. Please review the Session, Package and add-ons before checking out.', 'bingocommerce-sessions' ) );
+		throw new \Exception( __( 'We couldn’t complete checkout because your Bingo selection couldn’t be saved, so payment wasn’t attempted. Please check your cart and try again.', 'bingocommerce-sessions' ) );
 	}
 }

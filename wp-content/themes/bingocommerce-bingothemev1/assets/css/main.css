@@ -741,6 +741,13 @@ a.visit-contact__item:hover { color: var(--color-blue-dark); }
    name, wraps within its own column instead of widening the line (measured at 320–375px, 2026-10-02). */
 .wc-block-components-product-details__value,
 .woocommerce td.product-name dl.variation dd { overflow-wrap: anywhere; }
+/* The same saved label on order received and My Account order views (2026-10-03). A single-paragraph value (the
+   Bingo Session label) flows on one line with its label instead of WooCommerce's floated label beside a block value,
+   whose first word would otherwise be split to fit beside the label: only a word too long for the column, such as a
+   time zone name, breaks. Values with several paragraphs keep WooCommerce's own layout and wrapping unchanged. */
+html .woocommerce-table--order-details td.product-name .wc-item-meta li:has(> p:only-of-type) > .wc-item-meta-label { float: none; display: inline; margin-right: 0; }
+html .woocommerce-table--order-details td.product-name .wc-item-meta li:has(> p:only-of-type) > p { display: inline; }
+html .woocommerce-table--order-details td.product-name .wc-item-meta li:has(> p:only-of-type) { overflow-wrap: anywhere; }
 
 .woocommerce-store-notice, p.demo_store { background: var(--color-navy); font-size: 14px; }
 
@@ -827,6 +834,9 @@ a.visit-contact__item:hover { color: var(--color-blue-dark); }
 	.site-header__inner { gap: 8px; }
 	.site-header .logo--text a { font-size: 16px; }
 	.icon-btn, .support-line { width: 36px; height: 36px; }
+	/* Cart block rows: WooCommerce's fixed 80px + 132px columns are wider than the content box here, so the
+	   line details take the remaining width instead (2026-10-03). WooCommerce's grid is unchanged above 360px. */
+	.entry-content .wc-block-cart table.wc-block-cart-items .wc-block-cart-items__row { grid-template-columns: 64px minmax(0, 1fr); }
 }
 
 @media (prefers-reduced-motion: reduce) {

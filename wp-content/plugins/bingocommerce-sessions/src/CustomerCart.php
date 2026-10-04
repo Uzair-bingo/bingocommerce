@@ -337,10 +337,16 @@ final class CustomerCart {
 		if ( $found->has_errors() ) { $errors->add( 'bc_cart_invalid', $found->get_error_message() ); }
 	}
 
-	/** Classic final posted-checkout validation, before customer/order processing. */
+	/**
+	 * Classic final posted-checkout validation, before customer/order processing.
+	 * WooCommerce adds every message here as a notice, and classic_errors() has
+	 * usually stored the first of them during this request's cart check: drop that
+	 * earlier copy so each Bingo error shows once, with its code kept here.
+	 */
 	public static function checkout_errors( array $data, \WP_Error $errors ): void {
-		if ( ! WC()->cart instanceof \WC_Cart ) { $errors->merge_from( CartSelection::error() ); return; }
-		$errors->merge_from( CartSelection::inspect( WC()->cart->get_cart() )['errors'] );
+		$found = WC()->cart instanceof \WC_Cart ? CartSelection::inspect( WC()->cart->get_cart() )['errors'] : CartSelection::error();
+		self::forget_error_notices( $found->get_error_messages() );
+		$errors->merge_from( $found );
 	}
 
 	public static function validate_update( $passed, $key, $values, $quantity ): bool {
@@ -423,6 +429,17 @@ final class CustomerCart {
 
 	private static function notice( string $message ): void {
 		if ( ! wc_has_notice( $message, 'error' ) ) { wc_add_notice( $message, 'error' ); }
+	}
+
+	/** Remove stored error notices with exactly these texts; every other notice is kept unchanged. */
+	private static function forget_error_notices( array $messages ): void {
+		if ( [] === $messages || ! WC()->session ) { return; }
+		$notices = WC()->session->get( 'wc_notices', [] );
+		if ( ! is_array( $notices ) || ! is_array( $notices['error'] ?? null ) ) { return; }
+		$kept = array_values( array_filter( $notices['error'], static fn( $notice ): bool => ! in_array( is_array( $notice ) ? ( $notice['notice'] ?? null ) : $notice, $messages, true ) ) );
+		if ( count( $kept ) === count( $notices['error'] ) ) { return; }
+		if ( [] === $kept ) { unset( $notices['error'] ); } else { $notices['error'] = $kept; }
+		WC()->session->set( 'wc_notices', [] === $notices ? null : $notices );
 	}
 
 	private static function whole_quantity( mixed $value ): bool {

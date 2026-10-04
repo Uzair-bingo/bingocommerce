@@ -96,7 +96,7 @@ final class CustomerCartCatalog {
 	}
 
 	private static function unavailable(): \WP_Error {
-		return new \WP_Error( 'bc_cart_catalog_unavailable', __( 'The Hall Catalog could not be verified. Please try again before purchasing.', 'bingocommerce-catalog' ) );
+		return new \WP_Error( 'bc_cart_catalog_unavailable', __( 'We couldn’t check this Hall’s Bingo Packages right now. Please try again in a moment.', 'bingocommerce-catalog' ) );
 	}
 
 	private static function ineligible(): \WP_Error {
