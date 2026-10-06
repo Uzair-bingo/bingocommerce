@@ -3240,7 +3240,14 @@ Everything below is tracked work that is NOT a blocker to that demo.
 6. Provider confirmation integration, missed-snapshot recovery/reconciliation,
    and a separately reviewed zero-total checkout boundary. BR-053's normal
    paid-online snapshot event is now `woocommerce_payment_complete`; this
-   does not verify any real gateway webhook or change Woo retries.
+   does not verify any real gateway webhook or change Woo retries. One
+   user-placed local Stripe test-mode order (Star Bingo Hall #71, 2026-10-04)
+   had its payment confirmed natively through `checkout.session.completed`,
+   delivered by temporary Stripe CLI forwarding; its verified WooCommerce status
+   was Processing, with exactly one entitlement and one ticket. Order #70
+   remained pending without webhook delivery and was later cancelled
+   automatically by WooCommerce's hold-stock timeout. Production webhook
+   delivery remains unverified.
 7. Coordinated starter-product catalog copy at provisioning (BR-047, ADR-027);
    Game Types instead follow ADR-035 synchronization. ADR-042 / BR-076 narrow
    this for the automatic-provisioning MVP: no starter Product / Play Product
@@ -3249,9 +3256,11 @@ Everything below is tracked work that is NOT a blocker to that demo.
    disposition. No hard delete exists in any Catalog entity today.
 9. Checkout review follow-ups still pending after the 2026-10-03 recovery
    increment (not implemented): the invalid-selection price fallback, the
-   fixed "1" Package quantity display, missing-ticket feedback and
-   offline-payment QR issuance, the old-order payment policy and suspension
-   access, and coupons (last). The header capture, repeated time text and the
+   fixed "1" Package quantity display, offline-payment QR issuance, the
+   old-order payment policy and suspension access, and coupons (last).
+   Missing-ticket feedback now exists for online card orders only (the
+   2026-10-04 ticket waiting area, uncommitted); offline payments show nothing,
+   as before. The header capture, repeated time text and the
    bank-transfer/QR wording remain clarifications only.
 
 ## Production Hardening / Technical Follow-ups
@@ -4497,3 +4506,429 @@ customer selection screens.
   Tickets), entitlement snapshot **1330 / 0**, storefront **106 / 0**, purchase
   suite **569 / 0** with its browser stage (**1087 / 0**). Fixtures cleaned up.
   Nothing staged, committed, pushed or deployed.
+
+### Digital Bingo ticket waiting area — branch `bingotheme`, uncommitted (2026-10-04)
+
+- Superseded in part (2026-10-05): checks now use the read-only ticket status
+  route (ADR-046; see "Ticket status route for automatic QR updates" below), not
+  page fetches, and guests get automatic QR updates.
+- Context (Star Bingo Hall, site 869, local Stripe test mode): Order #70
+  remained pending because this Stripe Gateway 11.0.0 configuration (Checkout
+  Sessions / Adaptive Pricing) confirms payment in WooCommerce only from the
+  `checkout.session.completed` webhook, and none could reach the local `.test`
+  Hall; WooCommerce's 60-minute hold-stock timeout later cancelled it
+  automatically and a cancellation void marker was recorded. Order #71, paid
+  while temporary Stripe CLI forwarding delivered the test webhooks, had its
+  payment confirmed natively (verified WooCommerce status Processing, not
+  Completed) with exactly one entitlement and one ticket;
+  its first Order Received page loaded about a second before the ticket existed
+  and the QR appeared after a refresh. The Hall's original test webhook secret
+  was restored and verified; forwarding was stopped.
+- Order Received and My Account → View order now show a waiting area instead of
+  nothing when an authorized viewer (Hall, order-key, ownership and guest
+  email-verification checks unchanged) opens an eligible Digital/Hybrid order
+  paid by online card (the `stripe` gateway ID only; bank transfer, cheque, cash
+  on delivery and other `stripe_<type>` methods are excluded) whose ticket is
+  not shown: online payment confirmation pending (`pending`/`on-hold`, asking
+  the customer not to pay again); payment confirmed but the ticket not available
+  yet; or a neutral "can't be checked right now" state when the ticket or void
+  read fails (manual checks only). Nothing promises issuance or implies a repair.
+  Failed, cancelled, refunded and draft orders, other statuses, void markers and
+  non-active entitlements still show nothing. A shown ticket keeps its markup and
+  now carries `data-bc-ticket-scope` (Hall:order). The email link shares the
+  same eligibility helper and is unchanged.
+- Checks (`customer-ticket.js` 1.1.0) GET a clean URL for the same order (a
+  signed-in owner's My Account order view, also when the owner is on Order
+  Received; otherwise Order Received with only its key; same Hall origin; no
+  Stripe return or action parameters; no Referer) 5 s after load and 5 s after
+  each finished attempt, only where `fetch`, `DOMParser`, promises and
+  `AbortController` exist: at most six automatic attempts per Hall and order per tab
+  (`sessionStorage`, counted before each request, kept across reloads), one
+  request at a time, 10 s timeout, paused while the tab is hidden. Only a section
+  for the same Hall and order is used, and readiness needs exactly one reference
+  naming this Hall; only validated text and that reference are copied into a
+  newly built section and drawn with the existing QR renderer, so nothing from
+  the fetched HTML is inserted or run. Missing, foreign or duplicate sections,
+  login pages and non-HTML or malformed responses stop the checks with neutral
+  guidance; HTTP errors, network failures and timeouts are counted and end with
+  network guidance. "Check again" makes one request, is `aria-disabled` while it
+  runs and never resets or restarts the six-attempt budget. Without storage the
+  checks are manual only; without JavaScript a reload note is shown. Focus moves
+  to the new heading only when it was inside the replaced section; when the
+  customer has scrolled past the section's start, the content below is held in
+  place. One polite live region announces only meaningful changes. Existing
+  fonts, colours and theme button styles are used; no CSS changed.
+- Production files: `bingocommerce-digital-tickets/src/CustomerTicket.php`,
+  `assets/customer-ticket.js` and a read-only `EntitlementVoiding::display_blocked()`.
+  No gateway, payment-completion, issuance, order-status, void, email, shipping,
+  coupon or theme change, and no new REST endpoint.
+- New guarded tests: `tests/customer-ticket-wait.php` with
+  `tests/customer-ticket-wait-request.php` (php-cgi worker),
+  `tests/customer-ticket-wait-control.php` (fixture steps) and
+  `tests/customer-ticket-wait-browser.cjs` (`BC_TICKET_WAIT_BROWSER=1`, with
+  `BC_PLAYWRIGHT_MODULE`, `BC_CHROME_EXECUTABLE`, optional
+  `BC_TICKET_WAIT_SHOTS`). A fixture card gateway with the `stripe` ID moves no
+  money and leaves orders pending; native `payment_complete()` stands in for the
+  webhook. Result **408 / 0**: 205 PHP checks (states, exclusions, read failures,
+  authorization, colliding-ID Hall isolation, clean URLs, email, 35 real
+  php-cgi page checks for both displays, reads-only and unchanged ticket rows)
+  and 203 browser checks on real pages under Playwright's fake clock: delayed
+  availability on both displays (Vision decodes the swapped-in QR), payment
+  confirmed then ticket, six attempts and reload persistence, manual checks and
+  overlapping clicks, storage blocked, no JavaScript, timeouts, HTTP 500,
+  network failure, login/non-HTML/malformed/foreign-scope/duplicate responses,
+  scripted HTML (nothing runs), hidden tab, focus and scroll with and without
+  browser scroll anchoring, guest, unavailable read, excluded order and
+  previews. Deliberate faults were caught: allowing bank transfer (4 failures),
+  ignoring void markers (6), counting an attempt after its request (6).
+- Regressions on the final code (guarded `bingocommerce_state_recon`): digital
+  entitlement snapshot **1330 / 0**; QR browser rendering 10, 6 and 10 checks
+  with 3 exact Vision decodes; checkout recovery **171 / 0** with its browser
+  stage; purchase suite **569 / 0** with its browser stage (**1087 / 0**, 379
+  live php-cgi requests). Disposable Halls and customers were removed and
+  persistent fixture Halls 2/3/4 are unchanged. Read-only checksums of all 457
+  development database tables were identical before and after the final runs;
+  Orders #70/#71, the Hall's single ticket and its Stripe settings are
+  unchanged. Desktop and mobile previews:
+  `/private/tmp/bc-ticket-wait-review/previews/`.
+- Limits: Chrome only (Safari's missing scroll anchoring emulated with
+  `overflow-anchor: none`; Firefox, Safari/WebKit, screen readers and physical
+  devices untested); hidden tabs emulated; no real Stripe charge or production
+  webhook in the automated tests. A guest verified only through WooCommerce's
+  email form cannot be re-verified by a background GET, so that guest gets
+  "reload this page" guidance. A new tab gets six fresh attempts. WooCommerce's
+  Order Received empties the session cart on every load (corrected 2026-10-05;
+  see the review corrections below), so only a guest's checks still have that
+  effect. WooCommerce's own Pay and Cancel order actions still
+  appear beside "Please don't pay again" on pending orders (native behaviour,
+  not changed). The `CLAUDE.md` code-reviewer step is still required before
+  merging. Nothing staged, committed, pushed or deployed.
+
+### Ticket waiting area — review corrections and security review, uncommitted (2026-10-05)
+
+- Superseded in part later the same day: the owner's My Account check URL, the
+  guest cart and email-verification limitations and the open "dedicated
+  read-only check" decision are resolved by the ticket status route below.
+- HEAD `2246bbe`, branch `bingotheme`; the waiting-area work remains uncommitted.
+- `customer-ticket.js`: ticket-page requests now also require `AbortController`.
+  Without it a timed-out request could not be cancelled and the next attempt
+  could start beside it; such browsers now get the existing reload guidance and
+  no automatic or manual request, while an existing ticket's QR still renders.
+  Checks also send no Referer, so the page address (its order key, or Stripe
+  return parameters when present) is not repeated in request headers.
+- `CustomerTicket.php`: a signed-in owner's checks now read My Account's order
+  view, also from Order Received (Order Received when the Hall has no My Account
+  page). WooCommerce's Order Received (`WC_Shortcode_Checkout::order_received()`,
+  reached through the Checkout block on this classic theme) calls `wc_empty_cart()`
+  on every load, before its own authorization checks, so each background check
+  of that page emptied the customer's session cart, including a cart filled in
+  another tab. The earlier "only when it matches the paid order" statement was
+  wrong: that guard belongs to `wc_clear_cart_after_payment()` only.
+- Security review: `CLAUDE.md` requires the code-reviewer subagent, but none is
+  defined (`.claude/agents/` is empty and no user-level agent exists), and the
+  built-in security-review skill cannot run here because it diffs against
+  `origin/HEAD` and this repository has no remote. As a stated substitute, an
+  independent read-only general-purpose review covered authorization, Hall/order
+  scope, clean URLs, response handling, token handling and read-only behaviour:
+  no critical, high or medium findings. Its low finding (cart emptying) is fixed
+  for signed-in owners; its Referer note was applied as hardening. The formal
+  `CLAUDE.md` code-reviewer step remains unfulfilled until such a reviewer exists.
+- Decisions still needed (not changed): a guest's checks can only read Order
+  Received, so each automatic or manual check still empties that guest's session
+  cart (options: accept, make guest checks manual-only, or approve a dedicated
+  read-only check); "Please don't pay again" also shows on an abandoned pending
+  card order, which WooCommerce only cancels automatically when stock management
+  and hold-stock minutes are on. WooCommerce's Pay/Cancel actions and the guest
+  email-verification limitation remain disclosed follow-ups.
+- Status wording corrected above: Order #70 remained pending without webhook
+  delivery and was later cancelled automatically by WooCommerce's hold-stock
+  timeout; Order #71's payment was confirmed natively and its verified WooCommerce
+  status was Processing (not Completed). Production webhook delivery remains
+  unverified.
+- Tests: a no-`AbortController` browser scenario (reload guidance, no
+  automatic-checking note or Check again, no request in two minutes, no attempt
+  used, an existing ticket's QR still renders); owner/guest check URLs; a
+  real-request cart check (two My Account checks leave the owner's cart intact,
+  while Order Received itself empties it); a browser check that a cart filled
+  after the page loaded survives the automatic checks; no Referer on any check.
+  Against the previous implementation the suite fails 55 checks, including all
+  five no-`AbortController` checks plus both fallback previews, the cart checks
+  and the Referer checks.
+- Fresh results (guarded `bingocommerce_state_recon`): waiting-area suite
+  **430 / 0** (212 PHP, 218 browser) with its browser stage; digital entitlement
+  snapshot **1330 / 0**; QR browser rendering 10, 6 and 10 checks with 3 exact
+  Vision decodes; `node --check`, `php -l`, `git diff --check` and whitespace
+  checks pass. Checkout recovery and the purchase suite were not rerun: neither
+  loads Digital Tickets, and no other code changed. Previews, including the
+  reload fallback at desktop and mobile widths:
+  `/private/tmp/bc-ticket-wait-review/previews/`. Payment completion, issuance,
+  gateway settings, Orders #70/#71, Hall settings, shipping, coupons and Android
+  redemption are unchanged. Nothing staged, committed, pushed or deployed.
+
+### Ticket status route for automatic QR updates (ADR-046) — branch `bingotheme`, uncommitted (2026-10-05)
+
+- Replaces the page-fetch checks and the guest reload fallback. Guests,
+  email-verified guests and signed-in owners, including in a Hall without a My
+  Account page, now see the existing QR appear without refreshing, signing up
+  or paying again. Checks no longer load Order Received or My Account, and no
+  check changes any cart.
+- New read-only route `POST /wp-json/bingocommerce-digital-tickets/v1/ticket-status`
+  (`src/TicketStatus.php`, registered on `rest_api_init`). It is the single
+  AGENTS.md rule 5 exception, approved by the user; rule 5 and ADR-046 are
+  updated, with a note in `docs/architecture/customer-cart-increment-1.md`.
+  - Credential: the waiting area carries a 30-minute credential,
+    `<order ID>.<expiry>.<HMAC-SHA256>` over the Hall, order, owner, expiry
+    and an order-key hash. It is issued only after the existing `can_view()`
+    checks; signed-in viewers also get a `wp_rest` nonce.
+  - Authorization: customer-owned orders still need the signed-in owner's
+    `view_order` capability. Guest-owned orders need the credential.
+  - Refusals disclose nothing: 400 for a missing or malformed credential; 403
+    for one that is tampered, expired, too long-lived, for an unknown order,
+    from another Hall, for another customer, sent signed out or sent in the
+    URL.
+  - Answer: only the scope and state (`payment`, `ticket`, `unavailable`,
+    `closed` or `ready`). The reference is added only when the page would show
+    that ticket, using `CustomerTicket::current()`, the page's own read. Every
+    answer is sent with `Cache-Control: no-store, …, private`.
+- `customer-ticket.js` 1.2.0 POSTs the credential as JSON: never in a URL, with
+  no Referer, and with the nonce header only when signed in. It keeps six
+  attempts, 5 s spacing after each finished attempt, a 10 s timeout, one
+  request at a time, the hidden-tab pause and the `AbortController`
+  requirement. Each request is released once its answer is used. With
+  WordPress's real response headers, a refusal body the page never read had
+  stayed open in Chrome.
+  - A 400, 401 or 403 answer says "This page can no longer check for your
+    ticket. Reload this page to check again." and removes Check again.
+  - `closed` says "A Digital Bingo ticket can’t be shown for this order. Reload
+    this page to see the latest order details."
+  - In both cases the page drops its credential, and focus moves to the section
+    heading if Check again had it.
+  - New pending text: "Payment hasn’t been confirmed. If you have already
+    submitted payment, please don’t pay again while confirmation is pending."
+    The unavailable text now ends "If you have already submitted payment,
+    please don’t pay again."
+  - WooCommerce's Pay and Cancel actions are unchanged.
+- Verified on real php-cgi requests, observed at shutdown: the route starts no
+  WooCommerce session, loads no cart and writes nothing. This holds for guests
+  sending a WooCommerce session cookie and for signed-in owners. Carts filled
+  after the page loaded keep the same value hash and expiry. The only write
+  seen is WooCommerce Admin's `woocommerce_product_task_has_product_transient`
+  cache, on a new Hall's first REST request of any kind, even a malformed one
+  refused before any route callback runs.
+- Tests (guarded `bingocommerce_state_recon`) in the rewritten
+  `tests/customer-ticket-wait.php` and its php-cgi worker, control and browser
+  files:
+  - PHP stage, **326 / 0**:
+    - route registration stays narrow;
+    - every state, and ten repeat checks with unchanged rows;
+    - every refusal, plus owner, other-customer and signed-out access;
+    - cross-Hall refusal both ways with colliding order IDs;
+    - a route on another origin is never offered;
+    - real requests with cookies and nonces, observation and cart
+      preservation;
+    - WooCommerce's real email-verification form and a Hall without My
+      Account;
+    - the same saved ticket after payment.
+  - Browser stage, **315 / 0**:
+    - delayed owner and guest QRs appear in place and Vision decodes them;
+    - carts filled in another tab survive automatic and manual checks, for
+      owners and guests;
+    - an email-verified guest and a Hall without My Account;
+    - a tampered credential is refused by the real route;
+    - an order is cancelled while its page is waiting;
+    - JSON fault fixtures, budget, keyboard, storage, no `AbortController`,
+      no JavaScript, hidden tab, focus and scroll, and previews;
+    - all 33 real status requests were observed clean;
+    - no status request was left open once its answer was used.
+  - Deliberate faults were caught: the route loading the cart (4 failures),
+    no ownership check (5), a URL credential (4) and a client that never
+    released answered requests (1).
+  - Total **641 / 0**.
+- Regressions: digital entitlement snapshot **1330 / 0**; QR browser rendering
+  10, 6 and 10 checks with 3 exact Vision decodes. `node --check`, `php -l`,
+  `git diff --check` and whitespace checks pass. Read-only checksums of all 457
+  development tables match the 2026-10-04 baseline. Orders #70/#71, the Hall's
+  single ticket and its Stripe settings are unchanged.
+- Limits:
+  - Tested in Chrome only: not Safari/WebKit, Firefox, screen readers or
+    physical devices.
+  - No real Stripe charge or production webhook was exercised.
+  - The credential is a 30-minute bearer secret visible to anyone who can see
+    the authorized page. After it expires, or after six attempts, the customer
+    reloads.
+    *Correction (2026-10-05, later):* "or after six attempts" was wrong.
+    After the automatic attempts are used, Check again stays available for as long as the page's credential is valid (30 minutes) and no request has been refused; each manual check is one request and never resets or restarts the automatic budget. A refused request (400/401/403), including an expired credential, removes Check again and asks the customer to reload.
+  - A guest order later linked to an account no longer matches its guest
+    credential.
+  - A new tab gets six fresh attempts.
+  - The pending text also shows on an abandoned pending card order.
+  - The `CLAUDE.md` code-reviewer step is still required before merging; no
+    such agent is defined.
+- Nothing staged, committed, pushed or deployed.
+
+### Faster ticket checks, "confirming payment" line and phone order summary — uncommitted (2026-10-05)
+
+- Why: in a real guest test, Order #73 at Star Bingo Hall (local Stripe test
+  mode with temporary Stripe CLI forwarding) showed the QR automatically, but
+  only after the first 5-second wait. Meanwhile the page said "Thank you. Your
+  order has been received.", which looks finished before payment is confirmed.
+  The order summary also wrapped unevenly on phones.
+- `customer-ticket.js` 1.3.0:
+  - The first check now runs as the page opens, and each next one 2 s after
+    the previous one finished (was 5 s). There are still six attempts, so the
+    automatic checks end after about 10–20 s instead of 30–90 s; Check again
+    is unchanged.
+    *Correction (2026-10-05, later):* "about 10–20 s" understated the slow case.
+    Timing as configured: the first request is sent as the page opens; each next one starts 2 s after the previous one completed (answered, failed or abandoned at the 10 s timeout); at most six automatic attempts. With quick answers they end about 10 s after the page opens; if all six time out, about 70 s (6 × 10 s + 5 × 2 s). Time while the tab is hidden pauses them and adds to the elapsed time.
+  - A tab opened in the background checks as soon as it becomes visible.
+- `CustomerTicket::received_notice()`, on WooCommerce's
+  `woocommerce_thankyou_order_received_text` filter, priority 20:
+  - While the waiting area is in its payment-pending state, Order Received's
+    thank-you line reads "Thank you. We’re confirming your payment. This
+    usually takes a few seconds."
+  - WooCommerce's own line stays in the page, hidden, and the script shows it
+    again once payment is confirmed, the ticket appears or the order closes.
+  - Same authorization and read as the ticket area. `render()` reuses that one
+    read, so the line and the ticket area always agree.
+  - Every other state, gateway, order and page is unchanged.
+- BingoThemev1 `assets/css/main.css`: at 640px and below, the Order Received
+  summary is one row per fact (label left, value right) in a bordered box.
+  Wider screens keep WooCommerce's row.
+- Tests (guarded `bingocommerce_state_recon`):
+  - Waiting suite with browser stage **692 / 0** (362 PHP, 330 browser):
+    - the thank-you line in every state, exclusion and authorization case;
+    - real Order Received pages for owner and guest, before and after
+      payment;
+    - the line switching back in the browser;
+    - immediate first check and 2-second spacing;
+    - background tab;
+    - mobile summary rows and the unchanged desktop row.
+  - Digital entitlement snapshot **1330 / 0**; QR rendering 10, 6 and 10 checks
+    with 3 exact Vision decodes.
+  - Checkout recovery with its browser stage **171 / 0**.
+- Development data: the only changes since the earlier baseline come from
+  Orders #72 (left pending) and #73 (paid; one entitlement, one ticket), which
+  were placed manually, and from the Hall's Stripe test webhook secret. That
+  secret is still the temporary Stripe CLI one. The previous value had already
+  been overwritten by an unedited console snippet, so restore it with Stripe's
+  Configure webhooks when the Hall is reachable from the internet.
+  *Correction (2026-10-05, later):* "lost" was not verified and is too strong.
+  What is verified: the Hall's locally stored test webhook secret was
+  overwritten (the console reported the stored value as the unedited
+  placeholder), and it now holds the Stripe CLI secret, which only works for CLI
+  forwarding. Not verified: whether the Hall's original test-mode webhook
+  endpoint still exists in Stripe. An endpoint's signing secret is held by
+  Stripe, so if it does, its secret can be revealed in the Stripe dashboard
+  (Developers → Webhooks → the endpoint) and saved to the Hall again. Only if
+  it no longer exists does Configure webhooks need to create a new endpoint.
+- Limits: a webhook slower than about 10–20 s needs Check again or a reload;
+  Chrome only; nothing staged, committed, pushed or deployed.
+  *Correction (2026-10-05, later):* a webhook arriving after the automatic
+  attempts end (about 10 s with quick answers; up to about 70 s if requests time
+  out) needs Check again or a reload.
+
+### Ticket waiting area corrections: receipt line recovery, redirects refused, loading sign — uncommitted (2026-10-05)
+
+- Receipt line: `CustomerTicket::received_notice()` now supplies both lines
+  (confirming-payment and WooCommerce's own, filtered and translated) on every
+  authorized Order Received page with a ticket waiting area. Only the line for
+  the current state is visible: `payment` shows confirming; `ticket` and
+  `unavailable` keep WooCommerce's line visible. Before, an initially
+  `unavailable` page that recovered to `payment` updated the ticket section but
+  left the top line unchanged.
+  - The script switches the line: to confirming on `payment`; to WooCommerce's
+    line on `ticket`, a shown ticket or a closed order. An `unavailable` answer
+    changes nothing, so no payment result is inferred.
+  - Pages without a waiting area (ready tickets, other gateways, excluded
+    orders, unauthorized viewers) and My Account are unchanged.
+- Redirects: `request()` uses `redirect: 'error'`, so a redirect answer is never
+  followed. Followed redirects could resend the POST body (the credential) and
+  the REST nonce to another origin on 307/308, or load Order Received (which
+  empties the session cart). A redirect now fails like any other request:
+  counted, retried within the budget, then network guidance; never a payment
+  result.
+- Loading sign: a small spinning ring (new `assets/customer-ticket.css`,
+  enqueued with the waiting area; it takes the text colour) shows beside the
+  checking note while automatic checks run, and beside Check again during a
+  manual check. It is hidden from screen readers, which get the text, and is
+  static under reduced motion.
+- Script and stylesheet version 1.3.1 (`CustomerTicket::VERSION`).
+- Timing, as configured: the first request is sent as the page opens; each next one starts 2 s after the previous one completed (answered, failed or abandoned at the 10 s timeout); at most six automatic attempts. With quick answers they end about 10 s after the page opens; if all six time out, about 70 s (6 × 10 s + 5 × 2 s). Time while the tab is hidden pauses them and adds to the elapsed time. After the automatic attempts are used, Check again stays available for as long as the page's credential is valid (30 minutes) and no request has been refused; each manual check is one request and never resets or restarts the automatic budget. A refused request (400/401/403), including an expired credential, removes Check again and asks the customer to reload.
+- Tests (guarded `bingocommerce_state_recon`), written first and run against
+  the uncorrected code:
+  - Recovery regression (initial read failure → Check again → payment pending
+    → an unavailable answer → confirmation → issued ticket): the top-line
+    assertions failed as expected.
+  - Cross-origin 307/308: a real local collector permitting CORS with
+    credentials received the credential/nonce. Same-origin 302/307: the page
+    requested Order Received.
+  - The browser for the redirect cases maps the collector's name to 127.0.0.1
+    and lifts Chrome's private-network block in that browser only. A fixture
+    probe proves the collector accepts a credentialed cross-origin POST, so
+    CORS cannot mask a forwarded credential.
+  - Corrected code: waiting suite with browser stage **733 / 0** (365 PHP,
+    368 browser), including:
+    - the order summary at 320, 375 and 640px (rows) and at 641, 768 and
+      1024px (WooCommerce's floated row with dashed separators);
+    - the loading sign appearing and disappearing.
+  - Digital entitlement snapshot **1330 / 0**; QR rendering 10, 6 and 10
+    checks with 3 exact Vision decodes.
+- Development data: the only change since the previous fingerprint is Order
+  #74 (a manual guest re-test: paid, one entitlement, one ticket). The Stripe
+  settings are unchanged.
+- Nothing staged, committed, pushed or deployed.
+
+### Customer email: "View your Bingo order" as a button — uncommitted (2026-10-05)
+
+- Order #78's emailed link was reported to do nothing when clicked.
+  - The link itself works: requested as a signed-out guest, Order #78's
+    Order Received URL returned HTTP 200 with the ticket section, and in
+    Chrome it stayed on that page and drew the QR with no page errors.
+  - The order URL worked when opened directly as a guest in Chrome. The cause
+    of the ignored click in the delivered email remains unverified because the
+    actual mail viewer was not inspected. WP Mail SMTP Lite (generic SMTP) keeps
+    no email log, and the viewer and screenshot were not available.
+- `CustomerTicket::email_order_link()`: HTML emails show an email-safe button.
+  - An inline-styled link inside a table cell (so Outlook also shows the
+    colour), in the Hall's WooCommerce email base colour, with WooCommerce's
+    own contrasting text colour.
+  - 48px tall and at least 220px wide, never wider than the email.
+- Unchanged: the plain-text email, the native Order Received URL with its full
+  order key, escaping, placement and eligibility.
+- Tests:
+  - Waiting suite with browser stage **746 / 0**, including the button's
+    destination and complete key, plain text, escaping of a hostile URL,
+    survival through WooCommerce's email CSS inliner, admin and Paper
+    exclusions.
+  - The complete styled email at 320, 375 and 600px: button 225×48px, inside
+    the screen, no horizontal scroll.
+  - Digital entitlement snapshot **1330 / 0** (actual captured emails; the
+    link opens the guest's saved QR, then WooCommerce's email verification
+    after the guest window); QR rendering 10, 6 and 10 checks with 3 exact
+    Vision decodes.
+- Nothing staged, committed, pushed or deployed.
+
+### QR validity message — uncommitted (2026-10-05)
+
+- Under every Digital Bingo ticket QR (Order Received and My Account order
+  view, server-rendered or swapped in automatically):
+  "**Valid for one Session only.** This QR covers only the digital part of your
+  purchase: one Package (Digital Night Pack) and its add-ons for the Bingo
+  Session “Star Evening” on 10/15/2026 at 18:30. It can’t be used for any other
+  Session, date or Package." (Wording corrected the same day: "only the digital
+  part of your purchase".)
+  - "and its add-ons" appears only when add-ons were bought; the time only when
+    the Session has one, shown once.
+  - Built from the order's saved purchase facts and escaped. Omitted if those
+    facts can't be read.
+  - Informational only: nothing enforces it until Android redemption exists.
+- `CustomerTicket::validity()`, `render()` and `waiting()`
+  (`validLead`/`validDetail` strings); `customer-ticket.js` `show()`; version
+  1.3.2. Recorded as an addition under ADR-046.
+- Tests (guarded `bingocommerce_state_recon`):
+  - Waiting suite with browser stage **756 / 0**: wording with and without
+    add-ons, with a start time and a generated name, escaping, missing facts,
+    both displays, swapped-in QR equal to the server rendering after reload.
+  - Digital entitlement snapshot **1330 / 0**; QR rendering 10, 6 and 10 checks
+    with 3 exact Vision decodes.
+- Nothing staged, committed, pushed or deployed.

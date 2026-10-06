@@ -696,6 +696,19 @@ black/white canvas at integer scale with a four-module quiet zone. No theme,
 third-party plugin, external service or QR image endpoint is added. JavaScript
 is required; the reference alone is not a browser destination or redeem action.
 
+**Ticket status route (ADR-046, 2026-10-05).** `reference_for_order()` stays
+internal. The only public reader is the waiting area's read-only
+`POST /wp-json/bingocommerce-digital-tickets/v1/ticket-status`, the single
+AGENTS.md rule 5 exception. It accepts one short-lived credential in a JSON
+body, bound to the Hall, order, owner and order key, which `CustomerTicket`
+issues only after `can_view()` succeeds. Customer-owned orders also need the
+signed-in owner's `view_order` capability (cookie plus REST nonce); guest-owned
+orders need the credential. The route answers through the same
+`CustomerTicket::current()` read as the page and returns a reference only for a
+ticket the page would display. It writes nothing, issues nothing and starts no
+WooCommerce session or cart, so checks no longer re-read Order Received, which
+empties the session cart on every load.
+
 The Order Confirmation block follow-up reproduced a guest verification mismatch:
 the native block accepted `_wpnonce` for `wc_verify_email` or `wc_create_account`
 and displayed totals, but the QR renderer recognized only the classic

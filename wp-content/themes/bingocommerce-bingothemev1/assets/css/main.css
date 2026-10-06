@@ -814,6 +814,17 @@ html .woocommerce-table--order-details td.product-name .wc-item-meta li:has(> p:
 	html .woocommerce :is(.woocommerce-message, .woocommerce-info, .woocommerce-error) .button,
 	html .woocommerce-page :is(.woocommerce-message, .woocommerce-info, .woocommerce-error) .button { float: none; margin: 0; order: 2; }
 	.woocommerce-account .woocommerce-MyAccount-navigation { margin-bottom: 24px; }
+	/* Order received summary (order number, date, email, total, payment method). WooCommerce floats these in one
+	   row with dashed separators, which wraps unevenly on phones; here each is its own row, label left and value
+	   right, in one bordered box (2026-10-05). Wider screens keep WooCommerce's row unchanged. */
+	html .woocommerce ul.woocommerce-order-overview { margin: 0 0 2em; padding: 0; border: 1px solid var(--color-border); border-radius: var(--radius-md); }
+	html .woocommerce ul.woocommerce-order-overview li {
+		float: none; display: flex; justify-content: space-between; align-items: baseline; gap: 16px;
+		margin: 0; padding: 12px 16px; border: 0; border-bottom: 1px solid var(--color-border);
+		font-size: 12px; line-height: 1.4; color: var(--color-text-muted);
+	}
+	html .woocommerce ul.woocommerce-order-overview li:last-of-type { border-bottom: 0; }
+	html .woocommerce ul.woocommerce-order-overview li strong { min-width: 0; font-size: 15px; text-align: right; color: var(--color-navy); overflow-wrap: anywhere; }
 }
 
 @media (max-width: 480px) {

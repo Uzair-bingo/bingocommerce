@@ -1,0 +1,19 @@
+/* Digital Bingo ticket waiting area: a small loading sign while the page checks for the ticket. It takes the text colour. */
+.bc-digital-ticket .bc-ticket-spinner {
+	display: inline-block;
+	box-sizing: border-box;
+	width: 1em;
+	height: 1em;
+	margin-right: .5em;
+	vertical-align: -.15em;
+	border: 2px solid currentColor;
+	border-right-color: transparent;
+	border-radius: 50%;
+	animation: bc-ticket-spin .8s linear infinite;
+}
+.bc-digital-ticket .bc-ticket-spinner[hidden] { display: none; }
+.bc-digital-ticket .button + .bc-ticket-spinner { margin: 0 0 0 .75em; vertical-align: middle; }
+@keyframes bc-ticket-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+	.bc-digital-ticket .bc-ticket-spinner { animation: none; border-right-color: currentColor; opacity: .5; }
+}

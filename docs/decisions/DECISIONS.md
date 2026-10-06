@@ -6544,6 +6544,143 @@ by construction, never deleted by anything.
   `td.product-name` item data. No layout, font, colour, spacing or width
   changes.
 
+- **ADR-046 — [2026-10-05] — Read-Only Digital Ticket Status Route and AGENTS.md Rule 5 Exception (user-approved, implemented):**
+
+  **Context.** With Stripe Checkout Sessions, WooCommerce confirms an online card
+  payment only when the `checkout.session.completed` webhook arrives, so a
+  customer often returns to Order Received before the QR exists. The waiting
+  area's earlier checks re-fetched whole order pages. WooCommerce's Order
+  Received calls `wc_empty_cart()` on every load, so each check emptied the
+  customer's session cart; signed-in owners were moved to the My Account order
+  view, but guests could only re-read Order Received, and a guest verified
+  through WooCommerce's email form cannot be re-verified by a background GET,
+  so guests were told to reload. wc-ajax and admin-ajax load WooCommerce's
+  session and cart (which can write), and changing WooCommerce's request
+  classification was rejected.
+
+  **Decision.** One read-only REST route in `bingocommerce-digital-tickets`:
+  `POST /wp-json/bingocommerce-digital-tickets/v1/ticket-status` with the JSON
+  body `{"credential": "..."}` (`TicketStatus`). It has an explicit permission
+  callback and one required parameter with validate and sanitize callbacks.
+  AGENTS.md rule 5 records this as its single approved exception: a guest-owned
+  order is authorized by the credential rather than `current_user_can()`. All
+  other REST endpoint rules are unchanged.
+
+  **Credential.** `<order ID>.<expiry>.<HMAC-SHA256>`, keyed with
+  `wp_salt( 'nonce' )` over a version label, the current Hall's blog ID, the
+  order ID, the order's customer ID, the expiry and a SHA-256 hash of the order
+  key (the key itself is never sent). Lifetime 30 minutes; a later expiry is
+  refused. `CustomerTicket` issues it only while rendering the waiting area for
+  a viewer who has already passed `can_view()`: the order reloaded in this Hall,
+  its key, the signed-in owner's `view_order` capability, or the correct guest
+  order key plus WooCommerce's email-verification policy, including its own
+  email form. The route is offered only on the Hall's own origin.
+
+  **Authorization.** Current Hall only: the order is loaded in the current site
+  and the Hall's blog ID is signed, so another Hall's credential never matches,
+  even for a colliding order ID. Customer-owned orders also require the
+  signed-in owner (`get_current_user_id() > 0` and `current_user_can(
+  'view_order' )`), so WordPress's REST cookie authentication with the page's
+  `wp_rest` nonce is needed; a cookie without that nonce counts as signed out.
+  A guest's user ID of zero never satisfies ownership. Guest-owned orders: the
+  valid, unexpired credential. Refused with no state disclosed: a missing or
+  malformed credential (400), and a tampered, expired, over-long, unknown-order,
+  other-Hall, other-customer, signed-out or URL-supplied credential (403, one
+  neutral error). An order ID alone or a generic WordPress or Store API nonce
+  is malformed.
+
+  **Answer.** `{"scope": "<blog>:<order>", "state": ...}` with state `payment`,
+  `ticket`, `unavailable`, `closed` or `ready`, plus `reference` only for `ready`,
+  through `CustomerTicket::current()` (the same read as the order page: existing
+  eligibility, active-entitlement and void-marker checks), so a reference is
+  returned only when the page would display that ticket now. The route never
+  issues, repairs or redeems a ticket, completes a payment, changes an order,
+  empties a cart or modifies a session. Every answer is sent with
+  `Cache-Control: no-store, no-cache, must-revalidate, max-age=0, private`. The
+  credential and reference never appear in a URL, and the route logs nothing.
+
+  **Client.** `customer-ticket.js` 1.2.0 POSTs the credential as JSON
+  (`credentials: same-origin`, `cache: no-store`, no Referer, `X-WP-Nonce` only
+  for a signed-in viewer). Bounds: six automatic attempts per Hall and order per
+  tab, the first as the page opens and each next one 2 s after the previous one
+  finished (amended 2026-10-05, below; originally 5 s), one request at a time, a
+  10 s timeout, a pause while the tab is hidden, and `AbortController` required. Each request is released as soon as its answer is used, so an unread
+  refusal body never stays open. 400/401/403 stop the checks with reload
+  guidance and no Check again; `closed` shows a closed message; both drop the
+  credential from the page.
+
+  **Verified, not assumed.** Real php-cgi requests to the route, observed at
+  shutdown, started no WooCommerce session, loaded no cart and issued no write.
+  A guest's and a signed-in owner's carts filled after the page loaded stayed
+  byte-identical. WooCommerce 11.1.2 skips `wc_load_cart()` for REST requests
+  (`is_request( 'frontend' )`). The only write observed is WooCommerce Admin's own
+  `woocommerce_product_task_has_product_transient` cache, on a new Hall's first
+  REST request of any kind, even one refused before any route callback runs.
+
+  **Consequences.** The credential is a 30-minute bearer secret, visible only to
+  someone who could already see the authorized page (as the QR itself is). After
+  it expires, the page asks the customer to reload. If a guest order is later
+  linked to an account, its guest credential stops matching and a reload asks
+  the customer to sign in. WordPress's REST CORS headers would let another
+  origin read an answer only with the credential and, for a customer-owned
+  order, that customer's session and nonce.
+
+  **Amendment — [2026-10-05] — Faster checks and a "confirming" thank-you line
+  (user-approved, implemented).** The first automatic check now runs as the page
+  opens, then every 2 s after the previous one finished (was 5 s), still six
+  attempts, so the six automatic checks end after roughly 10–20 s instead of
+  30–90 s. Check again is unchanged. While an eligible card payment is still
+  being confirmed (the waiting area's `payment` state), Order Received's
+  "Thank you. Your order has been received." line, through WooCommerce's
+  `woocommerce_thankyou_order_received_text` filter, reads "Thank you. We’re
+  confirming your payment. This usually takes a few seconds." WooCommerce's own
+  line stays in the page, hidden, and the script shows it again once payment is
+  confirmed, the ticket appears or the order closes. The line uses the same
+  authorization and read as the ticket area, and the ticket area reuses that one
+  read, so both agree on one page. Other states, other gateways, other orders
+  and My Account are unchanged. BingoThemev1 shows the order summary as one row
+  per fact on screens up to 640px; wider screens keep WooCommerce's row.
+
+  *Correction (2026-10-05, later):* "roughly 10–20 s" understated the slow case.
+  Timing as configured: the first request is sent as the page opens; each next one starts 2 s after the previous one completed (answered, failed or abandoned at the 10 s timeout); at most six automatic attempts. With quick answers they end about 10 s after the page opens; if all six time out, about 70 s (6 × 10 s + 5 × 2 s). Time while the tab is hidden pauses them and adds to the elapsed time. After the automatic attempts are used, Check again stays available for as long as the page's credential is valid (30 minutes) and no request has been refused; each manual check is one request and never resets or restarts the automatic budget. A refused request (400/401/403), including an expired credential, removes Check again and asks the customer to reload.
+
+  **Amendment 2 — [2026-10-05] — Receipt line recovery, redirects refused and a
+  loading sign (user-requested, implemented).**
+  - Both thank-you lines are supplied on every authorized Order Received page
+    with a ticket waiting area. Only the current state's line is visible:
+    confirming for `payment`; WooCommerce's own, filtered and translated, for
+    `ticket` and `unavailable`.
+  - The script switches to confirming on `payment`, and to WooCommerce's line on
+    `ticket`, a shown ticket or a closed order. An `unavailable` answer changes
+    nothing, so no payment result is inferred.
+  - Status requests use `redirect: 'error'`, so a redirect answer is never
+    followed. Otherwise a 307/308 could resend the credential and REST nonce to
+    another origin, and any redirect could load Order Received. It fails like
+    any other request: counted, retried within the budget, then network
+    guidance.
+  - A small spinning ring, hidden from screen readers and static under reduced
+    motion, shows while automatic or manual checks run. It is styled by the
+    plugin's own `assets/customer-ticket.css` and takes the text colour.
+  - Script and stylesheet version 1.3.1. The polling budget, authorization and
+    route are unchanged.
+
+  **Addition — [2026-10-05] — QR validity message (user-approved, informational
+  only).** Under every shown QR (server-rendered, or swapped in by the script),
+  the ticket area states what the QR is for:
+  - Wording: "**Valid for one Session only.** This QR covers only the digital
+    part of your purchase: one Package (*name*) and its add-ons for the Bingo
+    Session “*name*” on MM/DD/YYYY at HH:MM. It can’t be used for any other
+    Session, date or Package." (Wording corrected the same day to say the QR
+    covers only the digital part of the purchase.)
+  - "and its add-ons" appears only when add-ons were bought. The time appears
+    only when the Session has a structured start time; a generated Session name
+    ending with that time is not repeated.
+  - Built only from the order's saved purchase facts (`bc_purchase`), never live
+    Session data. Omitted when those facts can't be read.
+  - Nothing enforces it yet: Android redemption is not built. That step must
+    apply the same rule (BR-056: late redemption during the Session remains
+    allowed). Script and stylesheet version 1.3.2.
+
 ---
 
 ## Business Rules (BR)

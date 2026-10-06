@@ -82,6 +82,26 @@ final class EntitlementVoiding {
 		return false === $result ? self::error() : $result;
 	}
 
+	/**
+	 * Read-only, for the customer order view: true when a void marker or a
+	 * non-active entitlement exists for the order, null when that cannot be read.
+	 * Never writes, converges or repairs anything.
+	 */
+	public static function display_blocked( int $order_id ): ?bool {
+		if ( ! Migrations::is_hall() ) { return null; }
+		global $wpdb;
+		$quiet = $wpdb->suppress_errors( true );
+		try {
+			$row = $wpdb->get_row( $wpdb->prepare(
+				'SELECT (SELECT COUNT(*) FROM %i WHERE order_id = %d) AS markers, (SELECT COUNT(*) FROM %i WHERE order_id = %d AND status <> %s) AS inactive',
+				Migrations::voids_table(), $order_id, Migrations::table(), $order_id, 'active'
+			), ARRAY_A );
+		} catch ( \Throwable $error ) { return null; }
+		finally { $wpdb->suppress_errors( $quiet ); }
+		if ( '' !== $wpdb->last_error || ! is_array( $row ) ) { return null; }
+		return '0' !== (string) $row['markers'] || '0' !== (string) $row['inactive'];
+	}
+
 	/** Snapshot calls this before AND after insert; neither path can clear a block. */
 	public static function enforce_block( int $order_id, array $facts ): bool|\WP_Error {
 		if ( ! Migrations::is_hall() || get_current_blog_id() !== ( $facts['site_id'] ?? null ) ) { return self::error(); }
