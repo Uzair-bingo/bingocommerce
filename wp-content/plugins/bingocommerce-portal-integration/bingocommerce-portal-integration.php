@@ -51,6 +51,8 @@ require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/PlatformGateway.php';
 require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/ProvisioningAudit.php';
 require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/ProvisioningOrchestrator.php';
 require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/ProvisioningRestController.php';
+require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/RedemptionGateway.php';
+require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/RedemptionRestController.php';
 // Commerce access enforcement. HallCommerceAccess reads only; HallCommerceGate
 // refuses requests to a blocked Hall and is registered by Plugin::boot() at the
 // earliest boundary where the current user can be resolved.

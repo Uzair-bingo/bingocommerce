@@ -26,6 +26,10 @@ if ( ! defined( 'ABSPATH' ) ) {
  * ordinary methods. Nothing else is relaxed: a deleted, spam, wrong-network or
  * main site is still refused, and a conflicting existing mapping is still a
  * conflict that is never silently repaired.
+ *
+ * findForRedemption() is a second, read-only boundary for already-paid tickets:
+ * it ignores storefront archival without relaxing mapping identity, network,
+ * deletion or spam checks. It never enables a site or changes a mapping.
  */
 final class HallMappingRepository {
 
@@ -205,6 +209,42 @@ final class HallMappingRepository {
 		}
 
 		return $this->validate_active_mapping( $this->find_one( 'portal_hall_id', $portal_hall_id, self::STATUS_ACTIVE ) );
+	}
+
+	/**
+	 * Read-only identity resolution for already-paid ticket redemption.
+	 *
+	 * Billing suspension/site archival must not invalidate a sold ticket. This
+	 * deliberately separate reader permits archived sites, but never disabled
+	 * mappings, deleted/spam sites, another network, or the network main site.
+	 * It neither creates mappings nor changes the ordinary provisioning readers.
+	 * Fresh storage reads avoid treating cached site availability as authority.
+	 *
+	 * @return array<string,mixed>|null|\WP_Error
+	 */
+	public function findForRedemption( int $portal_hall_id ) {
+		if ( ! is_multisite() || $portal_hall_id < 1 ) {
+			return $this->error( 'mapping_state_inconsistent', 'The Portal Hall mapping is unavailable.' );
+		}
+		$mapping = $this->find_one( 'portal_hall_id', $portal_hall_id, self::STATUS_ACTIVE );
+		if ( is_wp_error( $mapping ) || null === $mapping ) {
+			return $mapping;
+		}
+
+		global $wpdb;
+		$site = $wpdb->get_row(
+			$wpdb->prepare( "SELECT blog_id, site_id, deleted, spam FROM {$wpdb->blogs} WHERE blog_id = %d", $mapping['blog_id'] ),
+			ARRAY_A
+		);
+		if ( '' !== (string) $wpdb->last_error ) {
+			return $this->error( 'mapping_read_failed', 'The Portal Hall mapping could not be read.' );
+		}
+		if ( ! is_array( $site ) || (int) $site['site_id'] !== (int) get_current_network_id()
+			|| is_main_site( (int) $mapping['blog_id'], (int) get_current_network_id() )
+			|| '0' !== (string) $site['deleted'] || '0' !== (string) $site['spam'] ) {
+			return $this->error( 'mapping_state_inconsistent', 'The Portal Hall mapping is unavailable.' );
+		}
+		return $mapping;
 	}
 
 	/** @return array<string,mixed>|null|\WP_Error */

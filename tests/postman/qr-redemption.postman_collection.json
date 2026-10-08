@@ -1,0 +1,701 @@
+{
+  "info": {
+    "name": "BingoCommerce — Caller QR redemption (disposable fixtures)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Server relay contract: POST {{portal_base_url}}/api/caller/redemptions. Use only the retained isolated fixtures from docs/runbooks/qr-redemption-testing.md. Import the generated private local environment without publishing/syncing it. Caller credentials and usable QR tokens never belong in this collection. Run acceptance scenarios in order; run the final recovery-after-void scenario only after the guarded fixture void-a command."
+  },
+  "variable": [
+    {
+      "key": "portal_base_url",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "tablet_a",
+      "value": "fixture-tablet-A",
+      "type": "string"
+    },
+    {
+      "key": "tablet_b",
+      "value": "fixture-tablet-B",
+      "type": "string"
+    },
+    {
+      "key": "first_request_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "duplicate_request_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "second_request_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "limit_request_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "separate_request_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "wrong_hall_request_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "void_request_id",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Owned-fixture acceptance and recovery — run in order",
+      "item": [
+        {
+          "name": "01 — First redemption",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const requestKey = \"first_request_id\";",
+                  "if (!pm.collectionVariables.get(requestKey)) { pm.collectionVariables.set(requestKey, pm.variables.replaceIn('{{$guid}}').toLowerCase()); }",
+                  "const privateNames = [\"caller_sn\",\"caller_api_key\",\"qr_a\"];",
+                  "for (const field of privateNames) { if (!pm.environment.get(field)) { throw new Error('Set private fixture environment variable: ' + field); } }",
+                  "if (!pm.variables.get('portal_base_url')) { throw new Error('Set the disposable Portal base URL.'); }",
+                  "const body = { CallerSN: pm.environment.get(\"caller_sn\"), APIKey: pm.environment.get(\"caller_api_key\"), qr: pm.environment.get(\"qr_a\"), player_tablet_id: pm.variables.get(\"tablet_a\"), request_id: pm.collectionVariables.get(requestKey) };",
+                  "pm.variables.set('redemption_body', JSON.stringify(body));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('No-store response', function () { pm.expect(pm.response.headers.get('Cache-Control')).to.include('no-store'); });",
+                  "let result; try { result = pm.response.json(); } catch (e) { throw new Error('Expected JSON response.'); }",
+                  "pm.test('Versioned contract', function () { pm.expect(result.api_version).to.eql(1); });",
+                  "pm.test('Expected status 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Saved request and tablet correlation', function () { pm.expect(result.request_id).to.eql(pm.collectionVariables.get(\"first_request_id\")); pm.expect(result.player_tablet_id).to.eql(pm.variables.get(\"tablet_a\")); pm.expect(result.state).to.eql('redeemed'); pm.expect(result.recovered).to.eql(false); });",
+                  "if (pm.response.code === 200) { pm.collectionVariables.set('first_redemption_id', result.redemption_id); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{{redemption_body}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{portal_base_url}}/api/caller/redemptions",
+            "description": "Fresh fixture ticket A; this first attempt must return recovered:false and establish one accepted contribution."
+          }
+        },
+        {
+          "name": "02 — Original-request recovery",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const requestKey = \"first_request_id\";",
+                  "if (!pm.collectionVariables.get(requestKey)) { pm.collectionVariables.set(requestKey, pm.variables.replaceIn('{{$guid}}').toLowerCase()); }",
+                  "const privateNames = [\"caller_sn\",\"caller_api_key\",\"qr_a\"];",
+                  "for (const field of privateNames) { if (!pm.environment.get(field)) { throw new Error('Set private fixture environment variable: ' + field); } }",
+                  "if (!pm.variables.get('portal_base_url')) { throw new Error('Set the disposable Portal base URL.'); }",
+                  "const body = { CallerSN: pm.environment.get(\"caller_sn\"), APIKey: pm.environment.get(\"caller_api_key\"), qr: pm.environment.get(\"qr_a\"), player_tablet_id: pm.variables.get(\"tablet_a\"), request_id: pm.collectionVariables.get(requestKey) };",
+                  "pm.variables.set('redemption_body', JSON.stringify(body));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('No-store response', function () { pm.expect(pm.response.headers.get('Cache-Control')).to.include('no-store'); });",
+                  "let result; try { result = pm.response.json(); } catch (e) { throw new Error('Expected JSON response.'); }",
+                  "pm.test('Versioned contract', function () { pm.expect(result.api_version).to.eql(1); });",
+                  "pm.test('Expected status 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Saved request and tablet correlation', function () { pm.expect(result.request_id).to.eql(pm.collectionVariables.get(\"first_request_id\")); pm.expect(result.player_tablet_id).to.eql(pm.variables.get(\"tablet_a\")); pm.expect(result.state).to.eql('redeemed'); pm.expect(result.recovered).to.eql(true); });",
+                  "pm.test('Stable redemption identity', function () { const first = pm.collectionVariables.get('first_redemption_id'); if (first) { pm.expect(result.redemption_id).to.eql(first); } pm.expect(result.redemption_id).to.be.a('string').and.not.empty; });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{{redemption_body}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{portal_base_url}}/api/caller/redemptions",
+            "description": "Resend the original request unchanged. This also represents retry after a lost response. The saved redemption identity stays the same; recovered:true."
+          }
+        },
+        {
+          "name": "03 — Fresh duplicate rejected",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const requestKey = \"duplicate_request_id\";",
+                  "if (!pm.collectionVariables.get(requestKey)) { pm.collectionVariables.set(requestKey, pm.variables.replaceIn('{{$guid}}').toLowerCase()); }",
+                  "const privateNames = [\"caller_sn\",\"caller_api_key\",\"qr_a\"];",
+                  "for (const field of privateNames) { if (!pm.environment.get(field)) { throw new Error('Set private fixture environment variable: ' + field); } }",
+                  "if (!pm.variables.get('portal_base_url')) { throw new Error('Set the disposable Portal base URL.'); }",
+                  "const body = { CallerSN: pm.environment.get(\"caller_sn\"), APIKey: pm.environment.get(\"caller_api_key\"), qr: pm.environment.get(\"qr_a\"), player_tablet_id: pm.variables.get(\"tablet_a\"), request_id: pm.collectionVariables.get(requestKey) };",
+                  "pm.variables.set('redemption_body', JSON.stringify(body));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('No-store response', function () { pm.expect(pm.response.headers.get('Cache-Control')).to.include('no-store'); });",
+                  "let result; try { result = pm.response.json(); } catch (e) { throw new Error('Expected JSON response.'); }",
+                  "pm.test('Versioned contract', function () { pm.expect(result.api_version).to.eql(1); });",
+                  "pm.test('Expected status 409', function () { pm.response.to.have.status(409); });",
+                  "pm.test('Expected safe error', function () { pm.expect(result.error.code).to.eql(\"already_redeemed\"); pm.expect(result).not.to.have.property('redemption_id'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{{redemption_body}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{portal_base_url}}/api/caller/redemptions",
+            "description": "A fresh scan has a different request ID. Even the original tablet receives Already redeemed."
+          }
+        },
+        {
+          "name": "04 — Conflicting request identity",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const requestKey = \"first_request_id\";",
+                  "if (!pm.collectionVariables.get(requestKey)) { pm.collectionVariables.set(requestKey, pm.variables.replaceIn('{{$guid}}').toLowerCase()); }",
+                  "const privateNames = [\"caller_sn\",\"caller_api_key\",\"qr_a\"];",
+                  "for (const field of privateNames) { if (!pm.environment.get(field)) { throw new Error('Set private fixture environment variable: ' + field); } }",
+                  "if (!pm.variables.get('portal_base_url')) { throw new Error('Set the disposable Portal base URL.'); }",
+                  "const body = { CallerSN: pm.environment.get(\"caller_sn\"), APIKey: pm.environment.get(\"caller_api_key\"), qr: pm.environment.get(\"qr_a\"), player_tablet_id: pm.variables.get(\"tablet_b\"), request_id: pm.collectionVariables.get(requestKey) };",
+                  "pm.variables.set('redemption_body', JSON.stringify(body));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('No-store response', function () { pm.expect(pm.response.headers.get('Cache-Control')).to.include('no-store'); });",
+                  "let result; try { result = pm.response.json(); } catch (e) { throw new Error('Expected JSON response.'); }",
+                  "pm.test('Versioned contract', function () { pm.expect(result.api_version).to.eql(1); });",
+                  "pm.test('Expected status 409', function () { pm.response.to.have.status(409); });",
+                  "pm.test('Expected safe error', function () { pm.expect(result.error.code).to.eql(\"request_id_conflict\"); pm.expect(result).not.to.have.property('redemption_id'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{{redemption_body}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{portal_base_url}}/api/caller/redemptions",
+            "description": "Deliberately reuse the original request ID with a different tablet. This must reveal no previous result."
+          }
+        },
+        {
+          "name": "05 — Recovery through another authorized Caller",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const requestKey = \"first_request_id\";",
+                  "if (!pm.collectionVariables.get(requestKey)) { pm.collectionVariables.set(requestKey, pm.variables.replaceIn('{{$guid}}').toLowerCase()); }",
+                  "const privateNames = [\"other_caller_sn\",\"other_caller_api_key\",\"qr_a\"];",
+                  "for (const field of privateNames) { if (!pm.environment.get(field)) { throw new Error('Set private fixture environment variable: ' + field); } }",
+                  "if (!pm.variables.get('portal_base_url')) { throw new Error('Set the disposable Portal base URL.'); }",
+                  "const body = { CallerSN: pm.environment.get(\"other_caller_sn\"), APIKey: pm.environment.get(\"other_caller_api_key\"), qr: pm.environment.get(\"qr_a\"), player_tablet_id: pm.variables.get(\"tablet_a\"), request_id: pm.collectionVariables.get(requestKey) };",
+                  "pm.variables.set('redemption_body', JSON.stringify(body));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('No-store response', function () { pm.expect(pm.response.headers.get('Cache-Control')).to.include('no-store'); });",
+                  "let result; try { result = pm.response.json(); } catch (e) { throw new Error('Expected JSON response.'); }",
+                  "pm.test('Versioned contract', function () { pm.expect(result.api_version).to.eql(1); });",
+                  "pm.test('Expected status 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Saved request and tablet correlation', function () { pm.expect(result.request_id).to.eql(pm.collectionVariables.get(\"first_request_id\")); pm.expect(result.player_tablet_id).to.eql(pm.variables.get(\"tablet_a\")); pm.expect(result.state).to.eql('redeemed'); pm.expect(result.recovered).to.eql(true); });",
+                  "pm.test('Stable redemption identity', function () { const first = pm.collectionVariables.get('first_redemption_id'); if (first) { pm.expect(result.redemption_id).to.eql(first); } pm.expect(result.redemption_id).to.be.a('string').and.not.empty; });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{{redemption_body}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{portal_base_url}}/api/caller/redemptions",
+            "description": "A second authorized Caller in the SAME Hall relays the original tablet and intent. Relay identity must not split allowance or prevent recovery."
+          }
+        },
+        {
+          "name": "06 — Cumulative allowance reaches limit",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const requestKey = \"second_request_id\";",
+                  "if (!pm.collectionVariables.get(requestKey)) { pm.collectionVariables.set(requestKey, pm.variables.replaceIn('{{$guid}}').toLowerCase()); }",
+                  "const privateNames = [\"caller_sn\",\"caller_api_key\",\"qr_b\"];",
+                  "for (const field of privateNames) { if (!pm.environment.get(field)) { throw new Error('Set private fixture environment variable: ' + field); } }",
+                  "if (!pm.variables.get('portal_base_url')) { throw new Error('Set the disposable Portal base URL.'); }",
+                  "const body = { CallerSN: pm.environment.get(\"caller_sn\"), APIKey: pm.environment.get(\"caller_api_key\"), qr: pm.environment.get(\"qr_b\"), player_tablet_id: pm.variables.get(\"tablet_a\"), request_id: pm.collectionVariables.get(requestKey) };",
+                  "pm.variables.set('redemption_body', JSON.stringify(body));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('No-store response', function () { pm.expect(pm.response.headers.get('Cache-Control')).to.include('no-store'); });",
+                  "let result; try { result = pm.response.json(); } catch (e) { throw new Error('Expected JSON response.'); }",
+                  "pm.test('Versioned contract', function () { pm.expect(result.api_version).to.eql(1); });",
+                  "pm.test('Expected status 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Saved request and tablet correlation', function () { pm.expect(result.request_id).to.eql(pm.collectionVariables.get(\"second_request_id\")); pm.expect(result.player_tablet_id).to.eql(pm.variables.get(\"tablet_a\")); pm.expect(result.state).to.eql('redeemed'); pm.expect(result.recovered).to.eql(false); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{{redemption_body}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{portal_base_url}}/api/caller/redemptions",
+            "description": "Fixture B contributes12 to the same Game Type and exact occurrence. Alongside A12, tablet A total is24."
+          }
+        },
+        {
+          "name": "07 — Whole-ticket limit rejection",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const requestKey = \"limit_request_id\";",
+                  "if (!pm.collectionVariables.get(requestKey)) { pm.collectionVariables.set(requestKey, pm.variables.replaceIn('{{$guid}}').toLowerCase()); }",
+                  "const privateNames = [\"caller_sn\",\"caller_api_key\",\"qr_c\"];",
+                  "for (const field of privateNames) { if (!pm.environment.get(field)) { throw new Error('Set private fixture environment variable: ' + field); } }",
+                  "if (!pm.variables.get('portal_base_url')) { throw new Error('Set the disposable Portal base URL.'); }",
+                  "const body = { CallerSN: pm.environment.get(\"caller_sn\"), APIKey: pm.environment.get(\"caller_api_key\"), qr: pm.environment.get(\"qr_c\"), player_tablet_id: pm.variables.get(\"tablet_a\"), request_id: pm.collectionVariables.get(requestKey) };",
+                  "pm.variables.set('redemption_body', JSON.stringify(body));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('No-store response', function () { pm.expect(pm.response.headers.get('Cache-Control')).to.include('no-store'); });",
+                  "let result; try { result = pm.response.json(); } catch (e) { throw new Error('Expected JSON response.'); }",
+                  "pm.test('Versioned contract', function () { pm.expect(result.api_version).to.eql(1); });",
+                  "pm.test('Expected status 409', function () { pm.response.to.have.status(409); });",
+                  "pm.test('Expected safe error', function () { pm.expect(result.error.code).to.eql(\"electronic_limit_exceeded\"); pm.expect(result).not.to.have.property('redemption_id'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{{redemption_body}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{portal_base_url}}/api/caller/redemptions",
+            "description": "Fixture C contributes12, exceeding tablet A24 limit. No partial acceptance; accepted count and totals unchanged."
+          }
+        },
+        {
+          "name": "08 — Another tablet has separate allowance",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const requestKey = \"separate_request_id\";",
+                  "if (!pm.collectionVariables.get(requestKey)) { pm.collectionVariables.set(requestKey, pm.variables.replaceIn('{{$guid}}').toLowerCase()); }",
+                  "const privateNames = [\"caller_sn\",\"caller_api_key\",\"qr_c\"];",
+                  "for (const field of privateNames) { if (!pm.environment.get(field)) { throw new Error('Set private fixture environment variable: ' + field); } }",
+                  "if (!pm.variables.get('portal_base_url')) { throw new Error('Set the disposable Portal base URL.'); }",
+                  "const body = { CallerSN: pm.environment.get(\"caller_sn\"), APIKey: pm.environment.get(\"caller_api_key\"), qr: pm.environment.get(\"qr_c\"), player_tablet_id: pm.variables.get(\"tablet_b\"), request_id: pm.collectionVariables.get(requestKey) };",
+                  "pm.variables.set('redemption_body', JSON.stringify(body));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('No-store response', function () { pm.expect(pm.response.headers.get('Cache-Control')).to.include('no-store'); });",
+                  "let result; try { result = pm.response.json(); } catch (e) { throw new Error('Expected JSON response.'); }",
+                  "pm.test('Versioned contract', function () { pm.expect(result.api_version).to.eql(1); });",
+                  "pm.test('Expected status 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Saved request and tablet correlation', function () { pm.expect(result.request_id).to.eql(pm.collectionVariables.get(\"separate_request_id\")); pm.expect(result.player_tablet_id).to.eql(pm.variables.get(\"tablet_b\")); pm.expect(result.state).to.eql('redeemed'); pm.expect(result.recovered).to.eql(false); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{{redemption_body}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{portal_base_url}}/api/caller/redemptions",
+            "description": "The previously rejected, still-unredeemed ticket C can now be accepted by tablet B using a NEW request. The failed request remains associated with tablet A."
+          }
+        },
+        {
+          "name": "09 — Wrong Hall rejected",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const requestKey = \"wrong_hall_request_id\";",
+                  "if (!pm.collectionVariables.get(requestKey)) { pm.collectionVariables.set(requestKey, pm.variables.replaceIn('{{$guid}}').toLowerCase()); }",
+                  "const privateNames = [\"caller_sn\",\"caller_api_key\",\"qr_other_hall\"];",
+                  "for (const field of privateNames) { if (!pm.environment.get(field)) { throw new Error('Set private fixture environment variable: ' + field); } }",
+                  "if (!pm.variables.get('portal_base_url')) { throw new Error('Set the disposable Portal base URL.'); }",
+                  "const body = { CallerSN: pm.environment.get(\"caller_sn\"), APIKey: pm.environment.get(\"caller_api_key\"), qr: pm.environment.get(\"qr_other_hall\"), player_tablet_id: pm.variables.get(\"tablet_a\"), request_id: pm.collectionVariables.get(requestKey) };",
+                  "pm.variables.set('redemption_body', JSON.stringify(body));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('No-store response', function () { pm.expect(pm.response.headers.get('Cache-Control')).to.include('no-store'); });",
+                  "let result; try { result = pm.response.json(); } catch (e) { throw new Error('Expected JSON response.'); }",
+                  "pm.test('Versioned contract', function () { pm.expect(result.api_version).to.eql(1); });",
+                  "pm.test('Expected status 403', function () { pm.response.to.have.status(403); });",
+                  "pm.test('Expected safe error', function () { pm.expect(result.error.code).to.eql(\"wrong_hall\"); pm.expect(result).not.to.have.property('redemption_id'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{{redemption_body}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{portal_base_url}}/api/caller/redemptions",
+            "description": "Hall A Caller presents a fixture Hall B QR. The QR never chooses the target Hall."
+          }
+        },
+        {
+          "name": "10 — Voided ticket rejected",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const requestKey = \"void_request_id\";",
+                  "if (!pm.collectionVariables.get(requestKey)) { pm.collectionVariables.set(requestKey, pm.variables.replaceIn('{{$guid}}').toLowerCase()); }",
+                  "const privateNames = [\"caller_sn\",\"caller_api_key\",\"qr_voided\"];",
+                  "for (const field of privateNames) { if (!pm.environment.get(field)) { throw new Error('Set private fixture environment variable: ' + field); } }",
+                  "if (!pm.variables.get('portal_base_url')) { throw new Error('Set the disposable Portal base URL.'); }",
+                  "const body = { CallerSN: pm.environment.get(\"caller_sn\"), APIKey: pm.environment.get(\"caller_api_key\"), qr: pm.environment.get(\"qr_voided\"), player_tablet_id: pm.variables.get(\"tablet_a\"), request_id: pm.collectionVariables.get(requestKey) };",
+                  "pm.variables.set('redemption_body', JSON.stringify(body));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('No-store response', function () { pm.expect(pm.response.headers.get('Cache-Control')).to.include('no-store'); });",
+                  "let result; try { result = pm.response.json(); } catch (e) { throw new Error('Expected JSON response.'); }",
+                  "pm.test('Versioned contract', function () { pm.expect(result.api_version).to.eql(1); });",
+                  "pm.test('Expected status 410', function () { pm.response.to.have.status(410); });",
+                  "pm.test('Expected safe error', function () { pm.expect(result.error.code).to.eql(\"ticket_voided\"); pm.expect(result).not.to.have.property('redemption_id'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{{redemption_body}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{portal_base_url}}/api/caller/redemptions",
+            "description": "Use a separate fixture-owned ticket with a durable void marker. Do not modify or refund any development order."
+          }
+        }
+      ]
+    },
+    {
+      "name": "After guarded fixture-only void-a — run last",
+      "item": [
+        {
+          "name": "11 — Recovery after later voiding",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const requestKey = \"first_request_id\";",
+                  "if (!pm.collectionVariables.get(requestKey)) { pm.collectionVariables.set(requestKey, pm.variables.replaceIn('{{$guid}}').toLowerCase()); }",
+                  "const privateNames = [\"caller_sn\",\"caller_api_key\",\"qr_a\"];",
+                  "for (const field of privateNames) { if (!pm.environment.get(field)) { throw new Error('Set private fixture environment variable: ' + field); } }",
+                  "if (!pm.variables.get('portal_base_url')) { throw new Error('Set the disposable Portal base URL.'); }",
+                  "const body = { CallerSN: pm.environment.get(\"caller_sn\"), APIKey: pm.environment.get(\"caller_api_key\"), qr: pm.environment.get(\"qr_a\"), player_tablet_id: pm.variables.get(\"tablet_a\"), request_id: pm.collectionVariables.get(requestKey) };",
+                  "pm.variables.set('redemption_body', JSON.stringify(body));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('No-store response', function () { pm.expect(pm.response.headers.get('Cache-Control')).to.include('no-store'); });",
+                  "let result; try { result = pm.response.json(); } catch (e) { throw new Error('Expected JSON response.'); }",
+                  "pm.test('Versioned contract', function () { pm.expect(result.api_version).to.eql(1); });",
+                  "pm.test('Expected status 410', function () { pm.response.to.have.status(410); });",
+                  "pm.test('Expected safe error', function () { pm.expect(result.error.code).to.eql(\"ticket_voided\"); pm.expect(result).not.to.have.property('redemption_id'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{{redemption_body}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{portal_base_url}}/api/caller/redemptions",
+            "description": "Run ONLY after the fixture operator records a real fixture-only terminal void for ticket A. Accepted history/allowance stay present. Usable recovery is refused."
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -4932,3 +4932,214 @@ customer selection screens.
   - Digital entitlement snapshot **1330 / 0**; QR rendering 10, 6 and 10 checks
     with 3 exact Vision decodes.
 - Nothing staged, committed, pushed or deployed.
+
+### Caller-relayed redemption — partial implementation, awaiting transport approval (2026-10-06)
+
+- Baseline verified clean: Commerce `bingotheme` at
+  `1345f6c809783a5d199b0f81612029922bf578ca`; Portal
+  `feature/commerce_connection` at `00cd4eeb9e2bc25dc534a857bfdebc8c696f89d1`.
+  Both HEADs remain unchanged. All changes are uncommitted and unstaged.
+- Portal's authenticated Caller relay is implemented using the existing transport
+  and unchanged 15/minute limiter. Commerce Portal Integration now owns a strict
+  Application Password adapter, least-privilege capability, trusted Hall resolution
+  and narrow domain gateway. Caller attribution and actual player-tablet identity
+  are separate. No Android internals or device registry are introduced.
+- Prepared Digital Tickets v4 request/redemption ledger migration, frozen-purchase
+  validator, pure contract and domain policy; Catalog supplies a narrow identity
+  reader. The domain provider is deliberately **not wired**. Authorized requests
+  return 503 and consume nothing while lifecycle persistence is unavailable.
+- **Required decision:** proposed
+  [ADR-047](docs/decisions/adr-047-redemption-lifecycle-transport.md) was prepared
+  and explicit approval requested under AGENTS.md rule 4. It is not approved.
+  No new captured-connection transport or shared voiding changes were implemented.
+  Existing entitlement voiding remains unchanged; concurrency guarantees are not
+  claimed by the prepared in-memory policy tests.
+- Verification: existing entitlement/QR/guest/email/voiding suite **1330/0**;
+  isolated adapter **51 assertions**; domain policy **168 assertions** with
+  explicitly mocked persistence; real CGI/Application Password adapter and saved
+  purchase/mapping checks **19/0**. Portal focused relay **55 tests / 293 assertions**;
+  full SQLite in-memory suite **793 tests / 3202 assertions**, 11.351 seconds,
+  with Commerce HTTP explicitly mocked.
+- Initial sandbox DB access failed closed; guarded fixture rerun with approved
+  local access passed. Two new CGI fixture runs exposed a test-worker global
+  variable collision, fixed before the passing run. Every run cleaned up. The
+  final new suite removed owned sites 1666/1667, their tables and service account,
+  restored the fixture limit and verified seed Halls 2/3/4 byte-identical. Prior
+  failed runs removed 1660–1663; the first passing run removed 1664/1665; the
+  existing suite removed 1658/1659. No existing
+  development data/settings were changed.
+- [Postman/manual handoff](docs/runbooks/qr-redemption-testing.md) and collection
+  are prepared. Acceptance folders are pending specifications, not passing proof.
+  Retained manual fixture hosting/seeding, actual single-use acceptance, shared
+  void serialization, uncertain-write/concurrency tests, ledger query plans,
+  representative latency and contention measurements remain pending approval and
+  implementation. No performance or deployment readiness claim is made.
+- Staff reactivation, offline authorization, maintenance jobs, rollout automation
+  and real Android/Caller loading remain outside this phase. Payment, checkout,
+  receipt/email, QR generation and coupons are unchanged.
+
+### Caller-relayed redemption — approved transport implemented and verified (2026-10-06)
+
+This supersedes the partial implementation entry above while preserving its history.
+
+- The user approved ADR-047 for Digital Tickets redemption and existing void
+  convergence only. AGENTS.md records that narrow exception. The provider is wired.
+  Original Hall/database context is captured before callback-capable preparation;
+  Hall switch-and-restore, connection replacement, outer transactions and reentry
+  fail before lifecycle writes. Real native rows compare strictly with WordPress rows.
+- Digital Tickets owns the additive v4 Hall-local ledger and captured-session
+  transport. One Hall mutex coordinates redemption with `record_void()` and
+  mutating `enforce_block()`, marker → entitlement/ticket → request/ledger. One
+  conditional autocommit UPDATE stores acceptance, contributions and complete
+  response. Separate durable markers survive failed status convergence. No
+  distributed transaction with Woo/provider refunds is claimed.
+- Original-request recovery, fresh-scan rejection, intent conflicts, per-actual-
+  tablet whole-ticket limits, voided recovery refusal and retained accepted usage
+  are implemented. No Catalog composition reconstruction, Session-template gate,
+  start expiry, loading prerequisite, device registry or automatic allowance release.
+  Existing billing-suspended paid access and guest/Processing eligibility remain.
+- Final tests on PHP 8.4.24 / MySQL 9.5.0, guarded isolated database only:
+  - Real database/independent-process persistence: **89/0**, 58.793 seconds.
+    Includes competing scans/tickets, simultaneous redemption/cancellation,
+    void-first/accept-first, native marker/status failures, interrupted requests,
+    killed writer, lost response, context/reentry and row/metadata/advisory waits.
+  - Real CGI/Application Password adapter: **19/0**, 12.017 seconds.
+  - Existing entitlement/QR/guest/email/refund suite: **1304/0**, 47.515 seconds.
+    Obsolete query-filter injections for native writes were replaced in part by
+    owned trigger failures and independent processes; the follow-up below closes
+    two identified coverage gaps. An initial rerun had two
+    harness assertions expecting `0` rather than WordPress's successful DDL `true`;
+    corrected before the final pass. No production condition was relaxed.
+  - Existing customer ticket/status suite with real Chrome stage: **747/0**,
+    214.958 seconds: 746 executed checks plus one optional-preview skip notice,
+    including two independent Vision QR decodes. Ten preview checks did not run.
+  - Existing checkout/order recording with Digital Tickets loaded: **1098/0**,
+    17.468 seconds. No external payment requests or email delivery.
+  - Mocked domain/adapter contracts: **168/51 assertions**; these are explicitly
+    not concurrency or real-authentication proof.
+  - Portal full SQLite-memory suite: **793 tests / 3202 assertions**, 11.862 seconds;
+    its Commerce HTTP boundary is mocked. Actual authenticated loopback relay:
+    **37 assertions / 18 HTTP requests**, including deliberate lost delivery after
+    real acceptance and the unchanged Caller limiter's 429 boundary.
+- Measured usage plans use `tablet_session` at 1,000/10,000 historical rows,
+  estimated matching rows 2/21. Ten real domain samples per size: p50
+  **38.987/37.317 ms**, p95/max **42.117/42.731 ms**. Advisory/row/metadata waits
+  returned after **5.040/5.076/5.076 seconds** against deliberate nine-second holds.
+  Loopback relay including CGI startup: p50 **860.714 ms**, p95 **877.199 ms**,
+  max **1231.013 ms**. These small local samples are not production load proof.
+- The existing **15/minute per CallerSN** bucket remains shared with polling and
+  other Caller requests. Retries preserve the original request ID. No limiter
+  configuration change. The 25-second transport budget stops new statements;
+  row/metadata and SELECT bounds are not a universal DML/network deadline.
+- [Manual fixture and Postman handoff](docs/runbooks/qr-redemption-testing.md)
+  provides owned private setup, exact localhost routes, expected responses,
+  ledger inspection, void case and cleanup. JSON was validated; Postman UI import
+  remains manual. No usable development token or credential is committed.
+- Cleanup: read-only verification found **zero remaining sites or Hall tables
+  for owned IDs 1668–1699**. Individual suites removed their service/customers,
+  restored isolated limits and verified seed Halls 2/3/4 unchanged. Manual Portal
+  SQLite/credentials/logs/uploads/directories were removed and servers stopped.
+  A pre-existing Woo analytics log observed earlier had no attributable baseline;
+  it was left untouched. No development database/settings were used for writes.
+- Remaining joint checks: actual Android attribution, persistent requests,
+  response routing and duplicate-load prevention; production TLS/environment/load.
+  Global MySQL instrumentation/read-only modes were not changed for fault injection;
+  other database vendors and packet-level SQL acknowledgement loss were not tested.
+  Staff reactivation, offline authorization, maintenance and rollout remain pending.
+- Both branches and HEADs remain at the recorded baseline. No files staged,
+  committed or pushed; nothing deployed. Stop for review.
+
+### ADR-047 focused verification follow-up — tests/evidence only (2026-10-06)
+
+- No production code or Portal files changed. Added a native Package-refund/payment
+  race alongside the existing cancellation races, plus an individual marker-read
+  failure after successful native schema verification. Preserved the separate
+  entitlement schema-unavailability test and existing snapshot-insert interleavings.
+- The refund race uses separate PHP processes, native trigger/lock barriers and
+  actual Woo refund/payment persistence without an external gateway. It proves
+  durable marker retention, no usable entitlement/ticket before or after repeated
+  payment notifications, and unchanged saved quantities/line items/financial facts.
+- The native read fault returns retryable 503 without journal/acceptance/allowance;
+  shared native void convergence throws instead of returning marker absence.
+  Restoration permits the original request to accept once. Faults are injected only
+  into owned disposable tables; no production defect was demonstrated.
+- Executed sequentially: persistence **112/0** (56.242 s), entitlement **1304/0**
+  (35.288 s), then final persistence **113/0** (58.638 s) after adding the immediate
+  post-race no-entitlement/no-ticket check. No failed runs or skipped assertions in
+  these suites. Final PHP lint and whitespace checks passed. No count target used.
+- Final native measurements: indexed usage at 1,000/10,000 historical rows;
+  ten real acceptances each, p50 **43.630/44.280 ms**, p95/max **46.282/46.263 ms**.
+  Advisory/row/metadata waits: **5.045/5.089/5.072 s**. Local samples only.
+- Each run restored the isolated limit and verified seed Halls 2/3/4 unchanged.
+  Read-only cleanup audit found zero sites/tables/triggers/mappings/audit rows for
+  IDs **1700–1705**, and zero QR service ownership markers. Development data unused.
+- Customer browser/Vision, auth CGI, Portal/relay, checkout and Postman UI were not
+  rerun in this tests-only follow-up. External refund transport is outside the
+  mutex; real Android integration and previously recorded server/network/load
+  limitations remain. Payment, receipts, email, checkout and coupon code unchanged.
+- Detailed executed/skipped evidence and historical count corrections are in the
+  [QR runbook](docs/runbooks/qr-redemption-testing.md#focused-verification-follow-up-2026-10-06).
+  Logs/commands/cleanup: `/private/tmp/qr-redemption-focused-evidence-20261006/`.
+  Existing implementation work remains unstaged and uncommitted; nothing pushed
+  or deployed. Stop for review.
+
+### ADR-047 lock-wait correction (review F1) — 2026-10-08
+
+- Baseline matched the final-review snapshot: Commerce `bingotheme` at
+  `1345f6c809783a5d199b0f81612029922bf578ca`, Portal `feature/commerce_connection`
+  at `00cd4eeb9e2bc25dc534a857bfdebc8c696f89d1`; earlier QR work stays unstaged.
+- Defect: MySQL applies the session `max_execution_time` to `SELECT GET_LOCK(...)`.
+  The 5 s lock wait was not kept inside the SELECT bound (5000 ms, or
+  `floor(remaining/2)` s after slow preparation), so contention could cancel the
+  lock request (errno 3024) instead of returning 0. That unknown acquisition failed
+  closed correctly, but cleanup could not prove the lock state and the transport
+  refused every later redemption, payment-time `enforce_block()` and void in the
+  same PHP process, with later void failures skipping per-order diagnostics.
+- Reproduction before the fix (owned fixtures; a separate real connection held the
+  Hall mutex; same-process follow-up): normal contention waited 5003.8 ms against
+  the 5000 ms bound and happened to finish cleanly; the reduced budget (4000 ms
+  bound) was cancelled at 4007 ms and the insufficient budget (1000 ms bound) at
+  1006 ms. In both cancelled cases, after release, a valid redemption returned 503,
+  a real in-process cancellation recorded **no void marker** and `enforce_block()`
+  failed. The new regression failed on the unfixed code at "same process then
+  accepts the original request once: reduced SELECT budget".
+- Fix, `LifecycleTransport::acquire()`/`lockWait()` only: the wait is sized before
+  acquisition becomes uncertain, at `min(5, SELECT bound − 1, remaining − 1)` whole
+  seconds, and is refused before dispatch below 1 s. Normal contention now waits 4 s.
+  Captured context/connection proof, lock-ownership checks, session restoration and
+  fail-closed handling of genuinely uncertain acquisition/release are unchanged; no
+  bound, budget or deadline was raised and no static guard is reset.
+- Regression `sameProcessContention()` (in the full persistence run, or alone with
+  `--same-process-contention-only`): normal, reduced-budget (16 s real slow callback)
+  and insufficient-budget (21.5 s) cases each assert the observed SELECT bound, a
+  retryable 503, no journal/acceptance/allowance, restored session bounds and lock
+  ownership, then after release a same-process acceptance, a durable cancellation
+  marker with convergence, no remaining lock or unproven state, and a lock attempt
+  ending inside the SELECT bound. Results: 3006/1.6/4005 ms against 4000/1000/5000 ms.
+- Only the independent-process advisory contention lower bound changed (4500 →
+  3500 ms; upper bound 8000 ms kept). Row/metadata wait assertions are unchanged.
+- Docs: runbook lock-wait statement and new section; Commerce saved response vs
+  Portal-enriched Caller response; default fixture has no Portal Game Types (names
+  null) plus an explicit optional display-name check; the single shared Portal
+  credential needs both `bc_receive_portal_provisioning` and
+  `bc_receive_portal_redemptions`. No service account was created or changed.
+- Verification, PHP 8.4.24 / MySQL 9.5.0, guarded `bingocommerce_state_recon`,
+  sequential: focused regression **30/0** (48 s); full persistence **143/0**
+  (102 s; advisory contention 4041.8 ms, row/metadata 5069.6/5053.0 ms; ledger
+  p50 32.9/32.0 ms at 1,000/10,000 rows, `tablet_session` index); entitlement
+  **1304/0**; real CGI/Application Password **19/0**; order recording with Digital
+  Tickets loaded **1098/0** (wrapper outside the repository). Portal relay
+  **65/361**, full Portal **803/3270**. Real loopback relay **37 assertions / 18 HTTP
+  requests**; the runbook's display-name steps passed as written on owned fixtures.
+- Cleanup: each run removed its owned sites (1730–1757 across the reproduction,
+  regression, suites and two loopback sets) and service account, restored the
+  isolated limit and verified seed Halls 2/3/4. The recon database returned to its
+  baseline (blogs 1–4, same table set, no triggers, mappings or user locks). A
+  read-only before/after snapshot of development orders, tickets, entitlements,
+  gateway/`bc_` settings, Application Passwords and Portal business tables showed
+  no change.
+- Remaining: Android loading/attribution, production TLS/load, staff reactivation,
+  offline authorisation, maintenance/reconciliation jobs and rollout automation stay
+  deferred; the MySQL `performance_schema` prerequisite, v4 migration and service
+  capability grant must be confirmed before enabling anywhere. Coupons remain last.
+  Nothing staged, committed, pushed or deployed. Stop for review.

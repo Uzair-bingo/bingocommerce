@@ -541,6 +541,22 @@ identity/role mapping remain deferred.
   remains within its individual Game Type limit. Exact Android wire-contract details
   (JSON fields, DTOs, game codes) are a separate, later, versionable integration
   decision. (BR-045, BR-055)
+- **Relay clarification, user-confirmed 2026-10-06:** the preceding historical
+  `caller_id` wording does not describe the current wire identity. Player tablets
+  communicate locally with a Caller; the authenticated Caller relays through
+  Portal to Commerce. `caller_id` identifies that relay for authentication/audit.
+  `player_tablet_id` identifies one actual tablet uniquely within its Hall,
+  including across different Callers. It is an opaque, bounded, unchanged value;
+  Android owns its generation, persistence and local attribution. Accumulation
+  uses Hall + exact purchased Commerce occurrence + `player_tablet_id` + Game Type.
+  Commerce records one whole-ticket acceptance. Only the original `request_id`
+  with the same ticket/tablet intent can recover the saved response; a fresh scan
+  is rejected, even on the same tablet. Loading failure does not release accepted
+  allowance. The exact saved Commerce occurrence controls redemption; Portal
+  Session-template mapping adds no eligibility requirement. Required Portal Game
+  Type mappings must be verified before acceptance. This clarification authorizes
+  no device registry, loading implementation, offline redemption, staff
+  reactivation implementation, maintenance job or rollout automation.
 - **Late redemption:** A Session starting does not automatically make a valid QR
   unusable. Late customers may still redeem during the Session. Do not introduce a
   strict "must redeem before Session start" rule, and do not invent an automatic

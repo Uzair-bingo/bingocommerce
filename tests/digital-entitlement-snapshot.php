@@ -593,26 +593,25 @@ final class DigitalEntitlementSnapshotTest {
 				$this->same( $before, $this->order_snapshot( $id ), "$path $case preserves original purchase and amounts" );
 			}
 		}
-		// Controlled interleavings use real Woo events, not mocks of our observers.
+		// Snapshot insertion remains wpdb-based, so its query hook is a real
+		// interleaving point. ADR-047's native marker/payment race is covered by
+		// the independent-process tests in qr-redemption-persistence.php; a query
+		// filter cannot intercept that transport and must not pretend to do so.
 		foreach ( [ 'package_refund', 'cancellation' ] as $cause ) {
-			foreach ( [ 'snapshot_insert', 'marker_insert' ] as $pause ) {
+			foreach ( [ 'snapshot_insert' ] as $pause ) {
 				$id = $this->order( $a ); $before = $this->order_snapshot( $id ); $nested = false;
-				$table = 'snapshot_insert' === $pause ? Migrations::table() : Migrations::voids_table();
-				$race = function ( $sql ) use ( $id, $cause, $pause, $table, &$nested ) {
+				$table = Migrations::table();
+				$race = function ( $sql ) use ( $id, $cause, $table, &$nested ) {
 					if ( ! $nested && str_starts_with( $sql, 'INSERT INTO `' . $table . '`' ) ) {
 						$nested = true;
-						if ( 'snapshot_insert' === $pause ) { $this->native_void( $id, $cause ); }
-						else { $this->confirm( $id ); }
+						$this->native_void( $id, $cause );
 					}
 					return $sql;
 				};
 				add_filter( 'query', $race );
 				try {
-					if ( 'snapshot_insert' === $pause ) {
-						$this->same( true, wc_get_order( $id )->payment_complete( 'fixture-interleaved' ), 'native payment call succeeds during interleaving' );
-						$this->same( 'cancellation' === $cause ? 'cancelled' : 'processing', wc_get_order( $id )->get_status(), 'nested native status change is not overwritten by entitlement observers' );
-					}
-					else { $this->native_void( $id, $cause ); }
+					$this->same( true, wc_get_order( $id )->payment_complete( 'fixture-interleaved' ), 'native payment call succeeds during interleaving' );
+					$this->same( 'cancellation' === $cause ? 'cancelled' : 'processing', wc_get_order( $id )->get_status(), 'nested native status change is not overwritten by entitlement observers' );
 				} finally { remove_filter( 'query', $race ); }
 				$this->same( true, $nested, "$cause interleaves at $pause" );
 				$row = $this->row( $id ); $marker = $this->marker( $id );
@@ -641,11 +640,16 @@ final class DigitalEntitlementSnapshotTest {
 		// A marker read error must not be interpreted as absence/permission to activate.
 		global $wpdb;
 		$id = $this->order( $a ); $this->native_void( $id, 'cancellation' ); $marker = $this->marker( $id );
-		$fail = static function ( $sql ) { return str_starts_with( $sql, 'SELECT * FROM `' . Migrations::voids_table() . '` WHERE order_id' ) ? 'SELECT * FROM bc_fixture_absent_marker_table' : $sql; };
-		$quiet = $wpdb->suppress_errors( true ); add_filter( 'query', $fail );
+		if ( $a['site'] <= 4 || $a['site'] !== get_current_blog_id() || $this->token !== get_option( 'bc_entitlement_test_owner' ) ) { throw new RuntimeException( 'Marker failure fixture ownership refused.' ); }
+		$voids = Migrations::voids_table(); $hidden_voids = $voids . '_fixture_hidden';
+		$this->same( 0, $wpdb->query( $wpdb->prepare( 'RENAME TABLE %i TO %i', $voids, $hidden_voids ) ), 'owned marker table temporarily unavailable' );
+		$quiet = $wpdb->suppress_errors( true );
 		try { $this->confirm( $id ); }
-		finally { remove_filter( 'query', $fail ); $wpdb->suppress_errors( $quiet ); }
-		$this->error( $id, 'bc_entitlement_void_failed' );
+		finally {
+			$this->same( 0, $wpdb->query( $wpdb->prepare( 'RENAME TABLE %i TO %i', $hidden_voids, $voids ) ), 'owned marker table restored without changing evidence' );
+			$wpdb->suppress_errors( $quiet );
+		}
+		$this->error( $id, 'bc_entitlement_schema_unavailable' );
 		$this->same( null, $this->row( $id ), 'unreadable terminal evidence fails closed without an entitlement' );
 		do_action( 'woocommerce_payment_complete', $id );
 		$this->same( null, $this->row( $id ), 'redelivery after read recovery stays blocked' );
@@ -844,13 +848,20 @@ final class DigitalEntitlementSnapshotTest {
 		}
 		// Failed status write must not undo a successful native refund.
 		$id = $this->order( $a ); $this->confirm( $id ); $row = $this->row( $id );
-		$fail = static function ( $sql ) { return str_starts_with( $sql, 'UPDATE `' . Migrations::table() . '` SET status' ) ? 'SELECT * FROM bc_fixture_absent_void_table' : $sql; };
-		wp_set_current_user( $this->admin ); $quiet = $wpdb->suppress_errors( true ); add_filter( 'query', $fail );
+		if ( $a['site'] <= 4 || $a['site'] !== get_current_blog_id() || $this->token !== get_option( 'bc_entitlement_test_owner' ) ) { throw new RuntimeException( 'Status failure fixture ownership refused.' ); }
+		$trigger = 'bc_dt_void_failure_' . substr( hash( 'sha256', $this->token ), 0, 16 );
+		$this->same( true, false !== $wpdb->query( $wpdb->prepare( 'CREATE TRIGGER %i BEFORE UPDATE ON %i FOR EACH ROW BEGIN IF NEW.order_id=%d AND NEW.status=%s THEN SIGNAL SQLSTATE %s SET MESSAGE_TEXT=%s; END IF; END',
+			$trigger, Migrations::table(), $id, 'void', '45000', 'Owned fixture status failure' ) ), 'owned native status failure trigger installed' );
+		wp_set_current_user( $this->admin ); $quiet = $wpdb->suppress_errors( true );
 		try { $result = $this->refund( $id, $this->refund_lines( wc_get_order( $id ), true ) ); }
-		finally { remove_filter( 'query', $fail ); $wpdb->suppress_errors( $quiet ); wp_set_current_user( 0 ); }
+		finally {
+			$this->same( true, false !== $wpdb->query( $wpdb->prepare( 'DROP TRIGGER %i', $trigger ) ), 'owned status failure trigger removed' );
+			$wpdb->suppress_errors( $quiet ); wp_set_current_user( 0 );
+		}
 		$this->same( true, $result instanceof WC_Order_Refund, 'void storage failure leaves successful refund intact' );
 		$this->same( 1, count( wc_get_order( $id )->get_refunds() ), 'successful refund not deleted after void error' );
 		$this->same( $row, $this->row( $id ), 'failed status write preserves original snapshot' );
+		$this->same( 'package_refund', $this->marker( $id )['cause'] ?? null, 'native status failure preserves durable refund marker' );
 		$this->same( [ 'bc_entitlement_void_failed', $id, $a['site'] ], end( $this->void_errors ), 'storage failure is reported' );
 		do_action( 'woocommerce_refund_created', $result->get_id(), [ 'order_id' => $id, 'refund_payment' => false ] );
 		$row['status'] = 'void'; $this->same( $row, $this->row( $id ), 'redelivery after storage recovery voids without another refund' );

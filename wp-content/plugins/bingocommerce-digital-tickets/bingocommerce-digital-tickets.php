@@ -13,6 +13,10 @@ declare(strict_types=1);
 if ( ! defined( 'ABSPATH' ) ) { exit; }
 
 require_once __DIR__ . '/src/Migrations.php';
+require_once __DIR__ . '/src/RedemptionContract.php';
+require_once __DIR__ . '/src/LifecycleTransport.php';
+require_once __DIR__ . '/src/RedemptionPurchase.php';
+require_once __DIR__ . '/src/RedemptionService.php';
 require_once __DIR__ . '/src/EntitlementSnapshot.php';
 require_once __DIR__ . '/src/EntitlementVoiding.php';
 require_once __DIR__ . '/src/DigitalTicket.php';

@@ -71,6 +71,8 @@ final class Plugin {
 		 * an authenticated Portal request and by nothing else.
 		 */
 		ProvisioningRestController::register();
+		// Dedicated machine capability, granted to no role automatically.
+		RedemptionRestController::register();
 	}
 
 	/**

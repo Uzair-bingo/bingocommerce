@@ -8,7 +8,7 @@ independently activatable and testable.
 | `bingocommerce-core` | Roles & capabilities, tenant context helpers, audit log service, migration framework; Hall public storefront profile (Store Details: per-site `bc_store_details`, Appearance → Store Details screen, read-only `bingocommerce_store_details` filter — ADR-045 narrow clarification of ADR-026); Hall homepage slider (`bc_homepage_slider`, Appearance → Homepage, read-only `bingocommerce_homepage_slider` filter — ADR-045 addition 2026-09-30); Hall Shop by Category cards (`bc_homepage_categories`, independent Appearance → Homepage form, read-only `bingocommerce_homepage_categories` — ADR-045 addition 2026-10-01); BR-084 `StorefrontStyleGuard` (on Hall sites only Super Admins may edit/delete/publish `wp_global_styles`; the unavailable Appearance → Fonts entry is removed for everyone else) | WooCommerce (network) |
 | `bingocommerce-catalog` | Hall-scoped Game Type replica/domain behavior, Bingo Play Product domain metadata/mapping, Bingo Package definitions/components, ADR-044 Package add-on eligibility/configuration, administration and targeted projection reconciliation, BR-032/BR-065 metadata projections, BR-064 network maximum and Hall override settings screens/writers plus the read-only current-value resolver, starter-product domain logic when that deferred copy exists (ADR-026/ADR-031/ADR-035/ADR-044; add-on schema Slice 1, backend Slice 2 and admin UI Slice 3 implemented; ADR-042 MVP runs no starter copy) | core |
 | `bingocommerce-sessions` | Portal Session-template replica; Commerce schedules with immutable named timezone and structured time; dated occurrence generation/reconciliation; inclusive hall-local 30-day window; centralized current-definition membership; Available for Sale; Package assignment; and customer occurrence-before-Package selection, including the read-only, signed-out-safe homepage Session calendar (`HomepageSessionCalendar`, `bingocommerce_homepage_session_calendar` filter — ADR-045 / BR-084 addition 2026-10-01) (BR-050–BR-052/BR-063/BR-073/BR-077/BR-078/BR-080; approved ADR-043) | core, catalog |
-| `bingocommerce-digital-tickets` | Implemented: Hall-local purchase-time entitlement snapshot on successful online payment, refund/cancellation voiding and terminal markers, stable QR reference, guarded customer order-view rendering, and a paid-order email link to that authorized view. Pending: Android scanning/redemption, device binding, and staff reactivation | core, catalog, sessions |
+| `bingocommerce-digital-tickets` | Implemented: Hall-local paid entitlement snapshots, refund/cancellation markers, stable customer QR/access, and Caller-relayed server redemption with request recovery, tablet binding and whole-ticket limits. Android loading and staff reactivation remain separate | core, catalog, sessions |
 | `bingocommerce-portal-integration` | Portal-facing machine endpoint; request authentication/validation; provisioning-operation persistence/sequencing; Portal Hall mapping coordination; HallCommerceState/managed-marker coordination; Portal snapshot synchronization; safe API responses and integration audit attribution (ADR-035–ADR-042) | core |
 | `bingocommerce-platform` | Actual WordPress Multisite site creation; WooCommerce/site initialization; triggering existing per-site BingoCommerce migrations and role provisioning; returning a structured setup result to the integration orchestrator; billing lifecycle (BR-016); retention/deletion (BR-017); network reporting. Does not own Catalog domain rules. ADR-042 MVP does not trigger starter Product/Play Product copy | core |
 
@@ -133,7 +133,8 @@ deployment is not claimed.
   inventory, commerce schedules, structured commerce time, dated occurrences,
   Package availability, sales eligibility, checkout/orders/payments, address
   availability, the authoritative Hall site URL, and implemented Hall-local
-  entitlement/ticket state. Android redemption remains future work.
+  entitlement/ticket state, including the server redemption ledger. Android owns
+  scanning, local relay and card/game loading.
 - Within the single authoritative Bingo Innovation Portal environment, cross-
   system identity uses `halls.id` -> WordPress Site ID, `game_types.id` -> hall-
   scoped Game Type replica, and `bingo_sessions.id` for the operational Session
@@ -190,6 +191,40 @@ partial create before `address_occupied`; malformed internal command →
 marker-matched partial-site suspend — including when that suspend path returns
 `mapping_invalid`). Business logic MUST NOT be duplicated between plugins. The
 hook is implemented by `bingocommerce-platform`.
+
+### Caller relay redemption boundary — 2026-10-06
+
+The authorized path is player tablet → Caller → Portal → Commerce. Portal reuses
+Caller authentication and its trusted Hall; Commerce independently resolves that
+Portal Hall. The QR Hall identifier only cross-checks the resolved Hall.
+
+Portal Integration owns the machine REST adapter and dedicated
+`bc_receive_portal_redemptions` capability (automatically granted to no role), plus
+the narrow `bingocommerce_redeem_digital_ticket` filter. It does not query Digital
+Tickets tables. Digital Tickets owns domain verification, the request/redemption
+ledger, lifecycle protection and migrations. Catalog supplies only Game Type
+identity reads and its existing effective-limit resolver. No broad Catalog/admin
+capability is required for redemption. Paid-ticket identity resolution is separate
+from storefront archival; it does not enable sales or modify billing state.
+
+The Digital Tickets provider is wired under approved
+[ADR-047](../decisions/adr-047-redemption-lifecycle-transport.md). Its captured
+writer session is bound before callback-capable preparation and rechecked before
+lifecycle writes. A Hall mutex serializes acceptance with existing void-marker
+creation and mutating void convergence. One conditional InnoDB autocommit UPDATE
+saves acceptance, immutable aggregate contributions and the complete response.
+The terminal marker remains a separate durable write before status convergence.
+External payment/refund processing is not part of that serialization.
+
+Original matching requests recover the saved response after authorization and
+current void checks. Fresh scans receive `already_redeemed`; loading failure and
+later voiding do not release allowance. Limits derive from accepted ledger rows
+for the exact purchased Commerce occurrence and opaque actual player tablet.
+Portal Session-template mapping is not an eligibility check. Required Portal
+Game Type mappings and saved purchase details are validated before acceptance.
+No current Catalog composition, Session expiry, device registry or loading state
+is introduced. See the [manual/testing handoff](../runbooks/qr-redemption-testing.md)
+and PROJECT_STATUS.md for measured verification and remaining integration checks.
 
 ## 2. Internal Structure (every plugin)
 

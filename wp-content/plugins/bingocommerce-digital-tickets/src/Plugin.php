@@ -19,6 +19,7 @@ final class Plugin {
 	}
 
 	public static function init(): void {
+		add_filter( RedemptionContract::FILTER, [ RedemptionService::class, 'receive' ], 10, 2 );
 		// Register even if a dependency is missing: the payment observer must report
 		// an unavailable snapshot boundary, not silently reinterpret it as Paper.
 		add_action( 'woocommerce_payment_complete', [ EntitlementSnapshot::class, 'on_payment_complete' ], 10 );

@@ -10,7 +10,7 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
 
 /** Plugin-owned schema. No payment callback performs DDL or creates defaults. */
 final class Migrations {
-	public const DB_VERSION = 3;
+	public const DB_VERSION = 4;
 	public const VERSION_OPTION = 'bc_digital_tickets_db_version';
 	public const SWEEP_OPTION = 'bc_digital_tickets_network_migration_sweep_version';
 
@@ -27,6 +27,11 @@ final class Migrations {
 	public static function tickets_table(): string {
 		global $wpdb;
 		return $wpdb->prefix . 'bingo_tickets';
+	}
+
+	public static function redemptions_table(): string {
+		global $wpdb;
+		return $wpdb->prefix . 'bingo_redemptions';
 	}
 
 	public static function is_hall(): bool {
@@ -106,7 +111,28 @@ final class Migrations {
 	PRIMARY KEY  (entitlement_id),
 	UNIQUE KEY token_unique (token)
 ) ENGINE=InnoDB {$collation};" );
+		$redemptions = self::redemptions_table();
+		dbDelta( "CREATE TABLE {$redemptions} (
+	request_id char(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+	intent_hash char(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+	player_tablet_id varbinary(128) NOT NULL,
+	caller_id varbinary(191) NOT NULL,
+	state varchar(16) NOT NULL,
+	accepted_entitlement_id bigint(20) unsigned DEFAULT NULL,
+	session_id bigint(20) unsigned DEFAULT NULL,
+	redemption_id char(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+	contributions_json longtext DEFAULT NULL,
+	response_json longtext DEFAULT NULL,
+	created_at datetime NOT NULL,
+	accepted_at datetime DEFAULT NULL,
+	PRIMARY KEY  (request_id),
+	UNIQUE KEY accepted_entitlement_unique (accepted_entitlement_id),
+	UNIQUE KEY redemption_unique (redemption_id),
+	KEY tablet_session (state,session_id,player_tablet_id)
+) ENGINE=InnoDB {$collation};" );
 		$result = self::verify_current_site_schema();
+		if ( is_wp_error( $result ) ) { return $result; }
+		$result = self::verify_redemption_schema();
 		if ( is_wp_error( $result ) ) { return $result; }
 		update_option( self::VERSION_OPTION, self::DB_VERSION, false );
 		$version = $wpdb->get_var( $wpdb->prepare( 'SELECT option_value FROM %i WHERE option_name = %s', $wpdb->options, self::VERSION_OPTION ) );
@@ -133,7 +159,23 @@ final class Migrations {
 		], [ 'PRIMARY' => [ [ 'entitlement_id', 0, null ] ], 'token_unique' => [ [ 'token', 0, null ] ] ], '' );
 	}
 
-	private static function verify_table( string $table, array $patterns, array $required_indexes, string $auto_increment = 'entitlement_id' ): true|\WP_Error {
+	/** Additive boundary: missing ledger never disables existing issuance/display. */
+	public static function verify_redemption_schema(): true|\WP_Error {
+		if ( ! self::is_hall() ) { return self::error(); }
+		return self::verify_table( self::redemptions_table(), [
+			'request_id' => '/^char\(36\)$/', 'intent_hash' => '/^char\(64\)$/', 'player_tablet_id' => '/^varbinary\(128\)$/',
+			'caller_id' => '/^varbinary\(191\)$/', 'state' => '/^varchar\(16\)$/',
+			'accepted_entitlement_id' => '/^bigint(?:\(20\))? unsigned$/', 'session_id' => '/^bigint(?:\(20\))? unsigned$/',
+			'redemption_id' => '/^char\(36\)$/', 'contributions_json' => '/^longtext$/', 'response_json' => '/^longtext$/',
+			'created_at' => '/^datetime$/', 'accepted_at' => '/^datetime$/',
+		], [
+			'PRIMARY' => [ [ 'request_id', 0, null ] ], 'accepted_entitlement_unique' => [ [ 'accepted_entitlement_id', 0, null ] ],
+			'redemption_unique' => [ [ 'redemption_id', 0, null ] ],
+			'tablet_session' => [ [ 'state', 1, null ], [ 'session_id', 1, null ], [ 'player_tablet_id', 1, null ] ],
+		], '', [ 'accepted_entitlement_id', 'session_id', 'contributions_json', 'response_json', 'accepted_at' ] );
+	}
+
+	private static function verify_table( string $table, array $patterns, array $required_indexes, string $auto_increment = 'entitlement_id', array $nullable = [] ): true|\WP_Error {
 		global $wpdb;
 		$status = $wpdb->get_row( $wpdb->prepare( 'SHOW TABLE STATUS LIKE %s', $wpdb->esc_like( $table ) ), ARRAY_A );
 		if ( '' !== $wpdb->last_error || ! is_array( $status ) || 'InnoDB' !== $status['Engine'] || ! str_starts_with( $status['Collation'], 'utf8mb4_' ) ) { return self::error(); }
@@ -142,10 +184,10 @@ final class Migrations {
 		$columns = array_column( $columns, null, 'Field' );
 		foreach ( $patterns as $name => $pattern ) {
 			$column = $columns[ $name ] ?? [];
-			if ( ! preg_match( $pattern, $column['Type'] ?? '' ) || 'NO' !== ( $column['Null'] ?? null )
+			if ( ! preg_match( $pattern, $column['Type'] ?? '' ) || ( in_array( $name, $nullable, true ) ? 'YES' : 'NO' ) !== ( $column['Null'] ?? null )
 				|| ( $auto_increment === $name ? 'auto_increment' : '' ) !== ( $column['Extra'] ?? null ) ) { return self::error(); }
 		}
-		foreach ( [ 'selection_id', 'token' ] as $binary ) {
+		foreach ( [ 'selection_id', 'token', 'request_id', 'intent_hash', 'redemption_id' ] as $binary ) {
 			if ( isset( $patterns[ $binary ] ) && 'ascii_bin' !== $columns[ $binary ]['Collation'] ) { return self::error(); }
 		}
 		$indexes = $wpdb->get_results( $wpdb->prepare( 'SHOW INDEX FROM %i', $table ), ARRAY_A );
