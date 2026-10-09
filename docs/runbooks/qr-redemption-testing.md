@@ -199,8 +199,7 @@ Exact Postman URL: `http://127.0.0.1:18781/api/caller/redemptions` with JSON hea
 and the private environment. The existing Caller limiter is unchanged. Optional
 alternative free ports must be set with `BC_QR_PORTAL_ORIGIN` and
 `BC_QR_COMMERCE_ORIGIN` during Commerce preparation, and then used for both servers.
-Successes show `game_type_name: null` unless the optional display-name check below
-is prepared before case 01.
+Successes show `game_type_name: null` (see the display-name note below).
 
 Inspect accepted rows and independently derived per-tablet totals at any step:
 
@@ -303,38 +302,26 @@ digital entry: the current Portal display name for that `portal_game_type_id` in
 the authenticated Hall, or `null`. Every other field is Commerce's response
 unchanged. Names are never stored in Commerce's ledger and never affect
 eligibility, recovery or limits; a Portal rename changes only the label on a later
-recovery. **The default manual fixture creates no Portal Game Types, so every
-Postman success shows `game_type_name: null`** unless matching rows are deliberately
-added to the owned Portal fixture database (see the optional check below).
+recovery.
 
-### Optional display-name check (owned fixture only)
+### Display names in the manual fixture
 
-Prerequisite: Portal Game Type rows must exist in the owned fixture SQLite, which the
-default Portal `prepare` does not create. The Commerce fixture maps each fixture
-Hall's first local Game Type to Portal Game Type ID `1001` (second: `1002`). Both
-Halls use those IDs, which a real Portal could not do because `game_types.id` is
-global. After both `prepare` commands and before Postman case 01:
+Portal's bounded name lookup is enabled only on its verified native MySQL profile
+(see Portal `docs/BINGOCOMMERCE_INTEGRATION.md`, "Bounded display lookup"). The
+manual Portal fixture uses SQLite, so **every Postman success shows
+`game_type_name: null`, even if matching Game Types are inserted** into the owned
+fixture database. This is expected and does not affect redemption, recovery or
+limits. The former SQLite insert/rename recipe no longer applies.
 
-1. Read Hall A's `portal_hall_id` from the `inspect` output (its `a` entry).
-2. Add one Hall A row to the owned fixture database only:
+To check names and the one-second lookup bound, use Portal's
+guarded native MySQL test, run from the Portal repository as documented there:
 
-   ```sh
-   sqlite3 "$BC_QR_FIXTURE_DIR/portal.sqlite" "INSERT INTO game_types (id, hall_id, name, device_group_id) VALUES (1001, <hall_a_portal_hall_id>, 'Fixture display label', 1);"
-   ```
+```sh
+BC_NAME_TIMEOUT_TEST=1 php tests/qr-redemption-name-timeout.php
+```
 
-3. Run case 01. Its digital entry shows `"game_type_name": "Fixture display label"`.
-4. Rename that row, then run case 02 (original-request recovery):
-
-   ```sh
-   sqlite3 "$BC_QR_FIXTURE_DIR/portal.sqlite" "UPDATE game_types SET name = 'Renamed display label' WHERE id = 1001 AND hall_id = <hall_a_portal_hall_id>;"
-   ```
-
-   Only `game_type_name` and `recovered` differ from case 01: `redemption_id`, IDs
-   and faces are unchanged, and `inspect` shows the same accepted rows and totals.
-
-A Hall B success for the same Portal ID still shows `null`, because the row belongs
-to Hall A. Never run these statements against development Portal data; Portal
-fixture cleanup deletes the SQLite file, including the added row.
+It creates and removes only its own disposable schema; never point it at, or edit
+Game Types in, development Portal data.
 
 Errors contain `api_version:1` and `error:{code,message,retryable}`. Statuses:
 400 malformed input; 401/403 authentication/authority/Hall mismatch; 404 a
