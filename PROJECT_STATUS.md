@@ -5143,3 +5143,30 @@ This supersedes the partial implementation entry above while preserving its hist
   deferred; the MySQL `performance_schema` prerequisite, v4 migration and service
   capability grant must be confirmed before enabling anywhere. Coupons remain last.
   Nothing staged, committed, pushed or deployed. Stop for review.
+
+### QR display-name documentation follow-up — 2026-10-08
+
+- Documentation only, at Commerce `fbe12da` / Portal `f37c88c`. The runbook no longer
+  claims the SQLite manual fixture shows Portal display names: Portal's bounded lookup
+  is enabled only on its verified native MySQL profile, so the fixture returns
+  `game_type_name: null` even with inserted Game Types. The obsolete SQLite
+  insert/rename recipe was replaced by a reference to Portal's guarded native test
+  (`BC_NAME_TIMEOUT_TEST=1 php tests/qr-redemption-name-timeout.php`). No code,
+  tests, configuration or data changed; no suites or fixtures were run.
+
+### Order-page ticket loading presentation — 2026-10-08
+
+- The Digital Bingo ticket waiting area now uses a bordered card, coloured status
+  panels, a prominent blue loading spinner and separate retry guidance. Manual
+  checks retain a visible spinner; reduced-motion users see a static indicator.
+  Waiting styles disappear when the saved QR is shown. Existing messages, polling,
+  access checks, payment and ticket issuance behaviour are unchanged.
+- Asset version is 1.3.3. Updated the existing stylesheet-version assertion and
+  optional browser preview assertions for the new presentation.
+- Verification: PHP/JavaScript syntax and `git diff --check` passed. An isolated
+  Chrome preview passed 38 checks across desktop/mobile, automatic/manual checking,
+  failed checks, ready/closed/unavailable states, reduced motion and no JavaScript.
+  It used the real theme/plugin assets and bundled QR encoder, synthetic order HTML
+  and mocked status responses. Screenshots were reviewed. Native database/CGI suites
+  were not rerun for this presentation-only change; no development data was used
+  or changed. Existing uncommitted work was preserved; nothing staged or committed.

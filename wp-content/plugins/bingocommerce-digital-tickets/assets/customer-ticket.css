@@ -1,19 +1,92 @@
-/* Digital Bingo ticket waiting area: a small loading sign while the page checks for the ticket. It takes the text colour. */
+/* Presentation only: these styles stop applying when the saved ticket is shown. */
+.bc-digital-ticket[data-bc-ticket-wait] {
+	margin: 24px 0;
+	padding: 24px;
+	border: 1px solid #dbe3ef;
+	border-radius: 16px;
+	background: #fff;
+	color: #172b4d;
+}
+.bc-digital-ticket[data-bc-ticket-wait] h2 {
+	margin: 0 0 16px;
+	color: #172b4d;
+	font-size: 1.375rem;
+	line-height: 1.35;
+}
+.bc-digital-ticket[data-bc-ticket-wait] > p:not(.screen-reader-text) {
+	margin: 0 0 16px;
+	line-height: 1.6;
+	overflow-wrap: anywhere;
+}
+.bc-digital-ticket [data-bc-ticket-message] {
+	padding: 16px 18px;
+	border-left: 4px solid #2472ca;
+	border-radius: 8px;
+	background: #f0f6ff;
+	color: #194e8a;
+}
+.bc-digital-ticket[data-bc-ticket-wait="payment"] [data-bc-ticket-message],
+.bc-digital-ticket[data-bc-ticket-wait="unavailable"] [data-bc-ticket-message] {
+	border-left-color: #c48416;
+	background: #fff8e8;
+	color: #77500e;
+}
+.bc-digital-ticket[data-bc-ticket-wait="closed"] [data-bc-ticket-message] {
+	border-left-color: #a63b3b;
+	background: #fff2f2;
+	color: #8c3030;
+}
+.bc-digital-ticket .bc-ticket-checking {
+	display: flex;
+	align-items: center;
+	gap: 14px;
+	padding: 18px;
+	border: 1px solid #c4daf7;
+	border-radius: 10px;
+	background: #edf5ff;
+	color: #194e8a;
+	font-weight: 600;
+}
+.bc-digital-ticket .bc-ticket-guidance {
+	padding: 16px 18px;
+	border-radius: 8px;
+	background: #f3f5f8;
+	color: #43536b;
+}
+.bc-digital-ticket[data-bc-ticket-wait] .bc-ticket-actions {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 14px;
+	margin-bottom: 0;
+}
+.bc-digital-ticket .bc-ticket-check-again {
+	min-height: 44px;
+}
+.bc-digital-ticket .bc-ticket-check-again[aria-disabled="true"] {
+	cursor: wait;
+}
 .bc-digital-ticket .bc-ticket-spinner {
 	display: inline-block;
 	box-sizing: border-box;
-	width: 1em;
-	height: 1em;
-	margin-right: .5em;
-	vertical-align: -.15em;
-	border: 2px solid currentColor;
-	border-right-color: transparent;
+	flex: 0 0 auto;
+	width: 30px;
+	height: 30px;
+	border: 3px solid #b6d1f3;
+	border-top-color: #2067ba;
 	border-radius: 50%;
 	animation: bc-ticket-spin .8s linear infinite;
 }
-.bc-digital-ticket .bc-ticket-spinner[hidden] { display: none; }
-.bc-digital-ticket .button + .bc-ticket-spinner { margin: 0 0 0 .75em; vertical-align: middle; }
+.bc-digital-ticket .bc-ticket-actions .bc-ticket-spinner { width: 24px; height: 24px; }
+.bc-digital-ticket .bc-ticket-spinner[hidden],
+.bc-digital-ticket .bc-ticket-checking[hidden],
+.bc-digital-ticket .bc-ticket-guidance[hidden],
+.bc-digital-ticket[data-bc-ticket-wait] .bc-ticket-actions[hidden] { display: none; }
 @keyframes bc-ticket-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) {
-	.bc-digital-ticket .bc-ticket-spinner { animation: none; border-right-color: currentColor; opacity: .5; }
+	.bc-digital-ticket .bc-ticket-spinner { animation: none; }
+}
+@media (max-width: 480px) {
+	.bc-digital-ticket[data-bc-ticket-wait] { padding: 16px; }
+	.bc-digital-ticket .bc-ticket-checking { padding: 16px; gap: 12px; }
 }

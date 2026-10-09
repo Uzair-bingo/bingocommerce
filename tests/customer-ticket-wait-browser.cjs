@@ -964,15 +964,11 @@ async function previews(browser) {
 		await open(t, o.received);
 		const layout = await t.page.evaluate(() => {
 			const s = document.querySelector('section.bc-digital-ticket'); const message = s.querySelector('[data-bc-ticket-message]');
-			const guidance = [...s.querySelectorAll(':scope > p')].find(p => !p.hasAttribute('data-bc-ticket-message') && !p.classList.contains('screen-reader-text'));
-			// A plain paragraph in the same place: the new text must look exactly like it.
-			const probe = document.createElement('p'); s.parentElement.appendChild(probe);
-			const style = node => { const c = getComputedStyle(node); return [c.fontFamily, c.fontSize, c.fontWeight, c.color, c.lineHeight]; };
-			const result = {overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth, message: JSON.stringify(style(message)) === JSON.stringify(style(probe)), guidance: JSON.stringify(style(guidance)) === JSON.stringify(style(probe)), inline: s.querySelectorAll('[style]').length};
-			probe.remove();
-			return result;
+			const checking = s.querySelector('.bc-ticket-checking'), spinner = checking.querySelector('.bc-ticket-spinner');
+			const panel = node => { const c = getComputedStyle(node); return c.backgroundColor !== 'rgba(0, 0, 0, 0)' && parseFloat(c.paddingTop) >= 12; };
+			return {overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth, message: panel(message), checking: panel(checking), spinner: spinner.getBoundingClientRect().width >= 24, inline: s.querySelectorAll('[style]').length};
 		});
-		same({overflow: 0, message: true, guidance: true, inline: 0}, layout, `${label}: no horizontal overflow; the message and checking note look like any paragraph there; no inline styles`);
+		same({overflow: 0, message: true, checking: true, spinner: true, inline: 0}, layout, `${label}: no horizontal overflow; coloured status panels and prominent loading indicator; no inline styles`);
 		// The order summary (order number, date, email, total, payment method): one row per fact on phones,
 		// label left and value right inside one box; WooCommerce's own single row on wider screens.
 		const summary = await t.page.evaluate(() => {

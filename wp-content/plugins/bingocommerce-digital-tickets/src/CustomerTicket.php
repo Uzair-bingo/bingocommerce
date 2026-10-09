@@ -19,7 +19,7 @@ final class CustomerTicket {
 	private const ONLINE_CARD_GATEWAYS = [ 'stripe' ];
 
 	/** The waiting area's script and stylesheet version. */
-	private const VERSION = '1.3.2';
+	private const VERSION = '1.3.3';
 
 	/** The thank-you line's read for each Hall:order, reused once by render() so both show the same state. */
 	private static array $noticed = [];
@@ -139,7 +139,7 @@ final class CustomerTicket {
 		];
 		self::assets();
 		$validity = self::validity( $order );
-		// The waiting area's small loading sign; it takes the theme's text colour.
+		// The waiting area's status panels and visible activity indicator.
 		wp_enqueue_style( 'bc-customer-ticket', plugins_url( 'assets/customer-ticket.css', dirname( __DIR__ ) . '/bingocommerce-digital-tickets.php' ), [], self::VERSION );
 		wp_localize_script( 'bc-customer-ticket', 'bcCustomerTicket', [
 			'checking'         => __( 'This page will check again automatically for a short time.', 'bingocommerce-digital-tickets' ),

@@ -44,7 +44,7 @@
 		return node;
 	}
 
-	/** A small loading sign; screen readers get the text beside it instead. */
+	/** Visible activity indicator; screen readers get the text beside it instead. */
 	function spinner() {
 		var node = element( 'span', 'bc-ticket-spinner' );
 		node.setAttribute( 'aria-hidden', 'true' );
@@ -122,7 +122,7 @@
 		var target = url && credential ? { url: url, credential: credential, nonce: section.getAttribute( 'data-bc-ticket-nonce' ) || '' } : null;
 		var storage = store(), key = 'bc-ticket-wait:' + scope;
 		var state = section.getAttribute( 'data-bc-ticket-wait' ), timer = 0, due = false, busy = false, active = false, failed = false;
-		var checking = element( 'p' ), guidance = element( 'p' ), action = element( 'p' ), button = element( 'button', 'button' ), status = element( 'p', 'screen-reader-text' );
+		var checking = element( 'p', 'bc-ticket-checking' ), guidance = element( 'p', 'bc-ticket-guidance' ), action = element( 'p', 'bc-ticket-actions' ), button = element( 'button', 'button bc-ticket-check-again' ), status = element( 'p', 'screen-reader-text' );
 		var working = spinner();
 		// The loading sign shows beside the checking note while automatic checks run, and beside Check again during a manual check.
 		checking.appendChild( spinner() );
