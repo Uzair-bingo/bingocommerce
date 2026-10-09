@@ -531,8 +531,17 @@ a.calendar-day.is-selected:focus-visible .calendar-day__num { box-shadow: var(--
 .bc-purchase__summary .btn--primary:hover { background: #fff; color: var(--color-navy); }
 .bc-purchase__submit:disabled { opacity: .7; cursor: progress; transform: none; box-shadow: none; }
 .bc-purchase__result { margin-top: 16px; padding: 14px 16px; border-left: 4px solid var(--color-error); border-radius: var(--radius-sm); background: #fff; color: var(--color-text); font-size: 14px; overflow-wrap: anywhere; }
-.bc-purchase__result.is-success { border-left-color: var(--color-success); }
+.bc-purchase__result.is-success { display: grid; grid-template-columns: 44px minmax(0, 1fr) 28px; align-items: start; gap: 14px; padding: 18px; border: 1px solid #79bf93; border-radius: 10px; background: #edf9f1; }
+.bc-purchase__result.is-success[hidden] { display: none; }
 .bc-purchase__result p { margin: 0; }
+.bc-purchase__success-icon { position: relative; width: 44px; height: 44px; margin-top: 3px; border-radius: 50%; background: #439d60; }
+.bc-purchase__success-icon::after { content: ''; position: absolute; top: 11px; left: 16px; width: 11px; height: 18px; border: solid #fff; border-width: 0 4px 4px 0; transform: rotate(45deg); }
+.bc-purchase__success-content { min-width: 0; }
+.bc-purchase__success-title { display: block; color: #226c39; font-size: 20px; font-weight: 700; line-height: 1.3; }
+.bc-purchase__result .bc-purchase__success-summary { margin-top: 4px; color: var(--color-navy); font-size: 16px; font-weight: 600; line-height: 1.45; }
+.bc-purchase__result .bc-purchase__success-guidance { margin-top: 6px; color: #53617a; font-size: 14px; line-height: 1.5; }
+.bc-purchase__success-dismiss { display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: #53617a; font: inherit; font-size: 28px; line-height: 1; cursor: pointer; }
+.bc-purchase__success-dismiss:hover { background: #d9efdf; color: var(--color-navy); }
 .bc-purchase__links { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin-top: 12px !important; }
 .bc-purchase__links a { font-weight: 600; }
 .bc-purchase__links a.bc-purchase__cart-link { display: inline-flex; align-items: center; min-height: 44px; padding: 10px 20px; border-radius: 999px; background: var(--color-blue-dark); color: #fff; text-decoration: none; }
@@ -566,6 +575,11 @@ a.calendar-day.is-selected:focus-visible .calendar-day__num { box-shadow: var(--
 	.addon-card { padding: 10px 10px 12px; }
 	.bc-purchase__summary { padding: 22px 18px; }
 	.bc-purchase__line { grid-template-columns: minmax(0, 1fr); }
+	.bc-purchase__result.is-success { grid-template-columns: 34px minmax(0, 1fr) 28px; gap: 10px; padding: 14px; }
+	.bc-purchase__success-icon { width: 34px; height: 34px; }
+	.bc-purchase__success-icon::after { top: 8px; left: 12px; width: 9px; height: 15px; border-width: 0 3px 3px 0; }
+	.bc-purchase__success-title { font-size: 18px; }
+	.bc-purchase__result .bc-purchase__success-summary { font-size: 14px; }
 }
 
 .section-heading { text-align: center; max-width: 720px; margin: 0 auto; }

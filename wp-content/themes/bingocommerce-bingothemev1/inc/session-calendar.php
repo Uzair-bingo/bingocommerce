@@ -358,11 +358,15 @@ final class SessionCalendar {
 			'quantityRange'    => __( 'Enter a whole number from 1 to %2$d for %1$s.', Theme::TEXT_DOMAIN ),
 			'addToCart'        => __( 'Add to cart', Theme::TEXT_DOMAIN ),
 			'adding'           => __( 'Adding…', Theme::TEXT_DOMAIN ),
-			/* translators: 1: Package name, 2: Session name, 3: Session date (and time). */
-			'added'            => __( 'Added %1$s for %2$s on %3$s to your cart.', Theme::TEXT_DOMAIN ),
+			'added'            => __( 'Added to cart', Theme::TEXT_DOMAIN ),
+			/* translators: 1: Package name, 2: number of selected add-ons. */
+			'addedWithAddon'   => __( '%1$s + %2$d add-on', Theme::TEXT_DOMAIN ),
+			/* translators: 1: Package name, 2: number of selected add-ons. */
+			'addedWithAddons'  => __( '%1$s + %2$d add-ons', Theme::TEXT_DOMAIN ),
+			'dismissAdded'     => __( 'Dismiss confirmation', Theme::TEXT_DOMAIN ),
 			/* translators: %s: comma-separated add-ons with quantities. */
 			'addedAddons'      => __( 'Add-ons: %s.', Theme::TEXT_DOMAIN ),
-			'locked'           => __( 'This selection is in your cart. To choose a different Package, remove it from your cart first.', Theme::TEXT_DOMAIN ),
+			'locked'           => __( 'To choose another package, remove this selection from your cart first.', Theme::TEXT_DOMAIN ),
 			'viewCart'         => __( 'View cart', Theme::TEXT_DOMAIN ),
 			'refresh'          => __( 'Refresh this Session’s Packages', Theme::TEXT_DOMAIN ),
 			'expired'          => __( 'This page has expired. Reload it and try again.', Theme::TEXT_DOMAIN ),

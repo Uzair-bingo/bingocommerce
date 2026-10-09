@@ -314,12 +314,44 @@
 		return anchor;
 	}
 	/* Server outcomes: one visible message and one announcement, never both by focus. */
-	function report( kind, message, links ) {
+	function report( kind, message, links, confirmation ) {
 		result.textContent = '';
 		result.className = 'bc-purchase__result is-' + kind;
-		var paragraph = document.createElement( 'p' );
-		paragraph.textContent = message;
-		result.appendChild( paragraph );
+		if ( 'success' === kind && confirmation ) {
+			var icon = document.createElement( 'span' );
+			icon.className = 'bc-purchase__success-icon';
+			icon.setAttribute( 'aria-hidden', 'true' );
+			result.appendChild( icon );
+			var content = document.createElement( 'div' );
+			content.className = 'bc-purchase__success-content';
+			var title = document.createElement( 'strong' );
+			title.className = 'bc-purchase__success-title';
+			title.textContent = text.added || '';
+			content.appendChild( title );
+			var summary = document.createElement( 'p' );
+			summary.className = 'bc-purchase__success-summary';
+			summary.textContent = confirmation.summary;
+			content.appendChild( summary );
+			var guidance = document.createElement( 'p' );
+			guidance.className = 'bc-purchase__success-guidance';
+			guidance.textContent = text.locked || '';
+			content.appendChild( guidance );
+			result.appendChild( content );
+			var dismiss = document.createElement( 'button' );
+			dismiss.type = 'button';
+			dismiss.className = 'bc-purchase__success-dismiss';
+			dismiss.setAttribute( 'aria-label', text.dismissAdded || '' );
+			dismiss.textContent = '×';
+			dismiss.addEventListener( 'click', function () {
+				result.hidden = true;
+				if ( viewCart && visible() ) { viewCart.focus(); }
+			} );
+			result.appendChild( dismiss );
+		} else {
+			var paragraph = document.createElement( 'p' );
+			paragraph.textContent = message;
+			result.appendChild( paragraph );
+		}
 		if ( links && links.length ) {
 			var actions = document.createElement( 'p' );
 			actions.className = 'bc-purchase__links';
@@ -459,14 +491,17 @@
 	}
 	function succeed( captured ) {
 		completed = true;
-		var message = format( text.added, captured.packageName, config.sessionName, config.sessionWhen );
+		var summary = captured.addons.length
+			? format( 1 === captured.addons.length ? text.addedWithAddon : text.addedWithAddons, captured.packageName, captured.addons.length )
+			: captured.packageName;
+		var message = ( text.added || '' ) + '. ' + summary + '.';
 		if ( captured.addons.length ) {
 			message += ' ' + format( text.addedAddons, captured.addons.map( function ( addon ) { return format( text.addonQuantity, addon.name, addon.quantity ); } ).join( ', ' ) );
 		}
 		setBusy( false );
 		submit.hidden = true;
 		if ( viewCart ) { viewCart.hidden = false; }
-		report( 'success', message + ' ' + ( text.locked || '' ), [] );
+		report( 'success', message + ' ' + ( text.locked || '' ), [], { summary: summary } );
 		if ( viewCart && visible() ) { viewCart.focus(); }
 		// The theme's existing header refresh (theme.js) re-renders the cart count.
 		document.body.dispatchEvent( new window.CustomEvent( 'wc-blocks_added_to_cart', { bubbles: true } ) );
