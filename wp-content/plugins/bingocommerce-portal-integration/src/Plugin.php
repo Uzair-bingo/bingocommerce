@@ -20,6 +20,11 @@ final class Plugin {
 	public const ENFORCEMENT_PRIORITY = PHP_INT_MIN;
 
 	public static function boot(): void {
+		// Account protections apply network-wide, even with SSO off or no schema.
+		// Register now, not on admin_init or behind a Hall/request-type check.
+		SsoAccountGuard::register();
+		SsoWooCommerceGuard::register();
+
 		/*
 		 * Registered here, at plugin include time, rather than inside init()
 		 * below: init() itself runs on `plugins_loaded`, and a hook added from

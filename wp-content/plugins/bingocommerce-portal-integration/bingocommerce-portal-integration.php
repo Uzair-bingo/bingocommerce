@@ -16,6 +16,10 @@ define( 'BINGOCOMMERCE_PORTAL_INTEGRATION_VERSION', '0.1.0' );
 define( 'BINGOCOMMERCE_PORTAL_INTEGRATION_PATH', plugin_dir_path( __FILE__ ) );
 
 require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/Migrations.php';
+// Explicit migration only; loading the plugin never installs the SSO schema.
+require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/SsoMigrations.php';
+require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/SsoAccountGuard.php';
+require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/SsoWooCommerceGuard.php';
 require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/HallMappingRepository.php';
 require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/PortalConfig.php';
 require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/PortalHttpClient.php';

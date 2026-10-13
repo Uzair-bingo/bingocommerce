@@ -5267,6 +5267,125 @@ This supersedes the partial implementation entry above while preserving its hist
 - Approved (2026-10-13): the user approved ADR-048 and BR-085. Nothing is
   implemented. Implementation starts with the Hall Staff SSO grant review
   (ADR-048 §19, check 3) and the creation-audit reuse check (check 14).
+- Phase 0 follow-up (2026-10-13), ADR-048 clarified after checking the Hall
+  Staff code: SSO accounts use their own identity type `portal_sso` (never
+  `staff_operational`, so no password-setup invitation is possible); the link
+  saves the creation SSO reference and the creation audit always uses values
+  fixed at creation, so retries match; WordPress's unchecked clean-up after
+  account creation is confirmed before the account is written into the link.
+  No design change.
 - No code, tests, configuration, database or plugin state changed. AGENTS.md,
   requirements and architecture documents are updated only when SSO is
   implemented. Nothing staged or committed.
+
+### ADR-048 Phase 1 — SSO schema and account guards (2026-10-13)
+
+- Implemented only the approved BingoCommerce foundation. The Portal exchange,
+  SSO login/session flow, account provisioning, identity marker and Hall Staff
+  system grant remain unimplemented. No WordPress/WooCommerce core edits, new
+  plugins, commits or staging. The user's existing ADR/DECISIONS edits remain
+  untouched.
+- `SsoMigrations` owns `bingo_portal_sso_links` and
+  `bingo_portal_sso_attempts` under the network prefix, with its independent
+  `bc_portal_sso_db_version`. Includes the creation SSO reference, nullable
+  `wp_user_id` (default NULL), identity/username/user uniqueness, and the required
+  Hall, expiry and IP-fingerprint/creation-time indexes. Uses `dbDelta`, prepared
+  SQL, structural verification before version persistence and an explicit
+  `migrate()` entry point. No automatic migration hook; development was not
+  migrated. Partial-failure retry and idempotent reruns are tested.
+- Both account guards register unconditionally at plugin include time, including
+  the main site, Network Admin, REST, XML-RPC and AJAX. They use the `portal-`
+  username only, independently of SSO settings/tables. New usernames are reserved
+  case-insensitively at `wp_pre_insert_user_data`; updates pass through. The
+  future provisioner has an exact, one-use, in-memory username exception with
+  `finally` cleanup and no request-controlled switch.
+- WordPress's central `authenticate`, `allow_password_reset` and
+  `wp_is_application_passwords_available_for_user` hooks refuse alternative
+  credentials through their supported request paths. Additional
+  `validate_password_reset` coverage is necessary for previously issued reset
+  keys: completion does not re-check the reset-request permission.
+- WooCommerce has no shared pre-key-write hook: its AJAX writer and application
+  authorization path are guarded before writes. Key use is refused at identity
+  resolution and REST boundaries, including WC's authentication fallback and
+  the installed MCP transport's permission-callback authentication. Tests cover
+  Basic, query-string Basic, OAuth query/header and MCP credentials, key
+  reassignment, normalized Basic key names, and pretty authorization URLs with
+  empty query overrides. Normal-account controls still succeed.
+- WordPress's own-profile password fields use `show_password_fields`.
+  WooCommerce's form-start hook emits one scoped rule for Portal accounts only;
+  no CSS asset or copied template was added.
+- Test commands and results:
+  - `BC_TEST_DB=bingocommerce_state_recon php tests/portal-sso-foundation.php`
+    — **319 assertions PASS**, using installed WordPress/WooCommerce, including
+    every requested creation path, signup activation, classic and Store API
+    checkout account creation, allowed updates, profile markup, credential
+    restrictions, normal Hall Staff create/assign/invitation and a warm-cache
+    no-extra-query check. These are CLI handler/REST integration tests, not a
+    browser visual test or a full SSO end-to-end test.
+  - `BC_TEST_DB=bingocommerce_state_recon php tests/portal-integration-foundation.php`
+    — **77 assertions PASS**.
+  - `BC_TEST_DB=bingocommerce_state_test php tests/portal-provisioning-foundation.php`
+    — final run **551/551 PASS**. The initial run failed its assumption that a
+    fixture Hall options table was absent (550/551); after the harness cleanup,
+    a control with SSO guards removed in memory and the normal run both passed.
+    No provisioning production code or existing harness was changed.
+  - `BC_TEST_DB=bingocommerce_state_test php tests/hall-commerce-access.php`
+    — **not run to completion**: its guard refused an existing Hall mapping
+    table/version in the fixture.
+  - `BC_TEST_DB=bingocommerce_state_test php tests/portal-provisioning-endpoint.php`
+    — **not run to completion**: its guard refused fixture sites beyond its
+    expected three. Neither safety guard was bypassed.
+  - The first SSO run with `BC_TEST_DB=bingocommerce_state_test_suites` could not
+    bootstrap because that existing fixture lacks a Hall options table. The
+    successful SSO runs use the already allowlisted `bingocommerce_state_recon`.
+  - The older full Hall Staff and Portal HTTP-client suites directly require
+    development `wp-load.php`; they were not executed. The focused suite instead
+    exercises normal staff creation/invitation in the isolated fixture.
+  - PHP syntax checks for all seven changed/new PHP files and `git diff --check`
+    pass. No production/development database migration or browser login was run.
+
+To apply **only the new SSO schema to development later**, run explicitly:
+
+```sh
+php -r '
+$_SERVER["HTTP_HOST"] = "bingocommerce.test";
+$_SERVER["REQUEST_URI"] = "/";
+$_SERVER["REQUEST_METHOD"] = "GET";
+require "/Users/abdesign/Project/bingocommerce/wp-load.php";
+$result = \BingoCommerce\PortalIntegration\SsoMigrations::migrate();
+if (is_wp_error($result)) { fwrite(STDERR, $result->get_error_message() . "\n"); exit(1); }
+echo "Portal SSO schema verified.\n";
+'
+```
+
+This command is recorded for the user; it was **not executed** during Phase 1.
+
+### ADR-048 Phase 1 — exact SSO username reservation (2026-10-13)
+
+- Per the user's correction and ADR-048 section 2, narrowed
+  `SsoAccountGuard::is_reserved_username()` to the case-insensitive exact format
+  `^portal-[a-z0-9]{1,20}-[1-9][0-9]*$`. Reservation and account recognition
+  still share this function. Ordinary `portal-mike`-style usernames are no
+  longer reserved or treated as SSO accounts. The one-use planned-name
+  creation exception is unchanged; no new database lookup was introduced.
+- Updated refusal cases to actual SSO-format names and added format-boundary
+  coverage. Added successful email-generated customer creation through the
+  WooCommerce customer API, My Account, classic checkout and Store API checkout,
+  plus Hall Staff create/assign/invitation coverage for a `portal-mike...` email.
+  The ordinary credential/profile control now also uses a non-SSO `portal-`
+  username, verifying that its existing access remains available.
+- The first new customer API test encountered WooCommerce's username-required
+  setting. Corrected the fixture to enable automatic username generation for
+  that case. Test cleanup now clears process-local option caches before
+  restoring options changed by worker processes.
+- Verification, only against the isolated `bingocommerce_state_recon` database:
+  - `BC_TEST_DB=bingocommerce_state_recon php tests/portal-sso-foundation.php`
+    — **381 assertions PASS**.
+  - `BC_TEST_DB=bingocommerce_state_recon php tests/portal-integration-foundation.php`
+    — **77 assertions PASS** (also emitted four Hall Staff writer-guard
+    diagnostics; no assertion failures).
+  - PHP syntax checks for the three edited PHP files and `git diff --check`
+    pass.
+- This correction touches only `SsoAccountGuard.php`, the SSO test harness and
+  worker, and this status note. No development migration, Hall Staff production
+  change, staging or commit.
