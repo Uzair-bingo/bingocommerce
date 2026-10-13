@@ -5389,3 +5389,70 @@ This command is recorded for the user; it was **not executed** during Phase 1.
 - This correction touches only `SsoAccountGuard.php`, the SSO test harness and
   worker, and this status note. No development migration, Hall Staff production
   change, staging or commit.
+
+### ADR-048 Phase 2 — Hall Staff implementation and isolated verification (2026-10-13)
+
+- Implemented the approved Hall Staff scope across 17 files. The Portal
+  Integration loader and shared fixture are unchanged. No login flow, Portal
+  exchange, account-creation flow, or core reads of the SSO links table.
+- `HallStaffIdentity::is_portal_sso_username()` owns the exact, case-insensitive
+  `^portal-[a-z0-9]{1,20}-[1-9][0-9]*$` match. Portal Integration delegates to
+  it normally. Per the user's standing rule, the missing-core fallback uses
+  the identical pattern: ordinary customers/staff remain ordinary, including
+  `portal-mike`, `portal-mike-x` and `portal-a-0`. The SSO creation exception
+  itself remains unavailable without core.
+- Added an SSO creation-audit entry reusing the existing witness resolver with
+  null actor, `source=portal_sso`, the original creation facts and the account's
+  own email. It saves and verifies `bc_identity_type=portal_sso` before audit.
+  It creates no account, link, role, invitation or human retry token.
+- Added a dedicated SSO Hall Manager grant/request with a private constructor.
+  It requires the creation witness and current Hall, fixes assign/Hall Manager/
+  no previous role/null actor, and uses the existing ADR-025 transport. The
+  transaction retains its target locks, authoritative role checks, mandatory
+  audit, reconciliation and targeted cache cleanup. BR-036 remains the same
+  pre-transaction eligibility check.
+- Added Portal-managed target protection to human services and the transport,
+  plus the "Managed by Portal" Hall Staff label and action hiding for Hall
+  Managers. Platform Admin operations retain their existing safeguards. Fixed
+  the invitation form's closing-tag indentation.
+- Converted the two legacy suites and their workers' bootstrap/fixture setup
+  to the isolated database. All explicit database-binding checks remain.
+  Removed the unsupported `BC_FIXTURE_EXISTING_ONLY` prerequisite everywhere
+  in these harnesses. The user explicitly allowed the existing fixture's
+  read-only development `SHOW CREATE TABLE` access; no 18th file was added.
+  Phase A initially refused the fixture's existing `bc_fixture_manager_3`.
+  Its setup now temporarily removes only that identified synthetic membership
+  and restores it in cleanup, keeping the original zero-manager test intact.
+- Tokenized comparison against HEAD confirms every existing assertion call's
+  text is unchanged: Phase A **58 -> 58**; Create/Invite **245 -> 245**. These
+  are static call counts; loops produce the executed totals below.
+- Ran these commands sequentially with PHP 8.4 at
+  `/opt/homebrew/opt/php@8.4/bin/php`, all with
+  `BC_TEST_DB=bingocommerce_state_recon`:
+  - `php tests/hall-staff-sso.php` — **101 assertions PASS**. Covers system
+    creation audits, cross-Hall creation retries, grant refusals, mandatory
+    audit rollback/retry, concurrent grants, human-path protection, core-only
+    operation, and missing-core behavior. The fallback worker compares all six
+    requested usernames with core and proves real username/email password
+    login for ordinary accounts, including a synthetic Network Super Admin.
+  - `php tests/hall-staff-phase-a-fixes.php` — **67 assertions PASS** after
+    the fixture-only setup adjustment above.
+  - `php tests/hall-staff-create-invite.php` — **262 passed, 0 failed**.
+  - `php tests/portal-sso-foundation.php` — **381 assertions PASS**.
+  - `php tests/portal-integration-foundation.php` — **77 assertions PASS**.
+- Legacy diagnostics: the first Create/Invite run printed `MEMBERSHIP BASELINE
+  RESTORED: NO`, although all assertions passed and cleanup reported zero
+  leftover test users, orphan metadata, triggers and locks. A diagnostic rerun
+  with external before/after membership snapshots again passed **262/262**,
+  printed **baseline restored: YES**, and showed **no added or removed
+  memberships**. The initial differing rows were not captured, so their cause
+  is unconfirmed. Its first same-email race also reported
+  `transaction_already_open` from one worker; the unchanged assertion proves
+  one created identity, not success of both workers. Neither assertion nor
+  transport behavior was relaxed to silence this diagnostic. Fault-injection
+  duplicate-key errors and writer-guard refusal logs also appeared as expected.
+- Final static checks: PHP syntax passes for all 16 changed/new PHP files;
+  `git diff --check` passes; legacy assertion text and call counts match HEAD.
+  Missing `BC_TEST_DB` refuses before bootstrap. The shared matcher has no
+  broad prefix fallback. No development data writes/migration, staging, commit
+  or installation. This verifies Phase 2's scoped behavior, not end-to-end SSO.

@@ -24,6 +24,11 @@ final class SsoAccountGuard {
 	}
 
 	public static function is_reserved_username( string $username ): bool {
+		if ( class_exists( '\\BingoCommerce\\Core\\HallStaffIdentity' ) ) {
+			return \BingoCommerce\Core\HallStaffIdentity::is_portal_sso_username( $username );
+		}
+		// Preserve the exact identity boundary even when core is unavailable.
+		// This fallback must agree with HallStaffIdentity, never reserve a prefix.
 		return 1 === preg_match( '/^portal-[a-z0-9]{1,20}-[1-9][0-9]*$/iD', $username );
 	}
 
@@ -41,7 +46,8 @@ final class SsoAccountGuard {
 	 * @return mixed|\WP_Error
 	 */
 	public static function with_planned_username( string $username, callable $operation ) {
-		if ( self::$creation_scope_open || 1 !== preg_match( '/^portal-[a-z0-9]{1,20}-[1-9][0-9]*$/D', $username ) || strlen( $username ) > 60 ) {
+		if ( self::$creation_scope_open || ! class_exists( '\\BingoCommerce\\Core\\HallStaffIdentity' )
+			|| ! self::is_reserved_username( $username ) || strtolower( $username ) !== $username || strlen( $username ) > 60 ) {
 			return new \WP_Error( 'portal_sso_invalid_creation_scope', __( 'Invalid Portal account creation scope.', 'bingocommerce-portal-integration' ) );
 		}
 

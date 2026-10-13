@@ -43,7 +43,7 @@ final class HallStaffTransactionTransport {
 	 *
 	 * @return string|\WP_Error One HallStaffResult success status, or failure.
 	 */
-	public static function execute( HallStaffIntent $intent, array $audit_event, bool $is_retry ) {
+	public static function execute( HallStaffIntent|HallStaffSsoGrant $intent, array $audit_event, bool $is_retry ) {
 		$transport = new self();
 		$captured  = $transport->capture( $intent );
 
@@ -55,7 +55,7 @@ final class HallStaffTransactionTransport {
 	}
 
 	/** @return true|\WP_Error */
-	private function capture( HallStaffIntent $intent ) {
+	private function capture( HallStaffIntent|HallStaffSsoGrant $intent ) {
 		global $wpdb;
 
 		if ( ! isset( $wpdb->dbh ) || ! $wpdb->dbh instanceof \mysqli ) {
@@ -98,7 +98,7 @@ final class HallStaffTransactionTransport {
 	}
 
 	/** @return string|\WP_Error */
-	private function run( HallStaffIntent $intent, array $audit_event, bool $is_retry ) {
+	private function run( HallStaffIntent|HallStaffSsoGrant $intent, array $audit_event, bool $is_retry ) {
 		$lock = $this->acquire_lock();
 
 		if ( is_wp_error( $lock ) ) {
@@ -272,8 +272,9 @@ final class HallStaffTransactionTransport {
 	 *
 	 * @return array<string,mixed>|\WP_Error
 	 */
-	private function lock_and_validate_state( HallStaffIntent $intent ) {
-		$user_ids = array_values( array_unique( [ $intent->actor_user_id, $intent->target_user_id ] ) );
+	private function lock_and_validate_state( HallStaffIntent|HallStaffSsoGrant $intent ) {
+		$portal_sso = $intent instanceof HallStaffSsoGrant;
+		$user_ids = $portal_sso ? [ $intent->target_user_id ] : array_values( array_unique( [ $intent->actor_user_id, $intent->target_user_id ] ) );
 		sort( $user_ids, SORT_NUMERIC );
 		$users = $this->select_all(
 			"SELECT ID, user_login FROM {$this->users_table} WHERE ID IN (" . self::placeholders( count( $user_ids ) ) . ') ORDER BY ID FOR UPDATE',
@@ -312,8 +313,15 @@ final class HallStaffTransactionTransport {
 			return $this->failure( 'authorization_state_invalid', 'Authoritative authorization state is invalid.', self::CONSISTENCY_VIOLATION );
 		}
 
-		$actor_is_super  = in_array( $user_logins[ $intent->actor_user_id ], $super_admins, true );
+		$actor_is_super  = ! $portal_sso && in_array( $user_logins[ $intent->actor_user_id ], $super_admins, true );
 		$target_is_super = in_array( $user_logins[ $intent->target_user_id ], $super_admins, true );
+		$target_is_sso   = HallStaffIdentity::is_portal_sso_username( $user_logins[ $intent->target_user_id ] );
+		if ( $portal_sso && ( ! $target_is_sso || $user_logins[ $intent->target_user_id ] !== $intent->planned_username ) ) {
+			return $this->failure( 'target_not_eligible', 'The SSO account identity has changed.', self::NOT_COMMITTED_VERIFIED );
+		}
+		if ( ! $portal_sso && $target_is_sso && ! $actor_is_super ) {
+			return $this->failure( 'managed_by_portal', 'Only a Platform Admin may manage this Portal account.', self::NOT_COMMITTED_VERIFIED );
+		}
 
 		$manager_caps = $roles[ Roles::HALL_MANAGER ]['capabilities'] ?? null;
 		if ( ! is_array( $manager_caps ) || empty( $manager_caps['bc_manage_hall_staff'] ) ) {
@@ -385,7 +393,7 @@ final class HallStaffTransactionTransport {
 			return $this->failure( 'duplicate_membership_rows', 'Duplicate Hall Staff membership rows violate the canonical state model.', self::CONSISTENCY_VIOLATION );
 		}
 
-		if ( ! $actor_is_super ) {
+		if ( ! $portal_sso && ! $actor_is_super ) {
 			$actor_value = $actor_caps[0]['meta_value'] ?? null;
 			if ( $manager_value !== $actor_value ) {
 				return $this->failure( 'actor_not_authorized', 'The current actor is no longer authorized to manage this hall.', self::NOT_COMMITTED_VERIFIED );
@@ -458,7 +466,7 @@ final class HallStaffTransactionTransport {
 	}
 
 	/** @param array<string,mixed> $state @return true|\WP_Error */
-	private function mutate( HallStaffIntent $intent, array $state ) {
+	private function mutate( HallStaffIntent|HallStaffSsoGrant $intent, array $state ) {
 		$capability_id = $state['target_capability_id'];
 		$level_id      = $state['target_level_id'];
 
@@ -534,7 +542,7 @@ final class HallStaffTransactionTransport {
 	}
 
 	/** @return string|\WP_Error */
-	private function reconcile_failure( HallStaffIntent $intent, PreparedAuditEvent $audit_event, \WP_Error $cause ) {
+	private function reconcile_failure( HallStaffIntent|HallStaffSsoGrant $intent, PreparedAuditEvent $audit_event, \WP_Error $cause ) {
 		$result = $this->reconcile( $intent, $audit_event, $cause->get_error_code() );
 
 		if ( HallStaffResult::COMMITTED_VERIFIED === $result ) {
@@ -549,7 +557,7 @@ final class HallStaffTransactionTransport {
 	}
 
 	/** @return string|\WP_Error */
-	private function reconcile( HallStaffIntent $intent, PreparedAuditEvent $audit_event, ?string $cause ) {
+	private function reconcile( HallStaffIntent|HallStaffSsoGrant $intent, PreparedAuditEvent $audit_event, ?string $cause ) {
 		$witness = $this->read_reconciliation_witness( $intent->operation_id );
 
 		if ( is_wp_error( $witness ) ) {
@@ -801,7 +809,7 @@ final class HallStaffTransactionTransport {
 		string $code,
 		string $message,
 		string $status,
-		?HallStaffIntent $intent = null,
+		HallStaffIntent|HallStaffSsoGrant|null $intent = null,
 		?string $cause = null
 	): \WP_Error {
 		$data = [ 'status' => $status ];

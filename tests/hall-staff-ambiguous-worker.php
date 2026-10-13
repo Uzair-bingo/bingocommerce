@@ -24,7 +24,21 @@ $_SERVER['HTTP_HOST']      = 'bingocommerce.test';
 $_SERVER['REQUEST_URI']    = '/';
 $_SERVER['REQUEST_METHOD'] = 'GET';
 
-require dirname( __DIR__ ) . '/wp-load.php';
+// These legacy suites may run only on the existing isolated fixture.
+if ( 'bingocommerce_state_recon' !== getenv( 'BC_TEST_DB' ) ) {
+	fwrite( STDERR, "Isolated Hall Staff fixture required; development bootstrap is forbidden.\n" );
+	exit( 1 );
+}
+putenv( 'BC_FIXTURE_WOOCOMMERCE=1' );
+require __DIR__ . '/fixtures/wordpress-bootstrap.php';
+if ( DB_NAME !== BC_Fixture::$database || DB_NAME === BC_Fixture::$live_db
+	|| DB_NAME !== 'bingocommerce_state_recon'
+	|| DB_NAME !== $wpdb->get_var( $wpdb->prepare( 'SELECT DATABASE() WHERE %d = %d', 1, 1 ) ) ) {
+	throw new RuntimeException( 'Refusing Hall Staff tests: isolated database binding is not proven.' );
+}
+if ( 1 !== (int) username_exists( 'fixture_admin' ) || ! is_super_admin( 1 ) ) {
+	throw new RuntimeException( 'The isolated fixture must provide fixture_admin as actor 1 for these unchanged legacy cases.' );
+}
 require_once ABSPATH . 'wp-admin/includes/ms.php';
 
 use BingoCommerce\Core\HallStaffProvisioningService;

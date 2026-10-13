@@ -28,6 +28,8 @@ require_once BINGOCOMMERCE_CORE_PATH . 'src/HallStaffEligibility.php';
 require_once BINGOCOMMERCE_CORE_PATH . 'src/HallStaffIdentity.php';
 require_once BINGOCOMMERCE_CORE_PATH . 'src/HallStaffService.php';
 require_once BINGOCOMMERCE_CORE_PATH . 'src/HallStaffCreationIntent.php';
+require_once BINGOCOMMERCE_CORE_PATH . 'src/HallStaffSsoCreationIntent.php';
+require_once BINGOCOMMERCE_CORE_PATH . 'src/HallStaffSsoGrant.php';
 require_once BINGOCOMMERCE_CORE_PATH . 'src/HallStaffCreationRetryToken.php';
 require_once BINGOCOMMERCE_CORE_PATH . 'src/HallStaffProvisioningContext.php';
 require_once BINGOCOMMERCE_CORE_PATH . 'src/HallStaffInvitation.php';

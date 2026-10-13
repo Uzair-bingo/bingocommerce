@@ -6,7 +6,7 @@
  * Lives outside wp-content/ so it can never ship inside the deployable plugin.
  *
  * Run from the repository root:
- * php tests/hall-staff-phase-a-fixes.php
+ * BC_TEST_DB=bingocommerce_state_recon php tests/hall-staff-phase-a-fixes.php
  */
 
 if ( 'cli' !== PHP_SAPI ) {
@@ -14,7 +14,21 @@ if ( 'cli' !== PHP_SAPI ) {
 	exit( 1 );
 }
 
-require dirname( __DIR__ ) . '/wp-load.php';
+// These legacy suites may run only on the existing isolated fixture.
+if ( 'bingocommerce_state_recon' !== getenv( 'BC_TEST_DB' ) ) {
+	fwrite( STDERR, "Isolated Hall Staff fixture required; development bootstrap is forbidden.\n" );
+	exit( 1 );
+}
+putenv( 'BC_FIXTURE_WOOCOMMERCE=1' );
+require __DIR__ . '/fixtures/wordpress-bootstrap.php';
+if ( DB_NAME !== BC_Fixture::$database || DB_NAME === BC_Fixture::$live_db
+	|| DB_NAME !== 'bingocommerce_state_recon'
+	|| DB_NAME !== $wpdb->get_var( $wpdb->prepare( 'SELECT DATABASE() WHERE %d = %d', 1, 1 ) ) ) {
+	throw new RuntimeException( 'Refusing Hall Staff tests: isolated database binding is not proven.' );
+}
+if ( 1 !== (int) username_exists( 'fixture_admin' ) || ! is_super_admin( 1 ) ) {
+	throw new RuntimeException( 'The isolated fixture must provide fixture_admin as actor 1 for these unchanged legacy cases.' );
+}
 require_once ABSPATH . 'wp-admin/includes/ms.php';
 
 use BingoCommerce\Core\HallStaffAdmin;
@@ -27,9 +41,12 @@ final class HallStaffPhaseAFixTest {
 	/** @var array<int,int> */
 	private array $temporary_users = [];
 	private int $assertions = 0;
+	private int $baseline_manager = 0;
+	private int $hall_three_fixture_manager = 0;
 
 	public function run(): void {
 		try {
+			$this->prepare_fixture();
 			$this->test_reserved_scope_fields();
 			$this->test_assignment_retry_target_binding_and_override_audit();
 			$this->test_writer_guard_pairs();
@@ -40,6 +57,35 @@ final class HallStaffPhaseAFixTest {
 		}
 
 		echo "PASS: {$this->assertions} Hall Staff Phase A fix assertions.\n";
+	}
+
+	/** Reproduce the original suite's Hall/actor fixtures without live identities. */
+	private function prepare_fixture(): void {
+		$managers = $this->manager_ids( 3 );
+		if ( [] !== $managers ) {
+			$fixture = get_user_by( 'login', 'bc_fixture_manager_3' );
+			if ( ! $fixture instanceof WP_User || [ (int) $fixture->ID ] !== $managers || is_super_admin( $fixture->ID ) ) {
+				throw new RuntimeException( 'Fixture Hall 3 has unexpected staff; no unrelated staff will be removed.' );
+			}
+			$this->hall_three_fixture_manager = (int) $fixture->ID;
+			switch_to_blog( 3 );
+			wp_set_current_user( 1 );
+			$removed = HallStaffService::remove_staff( $fixture->ID );
+			restore_current_blog();
+			if ( ! $removed instanceof HallStaffResult ) {
+				throw new RuntimeException( 'Could not prepare the isolated Hall 3 fixture.' );
+			}
+		}
+		$this->baseline_manager = $this->create_user( 'baseline-manager' )->ID;
+		// The existing hall_manager_id helper intentionally excludes test targets.
+		array_pop( $this->temporary_users );
+		switch_to_blog( 2 );
+		wp_set_current_user( 1 );
+		$result = HallStaffService::assign_existing_user( get_userdata( $this->baseline_manager )->user_email, Roles::HALL_MANAGER );
+		restore_current_blog();
+		if ( ! $result instanceof HallStaffResult ) {
+			throw new RuntimeException( 'Could not prepare the isolated Hall Manager fixture.' );
+		}
 	}
 
 	private function test_reserved_scope_fields(): void {
@@ -276,7 +322,11 @@ final class HallStaffPhaseAFixTest {
 		$root  = dirname( __DIR__ );
 		$start = microtime( true ) + 1.0;
 		$code  = <<<'PHP'
-require $argv[1] . '/wp-load.php'; switch_to_blog(3); wp_set_current_user((int) $argv[2]); while (microtime(true) < (float) $argv[4]) { usleep(1000); } $result = \BingoCommerce\Core\HallStaffService::remove_staff((int) $argv[3]); echo is_wp_error($result) ? 'ERROR:' . $result->get_error_code() : $result->status;
+if ('bingocommerce_state_recon' !== getenv('BC_TEST_DB')) { exit(1); }
+putenv('BC_FIXTURE_WOOCOMMERCE=1');
+require $argv[1] . '/tests/fixtures/wordpress-bootstrap.php';
+if (DB_NAME !== 'bingocommerce_state_recon' || DB_NAME !== BC_Fixture::$database || DB_NAME === BC_Fixture::$live_db || DB_NAME !== $wpdb->get_var($wpdb->prepare('SELECT DATABASE() WHERE %d = %d', 1, 1))) { exit(1); }
+switch_to_blog(3); wp_set_current_user((int) $argv[2]); while (microtime(true) < (float) $argv[4]) { usleep(1000); } $result = \BingoCommerce\Core\HallStaffService::remove_staff((int) $argv[3]); echo is_wp_error($result) ? 'ERROR:' . $result->get_error_code() : $result->status;
 PHP;
 		$specification = [ 1 => [ 'pipe', 'w' ], 2 => [ 'pipe', 'w' ] ];
 		$processes = [
@@ -318,6 +368,10 @@ PHP;
 		global $wpdb;
 		wp_set_current_user( 1 );
 
+		if ( $this->baseline_manager > 0 ) {
+			$this->temporary_users[] = $this->baseline_manager;
+		}
+
 		foreach ( array_reverse( $this->temporary_users ) as $user_id ) {
 			if ( is_super_admin( $user_id ) ) {
 				revoke_super_admin( $user_id );
@@ -337,6 +391,18 @@ PHP;
 
 			clean_user_cache( $user_id );
 			wpmu_delete_user( $user_id );
+		}
+		if ( $this->hall_three_fixture_manager > 0 ) {
+			switch_to_blog( 3 );
+			wp_set_current_user( 1 );
+			$fixture = get_userdata( $this->hall_three_fixture_manager );
+			if ( [] === $this->capabilities( $fixture->ID, 3 ) ) {
+				$restored = HallStaffService::assign_existing_user( $fixture->user_email, Roles::HALL_MANAGER );
+				if ( ! $restored instanceof HallStaffResult ) {
+					throw new RuntimeException( 'Could not restore the isolated Hall 3 fixture manager.' );
+				}
+			}
+			restore_current_blog();
 		}
 	}
 

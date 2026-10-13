@@ -101,10 +101,15 @@ final class HallStaffAdmin {
 					<tbody>
 					<?php foreach ( $staff as $member ) : ?>
 						<tr>
-							<td><?php echo esc_html( $member['display_name'] ); ?></td>
+							<td><?php echo esc_html( $member['display_name'] ); ?>
+								<?php if ( $member['managed_by_portal'] ) : ?>
+									<br><span class="description"><?php echo esc_html__( 'Managed by Portal', 'bingocommerce-core' ); ?></span>
+								<?php endif; ?>
+							</td>
 							<td><?php echo esc_html( $member['email'] ); ?></td>
 							<td><?php echo esc_html( self::role_label( $member['role'] ) ); ?></td>
 							<td>
+								<?php if ( ! $member['managed_by_portal'] || is_super_admin() ) : ?>
 								<form method="post" style="display:inline-block;margin-right:8px">
 									<?php wp_nonce_field( 'bingocommerce_hall_staff_mutation' ); ?>
 									<input type="hidden" name="bc_hall_staff_action" value="change">
@@ -112,18 +117,21 @@ final class HallStaffAdmin {
 									<?php self::role_select( 'bc-role-' . $member['id'], $member['role'] ); ?>
 									<?php submit_button( __( 'Change role', 'bingocommerce-core' ), 'secondary small', 'submit', false ); ?>
 								</form>
+								<?php if ( ! $member['managed_by_portal'] ) : ?>
 								<form method="post" style="display:inline-block;margin-right:8px">
 									<?php wp_nonce_field( 'bingocommerce_hall_staff_mutation' ); ?>
 									<input type="hidden" name="bc_hall_staff_action" value="resend_invitation">
 									<input type="hidden" name="target_user_id" value="<?php echo esc_attr( (string) $member['id'] ); ?>">
 									<?php submit_button( __( 'Resend invitation', 'bingocommerce-core' ), 'secondary small', 'submit', false ); ?>
 								</form>
+								<?php endif; ?>
 								<form method="post" style="display:inline-block">
 									<?php wp_nonce_field( 'bingocommerce_hall_staff_mutation' ); ?>
 									<input type="hidden" name="bc_hall_staff_action" value="remove">
 									<input type="hidden" name="target_user_id" value="<?php echo esc_attr( (string) $member['id'] ); ?>">
 									<?php submit_button( __( 'Remove', 'bingocommerce-core' ), 'delete small', 'submit', false ); ?>
 								</form>
+								<?php endif; ?>
 							</td>
 						</tr>
 					<?php endforeach; ?>

@@ -36,6 +36,66 @@ final class HallStaffProvisioningService {
 	public const UNEXPECTED_MEMBERSHIP  = 'unexpected_membership_state';
 
 	/**
+	 * Confirm only the creation audit for an already-created SSO account.
+	 * The trusted integration supplies the link's original creation facts.
+	 * This entry creates no account, role, invitation, link, or retry token.
+	 *
+	 * @return HallStaffSsoCreationIntent|\WP_Error
+	 */
+	public static function record_portal_sso_creation(
+		int $user_id,
+		int $creation_blog_id,
+		string $planned_username,
+		string $creation_operation_id,
+		string $creation_sso_reference
+	) {
+		global $wpdb;
+
+		$site = get_site( $creation_blog_id );
+		if ( $user_id < 1 || ! $site || (int) $site->network_id !== get_current_network_id()
+			|| is_main_site( $creation_blog_id ) || ! wp_is_uuid( $creation_operation_id, 4 )
+			|| ! HallStaffIdentity::is_portal_sso_username( $planned_username )
+			|| '' === $creation_sso_reference || strlen( $creation_sso_reference ) > 64 ) {
+			return self::error( 'invalid_sso_creation', 'The SSO creation identity is invalid.' );
+		}
+		$account = $wpdb->get_row( $wpdb->prepare(
+			"SELECT ID, user_login, user_email FROM {$wpdb->users} WHERE ID = %d", $user_id
+		), ARRAY_A );
+		if ( '' !== (string) $wpdb->last_error || ! is_array( $account )
+			|| $account['user_login'] !== $planned_username || ! is_email( $account['user_email'] )
+			|| is_super_admin( $user_id ) ) {
+			return self::error( 'target_not_eligible', 'The SSO account could not be verified.' );
+		}
+		$intent = new HallStaffSsoCreationIntent(
+			strtolower( $creation_operation_id ), get_current_network_id(), $creation_blog_id, $user_id,
+			(string) $account['user_email'], $planned_username, $creation_sso_reference
+		);
+
+		// Never relabel a human staff identity. Read back without a stale meta
+		// cache before claiming this marker in the mandatory creation audit.
+		$markers = $wpdb->get_col( $wpdb->prepare(
+			"SELECT meta_value FROM {$wpdb->usermeta} WHERE user_id = %d AND meta_key = %s",
+			$user_id, 'bc_identity_type'
+		) );
+		if ( '' !== (string) $wpdb->last_error || ! is_array( $markers )
+			|| ( [] !== $markers && [ HallStaffSsoCreationIntent::IDENTITY_TYPE ] !== $markers ) ) {
+			return self::failure( self::PROVISIONING_INCOMPLETE, 'The SSO identity marker could not be confirmed.', $intent, null );
+		}
+		if ( [] === $markers ) {
+			add_user_meta( $user_id, 'bc_identity_type', HallStaffSsoCreationIntent::IDENTITY_TYPE, true );
+		}
+		$markers = $wpdb->get_col( $wpdb->prepare(
+			"SELECT meta_value FROM {$wpdb->usermeta} WHERE user_id = %d AND meta_key = %s",
+			$user_id, 'bc_identity_type'
+		) );
+		if ( '' !== (string) $wpdb->last_error || [ HallStaffSsoCreationIntent::IDENTITY_TYPE ] !== $markers ) {
+			return self::failure( self::PROVISIONING_INCOMPLETE, 'The SSO identity marker could not be saved.', $intent, null );
+		}
+		$result = self::resolve_creation_witness( $intent, null );
+		return is_wp_error( $result ) ? $result : $intent;
+	}
+
+	/**
 	 * Create (or route to) an operational staff identity and assign it.
 	 *
 	 * @param string      $email          Raw submitted email.
@@ -448,7 +508,7 @@ final class HallStaffProvisioningService {
 	 *
 	 * @return true|\WP_Error
 	 */
-	private static function resolve_creation_witness( HallStaffCreationIntent $intent, string $creation_token ) {
+	private static function resolve_creation_witness( HallStaffCreationIntent|HallStaffSsoCreationIntent $intent, ?string $creation_token ) {
 		$existing = AuditLog::find_operation_witness( $intent->operation_id );
 
 		if ( is_wp_error( $existing ) ) {
@@ -864,18 +924,22 @@ final class HallStaffProvisioningService {
 	private static function failure(
 		string $status,
 		string $message,
-		HallStaffCreationIntent $intent,
-		string $creation_token
+		HallStaffCreationIntent|HallStaffSsoCreationIntent $intent,
+		?string $creation_token
 	): \WP_Error {
+		$data = [
+			'status'          => $status,
+			'creation_retry_token' => $creation_token,
+			'created_user_id' => $intent->created_user_id,
+			'operation_id'    => $intent->operation_id,
+		];
+		if ( $intent instanceof HallStaffSsoCreationIntent ) {
+			unset( $data['creation_retry_token'] );
+		}
 		return new \WP_Error(
 			$status,
 			__( $message, 'bingocommerce-core' ),
-			[
-				'status'               => $status,
-				'creation_retry_token' => $creation_token,
-				'created_user_id'      => $intent->created_user_id,
-				'operation_id'         => $intent->operation_id,
-			]
+			$data
 		);
 	}
 

@@ -294,7 +294,7 @@ final class HallStaffService {
 	/**
 	 * List only current-hall protected staff for the canonical admin screen.
 	 *
-	 * @return array<int,array{id:int,email:string,display_name:string,role:string}>|\WP_Error
+	 * @return array<int,array{id:int,email:string,display_name:string,role:string,managed_by_portal:bool}>|\WP_Error
 	 */
 	public static function list_current_hall_staff() {
 		$context = self::authenticate_context();
@@ -327,6 +327,7 @@ final class HallStaffService {
 					'email'        => (string) $user->user_email,
 					'display_name' => (string) $user->display_name,
 					'role'         => $role,
+					'managed_by_portal' => HallStaffIdentity::is_portal_sso_username( (string) $user->user_login ),
 				];
 			}
 		}
@@ -432,6 +433,18 @@ final class HallStaffService {
 
 	/** @return HallStaffResult|\WP_Error */
 	private static function execute( HallStaffIntent $intent, string $retry_token, bool $is_retry ) {
+		global $wpdb;
+
+		// Apply before retry reconciliation too: a signed human retry must not
+		// bypass the current protection of a Portal-managed target.
+		$login = $wpdb->get_var( $wpdb->prepare( "SELECT user_login FROM {$wpdb->users} WHERE ID = %d", $intent->target_user_id ) );
+		if ( null === $login || '' !== (string) $wpdb->last_error ) {
+			return self::error( 'target_not_eligible', 'The Hall Staff account could not be verified.' );
+		}
+		if ( HallStaffIdentity::is_portal_sso_username( (string) $login ) && ! is_super_admin( $intent->actor_user_id ) ) {
+			return self::error( 'managed_by_portal', 'Only a Platform Admin may manage this Portal account.' );
+		}
+
 		$audit_event = [
 			'blog_id'        => $intent->blog_id,
 			'actor_user_id'  => $intent->actor_user_id,

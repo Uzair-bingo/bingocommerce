@@ -23,6 +23,11 @@ if ( ! defined( 'ABSPATH' ) ) {
  */
 final class HallStaffIdentity {
 
+	/** ADR-048 identity format. Pure: no plugin, database or request dependency. */
+	public static function is_portal_sso_username( string $username ): bool {
+		return 1 === preg_match( '/^portal-[a-z0-9]{1,20}-[1-9][0-9]*$/iD', $username );
+	}
+
 	/**
 	 * Resolve an email to exactly one operational identity.
 	 *
