@@ -77,6 +77,19 @@
   (sync) token.
 - **Portal-identity username:** the store account's username, built from the
   Portal identity, for example `portal-<installation>-<Portal user ID>`.
+  Wherever this record says a username "starts with `portal-`" or is a
+  "`portal-` username", it means **exactly this format**, matched without
+  regard to letter case: `portal-`, 1–20 lowercase letters or digits, `-`, and
+  a Portal user number (`^portal-[a-z0-9]{1,20}-[1-9][0-9]*$`). Other
+  usernames that merely begin with `portal-` are ordinary accounts and are not
+  affected. Example: a customer with the email `portal-mike@gmail.com` gets
+  the automatic username `portal-mike`, which is a normal account.
+  **Accepted rare case:** if `portal-mike` is already taken, WooCommerce adds
+  random digits to a second such customer's automatic username (for example
+  `portal-mike-1234`), which can match this format and be refused. This needs
+  two customers whose emails start with the same `portal-…` name; a retry
+  usually succeeds because WooCommerce picks new digits. No extra code is
+  added for it.
 - **"Managed by Portal" label:** the store's Hall Staff screen marks every SSO
   account (username starting with `portal-`) as "Managed by Portal".
 
@@ -213,9 +226,10 @@ flow at step 3.
       email (section 6). If either exists, nothing is saved or created.
    2. **The link is saved first**, before any account exists: Portal
       installation ID, Portal user ID, Portal user creation time, the planned
-      username, the Hall where creation happens and the **creation operation
-      ID** (the operation ID the account-creation audit will use), with the
-      store user still empty (NULL). The Hall is stored as `creation_blog_id`.
+      username, the Hall where creation happens, the **creation operation
+      ID** (the operation ID the account-creation audit will use) and this
+      login's SSO reference (the **creation SSO reference**), with the store
+      user still empty (NULL). The Hall is stored as `creation_blog_id`.
    3. The store creates the account with that **Portal-identity username**,
       never derived from the email, through WordPress's normal Multisite
       creation (`wpmu_create_user()`). During that call WordPress briefly
@@ -223,8 +237,13 @@ flow at step 3.
       default role in `bc_{n}_capabilities`, plus `bc_{n}_user_level`;
       `wp-includes/user.php:2640-2643`) and then **deletes both**
       (`wp-includes/ms-functions.php:1360-1362`). A finished creation therefore
-      leaves the account with **no role record at all** for any Hall: not a
-      role, and not an empty record. SSO never passes an empty role, because
+      normally leaves the account with **no role record at all** for any Hall:
+      not a role, and not an empty record. WordPress does not check that those
+      two deletions worked, so before step 6 the store confirms the account
+      has no role record. If only WordPress's temporary records remain on this
+      Hall, it removes them with the same narrow cleanup as rule 12; if that
+      fails, it stops with the link's store user still empty, and the next
+      login finishes through rule 12. SSO never passes an empty role, because
       WordPress would then store an empty role record
       (`wp-includes/class-wp-user.php:628-635`), which the eligibility check
       rejects (`HallStaffEligibility.php:97-116`). SSO uses the Hall Staff
@@ -238,13 +257,22 @@ flow at step 3.
    6. The new store user is written into the link.
    7. The **account-creation audit** is written through the existing mandatory
       creation-audit mechanism (`HallStaffProvisioningService`
-      `resolve_creation_witness`) using the link's creation operation ID.
+      `resolve_creation_witness`). It always uses the values fixed at
+      creation: the link's creation operation ID, `creation_blog_id`, planned
+      username and creation SSO reference, and the email the account was
+      created with, never the current login's values. A retry from a later
+      login or another Hall therefore matches the existing record instead of
+      conflicting with it. The account's identity type is **`portal_sso`**,
+      both in this audit and in the account's `bc_identity_type` marker, never
+      `staff_operational`: the existing invitation system sends password-setup
+      invitations only to `staff_operational` accounts
+      (`HallStaffInvitation.php:95`), so an SSO account can never receive one.
    8. Hall Manager is given on this Hall only, through the existing audited
       Hall Staff path (ADR-025 transport and mandatory audit) and the
       network-wide eligibility check (BR-036). Nothing is granted unless step 7
       succeeded.
-4. **Reserved usernames:** no account may be created with a username starting
-   with `portal-` except through this SSO creation step. This is enforced in
+4. **Reserved usernames:** no account may be created with a username in the
+   Portal-identity format (section 2) except through this SSO creation step. This is enforced in
    **one place that every account creation passes through** (WordPress's
    user-insert step), not route by route. It therefore also covers routes a
    Hall Manager can use, such as WooCommerce's customer API (Hall Managers keep
@@ -632,7 +660,7 @@ eligible for Hall roles (BR-035, BR-036). SSO therefore uses this rule:
 | Another account takes the email between saving the link and creating the account | Empty link deleted; email-conflict message |
 | Account created but its creation audit was not written | No access; the next login completes the creation audit first, then grants |
 | Account created but grant or its audit failed | No access; next attempt reuses the account |
-| Interrupted inside account creation, leaving WordPress's temporary role record (empty or the site's default role) and its user-level record on `creation_blog_id` | Recovery removes only those two records, then the eligibility check must pass; any other record refuses the account |
+| Interrupted inside account creation, or WordPress's own clean-up silently failed, leaving its temporary role record (empty or the site's default role) and its user-level record on `creation_blog_id` | Removed only those two records (straight away, or by recovery on the next login), then the eligibility check must pass; any other record refuses the account |
 | Portal email longer than 100 characters or invalid for WordPress | Refused with the general message; audit entry marked for support review |
 | SSO switched off (no SSO token in the store's configuration) | New logins refused with the general message; open SSO sessions refused on their next request; password ban still applies |
 | Link table or another SSO table unreadable | New logins refused with the general message; password ban still applies, because it uses the `portal-` username |
@@ -688,7 +716,8 @@ eligible for Hall roles (BR-035, BR-036). SSO therefore uses this rule:
    the account is not a Network Super Admin. It uses the same transport, lock
    and mandatory audit. Every existing Hall Staff path stays unchanged,
    including Hall Managers' right to create staff (section 9, rule 2).
-5. **BR-035:** a new identity type, "Portal SSO staff identity, no password".
+5. **BR-035:** a new identity type, "Portal SSO staff identity, no password"
+   (`portal_sso`).
    §3 gains one narrow exception: Hall Managers cannot add, change or remove a
    role for an SSO account ("Managed by Portal") on any Hall; only the SSO grant
    and a Platform Admin can.
@@ -711,12 +740,12 @@ versioned migration with `dbDelta()`):
 
 1. **SSO links** (network table): Portal installation ID, Portal user ID,
    Portal user creation time (UTC), planned username, `creation_blog_id`
-   (indexed), creation operation ID, store user ID (nullable: NULL until the
-   account is created, never 0), created time. Unique on (installation ID,
-   Portal user ID), on planned username and on store user ID. MySQL allows any
-   number of NULL values in a unique index, so pending links never block each
-   other. Saved before the account is created (section
-   5, rule 3). A row describes a **person**, not a Hall membership.
+   (indexed), creation operation ID, creation SSO reference, store user ID
+   (nullable: NULL until the account is created, never 0), created time.
+   Unique on (installation ID, Portal user ID), on planned username and on
+   store user ID. MySQL allows any number of NULL values in a unique index, so
+   pending links never block each other. Saved before the account is created
+   (section 5, rule 3). A row describes a **person**, not a Hall membership.
    `creation_blog_id` only records which Hall's store the account was first
    created from, for recovery (section 5, rule 12) and audit attribution. It
    gives **no** access to any Hall: access comes only from the store's normal
@@ -886,14 +915,20 @@ review guidelines).
 17a. **Creation audit on recovery:** make the account-creation audit fail, then
      retry SSO. Result: one account, one completed creation audit (with the
      link's creation operation ID) and one role grant; no grant happens while
-     the creation audit is missing.
+     the creation audit is missing. Repeat the retry from a different login
+     and from another Hall: it matches the existing creation audit (no
+     conflict). The account is marked `portal_sso` and cannot be sent a Hall
+     Staff invitation.
 17b. **Interrupted inside account creation:** stop the process right after
      WordPress writes its temporary role and user-level records and before it
      deletes them, then retry. Repeat with an empty role record. Result: recovery
      removes only those records on `creation_blog_id`, the eligibility check
      passes, and there is one account with exactly one Hall Manager role. A
      different leftover record (another role, or any record on another Hall)
-     makes recovery refuse the account.
+     makes recovery refuse the account. Also make WordPress's own deletion
+     fail silently during a normal creation: the store removes the leftover
+     before writing the account into the link, or stops and the next login
+     finishes it; the person is never left with "access removed".
 17c. **Same-second times:** recovery succeeds when the link and the account
      have the same creation second.
 17d. **Long email:** a Portal email over 100 characters is refused with the
@@ -909,7 +944,9 @@ review guidelines).
     registration, Network Admin "Add user", the site "Add user" screen,
     WordPress's user API, WooCommerce's customer API (as a Hall Manager),
     WooCommerce My Account or WooCommerce checkout is refused; only the SSO
-    creation step succeeds. Updating an existing SSO account (profile save,
+    creation step succeeds. A customer or Hall Staff member whose automatic
+    username is generated from an email such as `portal-mike@gmail.com` is
+    created normally. Updating an existing SSO account (profile save,
     SSO's naming step, WooCommerce customer update) still succeeds.
 19. **Attempt from another store:** an attempt started at Hall A's store and
     returned to Hall B's store is refused.

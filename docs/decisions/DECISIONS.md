@@ -8513,8 +8513,9 @@ delete_users.
      link (with the Portal user's creation time and the planned `portal-`
      username) is saved before the account is created, so an interrupted first
      login is finished on the next login and never causes a false email error.
-     The `portal-` username pattern is reserved at WordPress's user-insert
-     step, so every route (including WooCommerce's customer API) refuses it.
+     The exact SSO username format `portal-<installation>-<number>` is
+     reserved at WordPress's user-insert step (other names that merely begin
+     with `portal-` are ordinary accounts), so every route (including WooCommerce's customer API) refuses it.
      No invitation email is sent.
   3. SSO accounts sign in only through the Portal. Password, password reset,
      application passwords, WooCommerce API keys and XML-RPC are refused for
@@ -8556,7 +8557,7 @@ delete_users.
 
   Relationship to prior rules: completes the SSO design that BR-075 deferred.
   On approval, it adds a BR-035 identity type (Portal SSO staff identity, no
-  password), the narrow SSO grant in ADR-048 §14, and one narrow exception to
+  password; `portal_sso`), the narrow SSO grant in ADR-048 §14, and one narrow exception to
   BR-033 / BR-035 §3: Hall Managers cannot remove or change an SSO account
   ("Managed by Portal"). BR-034 and BR-036 apply unchanged.
 
