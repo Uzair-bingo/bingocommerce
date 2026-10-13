@@ -5170,3 +5170,103 @@ This supersedes the partial implementation entry above while preserving its hist
   and mocked status responses. Screenshots were reviewed. Native database/CGI suites
   were not rerun for this presentation-only change; no development data was used
   or changed. Existing uncommitted work was preserved; nothing staged or committed.
+
+### Portal SSO design record (ADR-048 / BR-085) — approved, docs only (2026-10-12; approved 2026-10-13)
+
+- Added `docs/decisions/adr-048-portal-sso.md` and its ADR-048 and BR-085
+  entries in `docs/decisions/DECISIONS.md`. Status: **approved** by the user on
+  2026-10-13. The decisions were confirmed by the user in discussion, and the
+  written record was reviewed and approved.
+- Scope: a Portal Hall Super Admin signs in to their Hall's store as Hall
+  Manager through the existing "Open Ecommerce Store" button. The design covers
+  first-login account creation by Portal ID, no store password, one-Hall
+  sessions with 30-minute idle and 1-hour maximum, an accepted 1-hour risk after
+  Portal removal, a store-side block, refusal on email conflict, Global Admin
+  exclusion and a v1 MFA exception.
+- Matching Portal-side summary added to `bingo_portal`'s
+  `docs/BINGOCOMMERCE_INTEGRATION.md`.
+- Revised the same day after a full review: link saved before the role grant;
+  Portal-identity usernames so an interrupted first login is reused instead of
+  causing a false email error; blocks always win; strict adoption checks; login
+  attempts tied to one store; start limits per IP address; expired-session
+  pop-up offers "Sign in with Portal"; one Hall at a time per browser; deleted
+  linked accounts refused; Portal user creation time saved against restores;
+  password staff created by an SSO Hall Manager survive Portal removal
+  (accepted, manual review); rollout steps including the one-time SSO token
+  grant for already-enabled Halls.
+- Then simplified (user-approved): the owner's store account is shown as "Hall
+  Owner (managed by Portal)" and Hall Managers cannot remove or change it, so
+  the store-side "block" and its re-allow rules were removed; owner access is
+  controlled only from the Portal. A Portal Hall transfer moves the
+  `super_admin` role to the new owner. Emergency removal is done in the Portal
+  and, for an immediate stop, also in the store. ADR-048 has no open items.
+- Review fixes applied (ADR-048 and BR-085 only): the link is saved before the
+  account is created and an interrupted first login is finished only from its
+  saved link; the SSO token is the on/off switch and the password ban uses the
+  `portal-` username; each audit record keeps its own operation ID with one
+  shared SSO reference; the invalid "remove the old role" email fix was
+  removed; emergency removal ends access on the next request; Heartbeat does
+  not count as activity; login-attempt cleanup is indexed and bounded.
+- Second review fixes (ADR-048 and BR-085): a separate private browser secret
+  in the cookie, never in any link, so a copied return link is refused; the
+  return step runs check → exchange → account and role → audit → session → one
+  final redirect in a single request; every SSO account (including a former
+  owner's) is shown as "Managed by Portal" and only a Platform Admin can remove
+  or change it; BR-085's email rule aligned with the saved-link recovery; the
+  MFA risk now says "Hall Manager permissions". The emergency-removal timing
+  note was first left out, then added (next item).
+- Emergency step added afterwards at the user's request: remove the person in
+  the Portal first, wait 2 minutes, then remove the store role, so a login
+  already finishing cannot give the role back (very unlikely case).
+- Third review fixes: "immediate stop" wording replaced by "full stop within
+  about 2 minutes" (ADR-048, BR-085, Portal document); the attempt reference is
+  no longer on the never-log list because it is not secret, and the web-server
+  log rule stays only on the store return link that carries the code; refusals
+  also end with one redirect to a message page with no code in its address.
+- Emergency wording corrected: the two-minute wait reduces the chance of an
+  unfinished login restoring access but does not guarantee it; accepted v1
+  limitation, no revocation feature added; test 28 records the delayed-login
+  behaviour.
+- Final pre-build review fixes: idle activity counts every request except
+  WordPress Heartbeat; the Hall Staff service refuses any role change on
+  `portal-` accounts except by the SSO grant or a Platform Admin; "support is
+  alerted" corrected to "audit entry marked for support review"; Portal
+  creation time in UTC in one fixed format; over-long Portal emails refused;
+  start limit counted from the attempts table; Portal codes cleaned up on issue
+  (no cron); `__Host-` cookie prefix in production; no extra database query per
+  request; the link stores the creation operation ID and recovery completes
+  the mandatory creation audit before granting; SSO accounts are created with
+  no temporary WordPress role; recovery compares UTC times to the second
+  ("same second or later"). Tests 17a–17e added.
+- Consistency pass against WordPress and Hall Staff code: SSO accounts are
+  created through WordPress's normal `wpmu_create_user()`, which leaves no role
+  record when finished; SSO never passes an empty role (WordPress would store an
+  empty record that the eligibility check rejects); recovery may remove only
+  WordPress's temporary role and user-level records on `creation_blog_id`;
+  `creation_blog_id` is defined as creation history only, never Hall access;
+  the per-login checks and the narrow grant rule require a completed creation
+  audit before any grant.
+- Senior review (2026-10-13): each SSO login now checks that the linked
+  account's username equals the link's planned username (protects against a
+  reused user number); the `portal-` username is reserved at WordPress's
+  user-insert step so every route, including WooCommerce's customer API, is
+  covered; a Network Super Admin is refused first in the per-login order; the
+  idle limit ignores every automatic background call, not only Heartbeat; the
+  link's time is written by PHP in UTC; "no extra query" excepts the
+  once-a-minute activity save; password fields are hidden on SSO accounts'
+  profile screens. Tests 10, 17e, 17f, 18, 21a, 23a, 23b and checks 6, 15, 16
+  updated or added. Still Proposed, awaiting user approval.
+- Final review fixes (2026-10-13): pending link's store user is NULL (never 0)
+  so pending links never block each other; the `portal-` reservation applies
+  to new accounts only; the code exchange is a POST with values in the body
+  and the token in the header (also in the Portal document); recovery reuses
+  the naming step; the login attempt is consumed by one conditional update and
+  compared with `hash_equals`, using the attempt's own saved values;
+  `creation_blog_id` indexed; keyed IP fingerprint; stale cleanup and idle
+  wording aligned. No design change.
+- Approved (2026-10-13): the user approved ADR-048 and BR-085. Nothing is
+  implemented. Implementation starts with the Hall Staff SSO grant review
+  (ADR-048 §19, check 3) and the creation-audit reuse check (check 14).
+- No code, tests, configuration, database or plugin state changed. AGENTS.md,
+  requirements and architecture documents are updated only when SSO is
+  implemented. Nothing staged or committed.

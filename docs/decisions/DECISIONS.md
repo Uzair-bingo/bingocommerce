@@ -6681,6 +6681,36 @@ by construction, never deleted by anything.
     apply the same rule (BR-056: late redemption during the Session remains
     allowed). Script and stylesheet version 1.3.2.
 
+- **ADR-048 — [2026-10-12] — Portal to BingoCommerce single sign-on for Hall
+  Super Admins (APPROVED 2026-10-13, not implemented):**
+
+  Full record: [`adr-048-portal-sso.md`](adr-048-portal-sso.md). Business rules:
+  BR-085. Decisions confirmed by the user in discussion (2026-10-09 to
+  2026-10-12); the written record was approved by the user on 2026-10-13.
+  Summary: a Portal user with
+  the `super_admin` role on a Hall becomes Hall Manager of that Hall's store
+  through the existing "Open Ecommerce Store" button; the store account is
+  created on first login and identified by Portal installation ID + Portal user
+  ID, never email; SSO accounts have no usable password or other credential;
+  each login works only on the Hall it was opened for; 30-minute idle and 1-hour
+  maximum sessions; Portal removal stops new logins and an open session ends
+  within 1 hour (accepted business risk); every SSO account is shown as
+  "Managed by Portal" in the store and Hall Managers cannot remove or change it;
+  a Hall transfer moves the `super_admin` role to the new owner; an email
+  already used in the store is
+  refused; Portal Global Admin is excluded; no MFA in v1. Built in-house with a
+  store-held login attempt, a secret proof, a 60-second single-use code and a
+  separate SSO token. Also decided: one Hall at a time per browser; a deleted
+  linked store account is refused with "contact support"; the Portal user's
+  creation time is saved with the link to detect a Portal restore; password
+  staff accounts an SSO Hall Manager creates survive Portal removal (accepted,
+  with a manual review procedure); start requests are limited per IP address;
+  the link is saved before the account is created; the SSO token is the on/off
+  switch.
+  On approval it amends ADR-012 (v1 exception), BR-075, ADR-035, ADR-042 point
+  11, ADR-025, BR-033 and BR-035 as stated in its section 14. Until approved,
+  every earlier decision stands unchanged.
+
 ---
 
 ## Business Rules (BR)
@@ -8470,6 +8500,65 @@ delete_users.
   Product shells, which the backend refuses; presenting Bingo products through
   the Session → Package → add-on flow is required work for the later
   shopping-screen slice, not an accepted finished-storefront behaviour.
+
+- **BR-085 — [2026-10-12] — Portal SSO for Hall Super Admins (APPROVED
+  2026-10-13, not implemented; design: ADR-048):**
+
+  1. Only a Portal user with the `super_admin` role on a specific Hall may sign
+     in to that Hall's store through SSO, and only as Hall Manager of that
+     Hall. The Portal role list decides, never the Hall owner field. Portal
+     Global Admin, Hall `admin`, `manager` and `scheduler` roles are excluded.
+  2. The store account is created on the person's first SSO login and is
+     identified by Portal installation ID + Portal user ID, never by email. The
+     link (with the Portal user's creation time and the planned `portal-`
+     username) is saved before the account is created, so an interrupted first
+     login is finished on the next login and never causes a false email error.
+     The `portal-` username pattern is reserved at WordPress's user-insert
+     step, so every route (including WooCommerce's customer API) refuses it.
+     No invitation email is sent.
+  3. SSO accounts sign in only through the Portal. Password, password reset,
+     application passwords, WooCommerce API keys and XML-RPC are refused for
+     them, recognised by their `portal-` username so the ban always applies.
+     Their profile screens show no password fields. A Network Super Admin
+     account is never signed in through SSO.
+     Existing password-based accounts are unchanged. SSO is turned off by
+     removing the store's SSO token; the SSO code is never uninstalled.
+  4. An SSO login works only on the Hall store it was opened for. Sessions end
+     after 30 minutes without activity (Heartbeat and other automatic
+     background calls do not count) or 1 hour at most. Because store login
+     cookies are shared, a person works in one Hall at a time per browser.
+  5. Removal in the Portal stops new logins at once; an open session can
+     continue for up to 1 hour. This is an accepted business risk. Password
+     staff accounts the person created through the Hall Staff screen are
+     separate and survive Portal removal (accepted); a Platform Admin or another
+     Hall Manager reviews the Hall's staff list when a Hall Super Admin is
+     removed.
+  6. In the store's Hall Staff screen every SSO account (username starting with
+     `portal-`), including a former owner's, is shown as "Managed by Portal".
+     Hall Managers (employees) cannot add, change or remove a role for it on any
+     Hall; only the SSO grant and a Platform Admin can. The owner's store access is controlled only from the
+     Portal. In an emergency: Remove Portal access first, wait two minutes, then remove the store role. This wait reduces the chance of an unfinished login restoring access, but does not guarantee cancellation of a delayed login. This is an accepted v1 limitation. A Hall transfer in the Portal gives the new owner the `super_admin`
+     role and removes it from the previous owner.
+  7. The email is checked only on a person's first login, before their link is
+     saved. If the Portal email is already used by any store account, SSO saves
+     and creates nothing. The only supported fix is a Portal Global Admin
+     changing the person's Portal email to a different valid email they own. An
+     interrupted first login is finished only through its saved link, so it
+     never causes this error; an account that no saved link explains is never
+     used.
+  8. No MFA in v1, as a written exception to ADR-012 for SSO accounts only.
+  9. If the linked store account has been deleted, or its username no longer
+     equals the link's planned username (a reused user number), SSO refuses
+     with "contact support" and never creates a replacement automatically.
+  10. The Portal user's creation time is saved with the link; if it later
+      differs (for example after a Portal database restore), SSO refuses and an
+      audit entry is marked for support review.
+
+  Relationship to prior rules: completes the SSO design that BR-075 deferred.
+  On approval, it adds a BR-035 identity type (Portal SSO staff identity, no
+  password), the narrow SSO grant in ADR-048 §14, and one narrow exception to
+  BR-033 / BR-035 §3: Hall Managers cannot remove or change an SSO account
+  ("Managed by Portal"). BR-034 and BR-036 apply unchanged.
 
 ## Still Open / TBD Items (Unresolved)
 
