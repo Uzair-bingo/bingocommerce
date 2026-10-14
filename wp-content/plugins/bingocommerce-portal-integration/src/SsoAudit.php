@@ -8,10 +8,10 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
 final class SsoAudit {
 	public static function record( string $event, int $blog, int $hall, string $reference, string $reason, int $portal_user = 0, int $user = 0, bool $support = false ): bool {
 		if ( ! class_exists( '\BingoCommerce\Core\AuditLog' ) || ! SsoExchangeValidator::reference( $reference )
-			|| ! in_array( $event, [ 'exchanged', 'refused', 'account_ready' ], true ) ) { return false; }
+			|| ! in_array( $event, [ 'exchanged', 'refused', 'account_ready', 'login' ], true ) ) { return false; }
 		$reasons = [ 'verified', 'ready', 'exchange_failed', 'invalid_response', 'mapping_unavailable', 'configuration_unavailable',
 			'email_conflict', 'invalid_email', 'username_occupied', 'super_admin', 'restore_mismatch', 'account_missing',
-			'recovery_unproven', 'access_removed', 'creation_failed', 'creation_audit_failed', 'grant_failed', 'storage_failed', 'unexpected_failure' ];
+			'recovery_unproven', 'access_removed', 'creation_failed', 'creation_audit_failed', 'grant_failed', 'storage_failed', 'session_failed', 'unexpected_failure' ];
 		if ( ! in_array( $reason, $reasons, true ) ) { $reason = 'unexpected_failure'; }
 		global $wpdb;
 		$old = $wpdb->suppress_errors( true );

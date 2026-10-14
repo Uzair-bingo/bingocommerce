@@ -5572,3 +5572,158 @@ This command is recorded for the user; it was **not executed** during Phase 1.
   cookie or session**; sign-in/session behavior belongs to Phase 4b.
 - Final static checks passed: `php -l` with PHP 8.4 for all **12** changed/new
   PHP files, and `git diff --check`. The staged-file list is empty.
+
+### 2026-10-14 — ADR-048 Phase 4b sign-in and session enforcement
+
+- Implemented the approved Phase 4b scope on `ssoImplementation`. The existing
+  return handler now requires a successful store login audit before creating
+  a native WordPress session and redirecting once to the Hall dashboard.
+  The session uses `remember = false`, secure cookies on HTTPS, a one-hour
+  expiration and a `bc_portal_sso` marker containing the Hall, login time and
+  last-activity time. Cookie emission is refused if the marked session was not
+  persisted. Temporary cookie/session filters are removed in `finally`.
+- Fires `wp_login` exactly once after successful sign-in, as approved. This
+  preserves WooCommerce's installed last-active/saved-cart bookkeeping. No
+  Portal exchange, provisioning, Hall Staff writer or migration was replaced.
+- `SsoSession` uses the existing exact-format account matcher through
+  `SsoAccountGuard`; ordinary accounts, including `portal-mike`, return
+  immediately. Marked SSO sessions require the current Hall, exactly
+  `['bc_hall_manager' => true]` in already-loaded capabilities, valid SSO
+  configuration, less than one hour since login and less than 30 minutes idle.
+  Idle/absolute expiry destroys the token. A different Hall, removed/changed
+  role or unavailable configuration refuses access without deleting an
+  otherwise unexpired token. REST cookie authentication is checked again after
+  WordPress's nonce and WooCommerce's fallback authentication.
+- Activity is saved at most once a minute using WordPress's metadata API with
+  the previous session value as a compare-and-set condition, so an older
+  request cannot overwrite a concurrent logout/new session. Active requests
+  need no SSO-table lookup or Portal call. Warm/cold authentication comparisons
+  passed with no added queries; the separate activity-save checks passed.
+- Automatic calls excluded from activity:
+
+  | Request | Exact recognition |
+  |---|---|
+  | WordPress Heartbeat | AJAX `action=heartbeat`, except when POST `data[wp_autosave]` is present |
+  | WordPress dashboard feed | AJAX `action=dashboard-widgets`, `widget=dashboard_primary` |
+  | WooCommerce dashboard widgets | AJAX `woocommerce_load_status_widget` or `woocommerce_load_recent_reviews_widget` |
+  | WooCommerce import polling | GET `/wc-analytics/imports/status` or `/wc-analytics/reports/import/status` |
+  | WooCommerce status tools polling | GET `admin.php?page=wc-status&tab=tools` with `wc_status_tools_poll` |
+  | Mobile-app QR status | POST `/wc-admin/mobile-app/qr-login-status` |
+  | WooPayments test-account onboarding | POST `/wc-admin/settings/payments/woopayments/onboarding/step/test_account/check` |
+  | Timed inbox read marker | PUT `/wc-analytics/admin/notes/<positive ID>` with only `{ "is_read": true }` |
+
+  No custom BingoCommerce admin timer was found. Block-editor autosaves and
+  Heartbeat carrying autosave data count as activity. REST classification uses
+  `rest_post_dispatch`, which observes the browser's response rather than the
+  internal `/wc-analytics/reports` request WooCommerce makes while initializing
+  its API routes. No general REST/AJAX exclusion was added.
+- Added the Portal button to the WordPress login form only when configuration
+  and an active, unblocked Hall mapping are available. SSO accounts use the
+  existing `wp-auth-check` script/style with a Portal message and button in
+  place of the password iframe. Ordinary accounts keep the native popup.
+  Standard WordPress logout remains unchanged; there is no Portal logout call.
+- Added isolated request workers with signed WordPress cookies, real REST
+  authentication/dispatch, controlled AJAX callbacks, PHP-CGI response-header
+  checks and a test-process-only clock. Portal HTTP is mocked with
+  `pre_http_request`; unexpected outbound HTTP is refused. Tests prove first
+  and repeated sign-in, audit/session-write failure, Hall isolation, exact-role
+  refusal on page/AJAX/REST requests, idle/absolute expiration, configuration
+  removal, unavailable SSO tables, suspension, popup/logout and performance.
+  Simulated 35 minutes of REST, AJAX, block-editor autosaves and Heartbeat
+  autosaves remain active; background-only requests expire at 30 minutes.
+  The accepted v1 delayed-login removal limitation is explicitly tested: an
+  already-approved response can restore local access after local removal.
+
+#### Verification
+
+Ran these seven suites sequentially, on the isolated database only:
+
+```bash
+BC_TEST_DB=bingocommerce_state_recon /opt/homebrew/opt/php@8.4/bin/php tests/portal-sso-sessions.php
+BC_TEST_DB=bingocommerce_state_recon /opt/homebrew/opt/php@8.4/bin/php tests/portal-sso-provisioning.php
+BC_TEST_DB=bingocommerce_state_recon /opt/homebrew/opt/php@8.4/bin/php tests/portal-sso-foundation.php
+BC_TEST_DB=bingocommerce_state_recon /opt/homebrew/opt/php@8.4/bin/php tests/hall-staff-sso.php
+BC_TEST_DB=bingocommerce_state_recon /opt/homebrew/opt/php@8.4/bin/php tests/hall-staff-phase-a-fixes.php
+BC_TEST_DB=bingocommerce_state_recon /opt/homebrew/opt/php@8.4/bin/php tests/hall-staff-create-invite.php
+BC_TEST_DB=bingocommerce_state_recon /opt/homebrew/opt/php@8.4/bin/php tests/portal-integration-foundation.php
+```
+
+| Suite | Final result |
+|---|---|
+| Phase 4b sessions | **589 assertions PASS** |
+| Phase 4a provisioning | **469 assertions PASS** |
+| Phase 1 SSO foundation | **381 assertions PASS** |
+| Phase 2 Hall Staff SSO | **101 assertions PASS** |
+| Hall Staff Phase A fixes | **67 assertions PASS** |
+| Hall Staff Create/Invite | **262 passed, 0 failed** |
+| Portal integration foundation | **77 assertions PASS** |
+
+- The unchanged Create/Invite suite reported membership baseline restored and
+  zero leftover test users, orphan metadata, triggers or locks. Expected
+  fault-injection duplicate-key errors and writer-guard refusal diagnostics
+  occurred in the legacy suites; none of these seven suites failed its final
+  run. Both legacy Hall Staff test files remain byte-identical to HEAD.
+- Also ran the unchanged installed payment/scheduler handler suite for
+  ADR-048 section 18 item 11. Its first requested fixture,
+  `BC_TEST_DB=bingocommerce_state_test`, was refused before tests because Hall
+  tables already existed; those tables were not adopted or removed.
+
+  ```bash
+  BC_TEST_DB=bingocommerce_state_test_scratch /opt/homebrew/opt/php@8.4/bin/php tests/hall-commerce-handlers.php
+  ```
+
+  The first scratch run passed all functional checks but ended **361/362**:
+  teardown found a newly initialized `user_count` network-cache row. The
+  existing harness captures an absent value as null and restores only strings
+  (`tests/hall-commerce-handlers.php:1524,1740`), so it does not restore absence.
+  WordPress updates this count on `wpmu_new_user`
+  (`wp-includes/ms-default-filters.php:86`). An unchanged repeat run, with the
+  cache key present at baseline, passed **364/364** including restoration.
+  This fresh-fixture cleanup gap remains outside the approved ten-file scope;
+  no legacy assertion or fixture code was changed to hide it.
+
+#### Phase 4a assertion changes
+
+Only these seven assertion lines changed in `tests/portal-sso-provisioning.php`:
+
+1. Successful completion now expects authentication instead of universally
+   expecting zero authentication/current user.
+2. Sessions are expected only for accounts with a completed login audit,
+   instead of expecting no sessions on any account.
+3. The first-completion assertion's description now says "provisions and
+   signs in"; its predicate is unchanged.
+4. Exchange/account-ready audit failures require no **new** auth-cookie calls,
+   rather than a zero cumulative count after earlier successful logins.
+5. In the concurrent-return check, only the winner authenticates and has a
+   Hall-marked session; the loser still has no authentication/current user.
+6. A successful return redirects to the clean Hall dashboard instead of the
+   superseded `message=ready` page.
+7. The single-redirect assertion now expects WordPress auth cookies instead of
+   their absence.
+
+The assertion-call line count is **111 before / 111 after**; all other
+assertions remain unchanged. Runtime assertion count remains **469**. The
+existing worker only adds observation of the persisted Hall session marker.
+
+#### Changed files and limits
+
+Exactly ten files, including three new files:
+
+- `wp-content/plugins/bingocommerce-portal-integration/src/SsoSession.php` (new)
+- `wp-content/plugins/bingocommerce-portal-integration/src/SsoLogin.php`
+- `wp-content/plugins/bingocommerce-portal-integration/src/SsoAudit.php`
+- `wp-content/plugins/bingocommerce-portal-integration/src/Plugin.php`
+- `wp-content/plugins/bingocommerce-portal-integration/bingocommerce-portal-integration.php`
+- `tests/portal-sso-sessions.php` (new)
+- `tests/portal-sso-sessions-worker.php` (new)
+- `tests/portal-sso-provisioning.php`
+- `tests/portal-sso-provisioning-worker.php`
+- `PROJECT_STATUS.md`
+
+PHP 8.4 syntax passed for all nine changed/new PHP files; `git diff --check`
+passed. No staged files or commit. No development data read/write or migration;
+only the previously approved fixture structure-only `SHOW CREATE TABLE` reads
+were permitted. The Portal repository, AGENTS.md, decision records, core,
+WooCommerce and existing fixtures were not edited. No installation or real
+Portal request was performed. Real-domain browser/end-to-end verification and
+production deployment are not claimed.

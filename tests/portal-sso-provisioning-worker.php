@@ -35,8 +35,13 @@ add_filter( 'pre_http_request', static function ( $pre, $args, $url ) use ( $job
 	return [ 'response' => [ 'code' => 200 ], 'headers' => [], 'body' => json_encode( $job['identity'] ) ];
 }, 10, 3 );
 $auth = 0;
+$marked_session = false;
 add_action( 'set_auth_cookie', static function () use ( &$auth ) { ++$auth; } );
 add_action( 'set_logged_in_cookie', static function () use ( &$auth ) { ++$auth; } );
+add_action( 'set_auth_cookie', static function ( $cookie, $expire, $until, $id, $scheme, $token ) use ( &$marked_session ) {
+	$session = WP_Session_Tokens::get_instance( $id )->get( $token );
+	$marked_session = get_current_blog_id() === ( $session[ \BingoCommerce\PortalIntegration\SsoSession::MARKER ]['blog_id'] ?? null );
+}, 10, 6 );
 if ( 'config' === $mode ) {
 	$config = PortalConfig::fromSsoConstants();
 	ob_start(); var_dump( $config ); $debug = ob_get_clean();
@@ -115,4 +120,4 @@ if ( 'complete' === $mode ) {
 } else {
 	$result = ( new SsoProvisioningService() )->provision( $job['identity'], (int) $job['blog'], (int) $job['hall'], $job['identity']['sso_reference'] );
 }
-echo json_encode( [ 'result' => is_wp_error( $result ) ? $result->get_error_code() : $result, 'http' => $http_calls, 'auth' => $auth, 'current_user' => get_current_user_id() ] );
+echo json_encode( [ 'result' => is_wp_error( $result ) ? $result->get_error_code() : $result, 'http' => $http_calls, 'auth' => $auth, 'current_user' => get_current_user_id(), 'marked_session' => $marked_session ] );

@@ -4,12 +4,14 @@ namespace BingoCommerce\PortalIntegration;
 
 if ( ! defined( 'ABSPATH' ) ) { exit; }
 
-/** Phase 4a: bind browser, exchange, provision, then a fixed message. No login. */
+/** Bind browser, exchange, provision, audit, then create the Hall's SSO session. */
 final class SsoLogin {
 	public static function register(): void {
 		add_action( 'login_form_bc_portal_sso_start', [ self::class, 'start' ] );
 		add_action( 'login_form_bc_portal_sso_return', [ self::class, 'returned' ] );
 		add_action( 'login_form_bc_portal_sso_message', [ self::class, 'message' ] );
+		add_action( 'login_form', [ self::class, 'login_button' ] );
+		add_filter( 'wp_auth_check_load', [ self::class, 'auth_check_load' ] );
 	}
 
 	/** Handler-independent start preparation; it never accepts a Hall from HTTP. */
@@ -49,8 +51,9 @@ final class SsoLogin {
 		self::headers();
 		$cookie = $_COOKIE[ self::cookie_name() ] ?? null;
 		$result = self::complete( $_GET['code'] ?? null, $_GET['attempt_reference'] ?? null, $cookie );
-		$key = is_wp_error( $result ) ? ( $result->get_error_data()['message_key'] ?? 'general' ) : 'ready';
-		self::redirect_message( $key );
+		if ( is_wp_error( $result ) ) { self::redirect_message( $result->get_error_data()['message_key'] ?? 'general' ); }
+		wp_safe_redirect( admin_url(), 302, 'BingoCommerce SSO' );
+		exit;
 	}
 
 	/** One request, one atomic consume before HTTP. Return only a user ID or fixed error. */
@@ -83,6 +86,8 @@ final class SsoLogin {
 				return self::audited_failure( $blog, $hall, $reference, $user->get_error_code(), $person, (bool) ( $data['support_review'] ?? false ), $data['message_key'] ?? 'general', (int) ( $data['wp_user_id'] ?? 0 ) );
 			}
 			if ( ! SsoAudit::record( 'account_ready', $blog, $hall, $reference, 'ready', $person, $user ) ) { return self::failure(); }
+			if ( ! SsoAudit::record( 'login', $blog, $hall, $reference, 'verified', $person, $user ) ) { return self::failure(); }
+			if ( is_wp_error( SsoSession::sign_in( $user ) ) ) { return self::audited_failure( $blog, $hall, $reference, 'session_failed', $person, false, 'general', $user ); }
 			return $user;
 		} catch ( \Throwable $ignored ) {
 			return self::audited_failure( $blog, $hall, $reference, 'unexpected_failure', is_array( $identity ) ? $identity['portal_user_id'] : 0, true );
@@ -119,7 +124,7 @@ final class SsoLogin {
 	}
 
 	private static function failure( string $message = 'general' ): \WP_Error {
-		return new \WP_Error( 'sso_refused', 'Store SSO could not be completed.', [ 'message_key' => array_key_exists( $message, self::messages() ) && 'ready' !== $message ? $message : 'general' ] );
+		return new \WP_Error( 'sso_refused', 'Store SSO could not be completed.', [ 'message_key' => array_key_exists( $message, self::messages() ) ? $message : 'general' ] );
 	}
 
 	private static function messages(): array {
@@ -128,7 +133,6 @@ final class SsoLogin {
 			'email_conflict' => 'Your email is already used in this store. Please ask Bingo Innovation support to change the email on your Portal account, then try again.',
 			'access_removed' => 'Your access to this store has been removed. Please contact Bingo Innovation support.',
 			'contact_support' => "We couldn't find your store account. Please contact Bingo Innovation support.",
-			'ready' => 'Your store account is ready. Sign-in will be enabled in the next step.',
 		];
 	}
 
@@ -143,5 +147,45 @@ final class SsoLogin {
 		$key = is_string( $_GET['message'] ?? null ) ? $_GET['message'] : 'general';
 		$text = self::messages()[ $key ] ?? self::messages()['general'];
 		wp_die( esc_html( $text ), esc_html__( 'Portal store access', 'bingocommerce-portal-integration' ), [ 'response' => 200 ] );
+	}
+
+	/** Only WordPress's staff login form; never hooked to WooCommerce My Account. */
+	public static function login_button(): void {
+		if ( is_wp_error( self::configuration() ) || ! is_array( self::mapping( get_current_blog_id() ) ) ) { return; }
+		echo '<p><a class="button button-secondary" href="' . esc_url( self::start_url() ) . '">' . esc_html__( 'Sign in with Portal', 'bingocommerce-portal-integration' ) . '</a></p>';
+	}
+
+	public static function auth_check_load( bool $show ): bool {
+		if ( $show && SsoAccountGuard::is_portal_user( wp_get_current_user() ) ) {
+			// Core registers its output after this filter returns. Replace it just
+			// before rendering; keep its existing Heartbeat-driven script and CSS.
+			add_action( 'admin_print_footer_scripts', [ self::class, 'auth_check_html' ], 4 );
+			add_action( 'wp_print_footer_scripts', [ self::class, 'auth_check_html' ], 4 );
+		}
+		return $show;
+	}
+
+	public static function auth_check_html(): void {
+		if ( ! SsoAccountGuard::is_portal_user( wp_get_current_user() ) ) { return; }
+		remove_action( 'admin_print_footer_scripts', 'wp_auth_check_html', 5 );
+		remove_action( 'wp_print_footer_scripts', 'wp_auth_check_html', 5 );
+		// The authenticated page already established this Hall. No mapping/table
+		// lookup on every admin page. The start endpoint rechecks readiness.
+		?>
+		<div id="wp-auth-check-wrap" class="hidden fallback">
+			<div id="wp-auth-check-bg"></div>
+			<div id="wp-auth-check">
+				<button type="button" class="wp-auth-check-close button-link"><span class="screen-reader-text"><?php esc_html_e( 'Close dialog' ); ?></span></button>
+				<div class="wp-auth-fallback">
+					<p class="wp-auth-fallback-expired" tabindex="0"><?php esc_html_e( 'Your session has ended. Sign in with Portal to continue.', 'bingocommerce-portal-integration' ); ?></p>
+					<p><a class="button button-primary" target="_top" href="<?php echo esc_url( self::start_url() ); ?>"><?php esc_html_e( 'Sign in with Portal', 'bingocommerce-portal-integration' ); ?></a></p>
+				</div>
+			</div>
+		</div>
+		<?php
+	}
+
+	private static function start_url(): string {
+		return add_query_arg( 'action', 'bc_portal_sso_start', site_url( 'wp-login.php', 'login' ) );
 	}
 }

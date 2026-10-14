@@ -67,6 +67,7 @@ require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/SsoExchangeValidator.p
 require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/SsoHttpClient.php';
 require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/SsoAudit.php';
 require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/SsoProvisioningService.php';
+require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/SsoSession.php';
 require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/SsoLogin.php';
 require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/Plugin.php';
 

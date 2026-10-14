@@ -24,6 +24,7 @@ final class Plugin {
 		// Register now, not on admin_init or behind a Hall/request-type check.
 		SsoAccountGuard::register();
 		SsoWooCommerceGuard::register();
+		SsoSession::register();
 		SsoLogin::register();
 
 		/*

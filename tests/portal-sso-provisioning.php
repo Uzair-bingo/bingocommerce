@@ -77,12 +77,14 @@ final class Phase4aTest {
 			$this->failures();
 			$this->concurrency_and_headers();
 			$this->start_limit_concurrency();
-			$this->ok( 0 === $this->auth && 0 === get_current_user_id(), 'Phase 4a never authenticates a user' );
+			$this->ok( $this->auth > 0 && get_current_user_id() > 0, 'successful completion now authenticates through Phase 4b' );
 			$this->ok( 0 === $this->mails, 'no welcome or invitation mail' );
 			foreach ( $this->people as $id ) {
 				$link = $this->repository->link( 'phase4a', $id );
 				if ( is_array( $link ) && $link['wp_user_id'] ) {
-					$this->ok( [] === get_user_meta( (int) $link['wp_user_id'], 'session_tokens', false ), 'no session token created' );
+					wp_cache_delete( (int) $link['wp_user_id'], 'user_meta' );
+					$has_login = (int) $wpdb->get_var( $wpdb->prepare( 'SELECT COUNT(*) FROM %i WHERE action = %s AND target_id = %s', Migrations::audit_log_table(), 'portal_sso.login', (string) $link['wp_user_id'] ) ) > 0;
+					$this->ok( $has_login === (bool) get_user_meta( (int) $link['wp_user_id'], 'session_tokens', true ), 'only completed, audited logins create sessions' );
 				}
 			}
 			$logs = $wpdb->get_col( $wpdb->prepare( 'SELECT context FROM %i WHERE action LIKE %s', Migrations::audit_log_table(), 'portal_sso.%' ) );
@@ -177,7 +179,7 @@ final class Phase4aTest {
 		$this->ok( $calls === $this->calls && $before === $this->audit_count(), 'pre-exchange failures have no HTTP or audit' );
 		$this->answer = $identity;
 		$result = SsoLogin::complete( str_repeat( 'a', 64 ), $attempt['attempt'], $attempt['browser'] );
-		$this->ok( is_int( $result ), 'first complete flow provisions without signing in; ' . $this->last_failure . '; audits=' . json_encode( $wpdb->get_results( $wpdb->prepare( 'SELECT action,context FROM %i WHERE action LIKE %s ORDER BY id DESC LIMIT 3', Migrations::audit_log_table(), 'portal_sso.%' ), ARRAY_A ) ) );
+		$this->ok( is_int( $result ), 'first complete flow provisions and signs in; ' . $this->last_failure . '; audits=' . json_encode( $wpdb->get_results( $wpdb->prepare( 'SELECT action,context FROM %i WHERE action LIKE %s ORDER BY id DESC LIMIT 3', Migrations::audit_log_table(), 'portal_sso.%' ), ARRAY_A ) ) );
 		$this->ok( is_wp_error( SsoLogin::complete( str_repeat( 'a', 64 ), $attempt['attempt'], $attempt['browser'] ) ) && $calls + 1 === $this->calls, 'replay never exchanges again' );
 		$expired_identity = $this->identity(); $expired = $this->attempt( $expired_identity );
 		$wpdb->query( $wpdb->prepare( 'UPDATE %i SET expires_at = %s WHERE attempt_reference_hash = %s', Schema::attempts_table(), gmdate( 'Y-m-d H:i:s', time() - 1 ), hash( 'sha256', $expired['attempt'] ) ) );
@@ -370,11 +372,12 @@ final class Phase4aTest {
 
 		foreach ( [ 'portal_sso.exchanged', 'portal_sso.account_ready' ] as $action ) {
 			$identity = $this->identity(); $attempt = $this->attempt( $identity ); $this->answer = $identity;
+			$auth_before = $this->auth;
 			$fail = static fn( $sql ) => str_starts_with( $sql, 'INSERT INTO `' . Migrations::audit_log_table() . '`' ) && str_contains( $sql, $action ) ? 'SELECT * FROM bc_sso_absent_terminal_audit_fixture' : $sql;
 			add_filter( 'query', $fail );
 			try { $result = SsoLogin::complete( str_repeat( 'a', 64 ), $attempt['attempt'], $attempt['browser'] ); }
 			finally { remove_filter( 'query', $fail ); }
-			$this->ok( is_wp_error( $result ) && 0 === $this->auth, 'required exchange/ready audit failure refuses success' );
+			$this->ok( is_wp_error( $result ) && $auth_before === $this->auth, 'required exchange/ready audit failure refuses success' );
 		}
 
 		$identity = $this->identity(); $attempt = $this->attempt( $identity ); $this->answer = $identity;
@@ -423,14 +426,14 @@ final class Phase4aTest {
 		$job = [ 'mode' => 'complete', 'consume_at' => microtime( true ) + 3, 'blog' => 2, 'identity' => $identity, 'attempt' => $attempt['attempt'], 'browser' => $attempt['browser'], 'start' => microtime( true ) + 2 ];
 		$results = array_map( fn( $r ) => json_decode( $r, true ), $this->workers( [ $job, $job ] ) );
 		$this->ok( 1 === $results[0]['http'] + $results[1]['http'], 'concurrent callbacks exchange exactly once' );
-		foreach ( $results as $result ) { $this->ok( 0 === $result['auth'] && 0 === $result['current_user'], 'worker no auth cookie/current user' ); }
+		foreach ( $results as $result ) { $this->ok( is_int( $result['result'] ) ? ( 2 === $result['auth'] && $result['result'] === $result['current_user'] && $result['marked_session'] ) : ( 0 === $result['auth'] && 0 === $result['current_user'] && ! $result['marked_session'] ), 'only the winning callback signs in with a marked session' ); }
 		$headers = $this->workers( [ [ 'mode' => 'cgi-start', 'ip' => '203.0.113.211' ] ], true )[0];
 		$this->ok( str_contains( $headers, 'Set-Cookie: __Host-bc_portal_sso=' ) && str_contains( strtolower( $headers ), 'httponly' ) && str_contains( strtolower( $headers ), 'samesite=lax' ) && str_contains( strtolower( $headers ), 'secure' ) && ! str_contains( strtolower( $headers ), 'domain=' ), 'real HTTPS cookie is host-only secure/HttpOnly/Lax: ' . preg_replace( [ '/(__Host-bc_portal_sso=)[^;]+/', '/(Location: [^?]+)\?[^\r\n]+/' ], [ '$1[redacted]', '$1?[redacted]' ], $headers ) );
 		$this->ok( str_contains( $headers, 'Referrer-Policy: no-referrer' ) && str_contains( strtolower( $headers ), 'no-store' ) && str_contains( $headers, 'Location: https://portal.example.invalid/commerce/sso/authorize?' ), 'start real headers and trusted Portal redirect' );
 		$identity = $this->identity(); $attempt = $this->attempt( $identity );
 		$headers = $this->workers( [ [ 'mode' => 'cgi-return', 'identity' => $identity, 'attempt' => $attempt['attempt'], 'browser' => $attempt['browser'] ] ], true )[0];
-		$this->ok( str_contains( $headers, 'message=ready' ) && str_contains( $headers, 'bc_portal_sso_message' ) && ! str_contains( $headers, 'code=' ), 'successful return one clean message redirect' );
-		$this->ok( 1 === substr_count( $headers, 'Location:' ) && ! str_contains( $headers, 'wordpress_logged_in_' ) && ! str_contains( $headers, 'wordpress_sec_' ), 'one redirect and no auth cookies' );
+		$this->ok( str_contains( $headers, '/wp-admin/' ) && ! str_contains( $headers, 'bc_portal_sso_message' ) && ! str_contains( $headers, 'code=' ), 'successful return one clean dashboard redirect' );
+		$this->ok( 1 === substr_count( $headers, 'Location:' ) && str_contains( $headers, 'wordpress_logged_in_' ) && str_contains( $headers, 'wordpress_sec_' ), 'one redirect and WordPress auth cookies' );
 		$this->ok( str_contains( $headers, 'Referrer-Policy: no-referrer' ) && str_contains( strtolower( $headers ), 'no-store' ) && str_contains( $headers, '__Host-bc_portal_sso=deleted' ), 'return clears private cookie and prevents caching/referrer' );
 	}
 
