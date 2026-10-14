@@ -35,7 +35,7 @@
 | 17 | **Portal restore protection:** the store saves the Portal user's creation time with the link; a mismatch is refused and an audit entry is marked for support review. |
 | 18 | **Password accounts created by an SSO Hall Manager** through the Hall Staff screen are normal staff accounts. They survive the person's Portal removal. This is accepted and documented (section 9). |
 | 19 | **Start requests are limited** per IP address, old login attempts are deleted on every start, and auditing begins at the exchange step. |
-| 20 | **Hall transfer in the Portal** gives the new owner the `super_admin` role on that Hall and removes it from the previous owner. |
+| 20 | **Hall transfer in the Portal** gives the new owner the `super_admin` role on that Hall and removes it from the previous owner, who then has **no access to that Hall** in the Portal (their other Halls are unaffected). |
 | 21 | **Emergency removal:** Remove Portal access first, wait two minutes, then remove the store role. This wait reduces the chance of an unfinished login restoring access, but does not guarantee cancellation of a delayed login. This is an accepted v1 limitation. (Section 9, rule 5.) |
 | 22 | **The SSO token is the on/off switch.** Removing it from the store's configuration turns SSO off; there is no separate setting. The SSO code is never uninstalled. |
 
@@ -491,7 +491,11 @@ eligible for Hall roles (BR-035, BR-036). SSO therefore uses this rule:
    new owner gets the `super_admin` role on that Hall and the previous owner
    loses it. SSO then follows the role list: the new owner can open the store,
    and the previous owner gets no new logins (an open session ends by section
-   8). Today the Portal's `HallManagementService::transferOwnership()`
+   8). The Portal allows one role per person per Hall (`hall_user` is
+   unique on Hall and user), so the previous owner's role entry for that
+   Hall is removed and they **lose all access to that Hall** in the Portal
+   (decided by the user on 2026-10-14); their roles on other Halls are
+   unchanged. Today the Portal's `HallManagementService::transferOwnership()`
    (`app/Services/Hall/HallManagementService.php:280-302`) changes only
    `halls.user_id`, so this Portal change is built as part of SSO.
 4. **SSO accounts protected in the store.** One rule: **every SSO account
@@ -680,6 +684,17 @@ eligible for Hall roles (BR-035, BR-036). SSO therefore uses this rule:
    separate action.)
 3. **Reserved usernames.** Before SSO is switched on, confirm that no existing
    store account has a username starting with `portal-`.
+3a. **Former owners from earlier transfers.** Hall transfers made before the
+    Phase 3b change only updated the Hall's owner field and left the previous
+    owner's `super_admin` role in place. Before SSO is switched on in an
+    environment, list every Hall `super_admin` entry held by someone other than
+    the Hall's current owner (read-only). Bingo Innovation reviews each one;
+    removing an entry is a deliberate Portal action, never automatic. Also
+    list Halls whose current owner has **no** `super_admin` entry: the Portal
+    still lets such an owner in through the owner field, but SSO follows the
+    role list only, so that owner cannot use SSO until a Global Admin gives
+    them the entry. (Checked on development on 2026-10-14: none of either
+    kind found, and no transfers recorded.)
 4. **Configuration per environment:** Portal installation ID and SSO token
    (store); SSO token ID, token purpose and installation ID (Portal).
 5. **Production web-server logging** for the SSO return path is configured

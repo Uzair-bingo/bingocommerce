@@ -8539,7 +8539,8 @@ delete_users.
      Hall Managers (employees) cannot add, change or remove a role for it on any
      Hall; only the SSO grant and a Platform Admin can. The owner's store access is controlled only from the
      Portal. In an emergency: Remove Portal access first, wait two minutes, then remove the store role. This wait reduces the chance of an unfinished login restoring access, but does not guarantee cancellation of a delayed login. This is an accepted v1 limitation. A Hall transfer in the Portal gives the new owner the `super_admin`
-     role and removes it from the previous owner.
+     role and removes it from the previous owner, who then has no access to
+     that Hall in the Portal (other Halls unaffected).
   7. The email is checked only on a person's first login, before their link is
      saved. If the Portal email is already used by any store account, SSO saves
      and creates nothing. The only supported fix is a Portal Global Admin
