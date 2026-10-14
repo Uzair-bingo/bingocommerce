@@ -62,6 +62,12 @@ require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/RedemptionRestControll
 // earliest boundary where the current user can be resolved.
 require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/HallCommerceAccess.php';
 require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/HallCommerceGate.php';
+require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/SsoRepository.php';
+require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/SsoExchangeValidator.php';
+require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/SsoHttpClient.php';
+require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/SsoAudit.php';
+require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/SsoProvisioningService.php';
+require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/SsoLogin.php';
 require_once BINGOCOMMERCE_PORTAL_INTEGRATION_PATH . 'src/Plugin.php';
 
 BingoCommerce\PortalIntegration\Plugin::boot();

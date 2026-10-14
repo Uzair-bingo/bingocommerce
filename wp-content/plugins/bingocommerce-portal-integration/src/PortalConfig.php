@@ -59,6 +59,36 @@ final class PortalConfig {
 		return $this->base_url;
 	}
 
+	/** SSO is independent of the snapshot credential; errors contain no input. */
+	public static function fromSsoConstants() {
+		foreach ( [ 'BINGOCOMMERCE_PORTAL_BASE_URL', 'BINGOCOMMERCE_PORTAL_SSO_TOKEN', 'BINGOCOMMERCE_PORTAL_INSTALLATION_ID' ] as $name ) {
+			if ( ! defined( $name ) || ! is_string( constant( $name ) ) ) {
+				return self::error( 'sso_unavailable', 'Portal SSO is unavailable.' );
+			}
+		}
+		$url = rtrim( trim( constant( 'BINGOCOMMERCE_PORTAL_BASE_URL' ) ), '/' );
+		$token = constant( 'BINGOCOMMERCE_PORTAL_SSO_TOKEN' );
+		$parts = wp_parse_url( $url );
+		$local = in_array( wp_get_environment_type(), [ 'local', 'development' ], true );
+		if ( strlen( $url ) > 2048 || false === filter_var( $url, FILTER_VALIDATE_URL ) || ! is_array( $parts )
+			|| ! in_array( $parts['scheme'] ?? '', $local ? [ 'http', 'https' ] : [ 'https' ], true )
+			|| empty( $parts['host'] ) || isset( $parts['user'] ) || isset( $parts['pass'] )
+			|| isset( $parts['query'] ) || isset( $parts['fragment'] )
+			|| '' === $token || strlen( $token ) > 4096 || preg_match( '/[\x00-\x20\x7f]/', $token )
+			|| 1 !== preg_match( '/\A[a-z0-9]{1,20}\z/', constant( 'BINGOCOMMERCE_PORTAL_INSTALLATION_ID' ) ) ) {
+			return self::error( 'sso_unavailable', 'Portal SSO is unavailable.' );
+		}
+		return new self( $url );
+	}
+
+	public function ssoToken(): string {
+		return (string) constant( 'BINGOCOMMERCE_PORTAL_SSO_TOKEN' );
+	}
+
+	public function installationId(): string {
+		return (string) constant( 'BINGOCOMMERCE_PORTAL_INSTALLATION_ID' );
+	}
+
 	public function integrationToken(): string {
 		// Constants are immutable for the lifetime of a PHP request. The token
 		// was validated by fromConstants(), and deliberately is not copied into
@@ -71,6 +101,7 @@ final class PortalConfig {
 		return [
 			'base_url'          => $this->base_url,
 			'integration_token' => '[REDACTED]',
+			'sso_token'         => '[REDACTED]',
 		];
 	}
 

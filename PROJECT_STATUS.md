@@ -5456,3 +5456,119 @@ This command is recorded for the user; it was **not executed** during Phase 1.
   Missing `BC_TEST_DB` refuses before bootstrap. The shared matcher has no
   broad prefix fallback. No development data writes/migration, staging, commit
   or installation. This verifies Phase 2's scoped behavior, not end-to-end SSO.
+
+### 2026-10-14 — ADR-048 Phase 4a initial implementation and verification
+
+- Implemented the approved 13-file scope for store SSO start/return, the
+  separate SSO HTTP exchange, identity validation, link/account recovery and
+  audited Hall Manager provisioning. Phase 4a deliberately creates no
+  WordPress authentication cookie or session; its success destination is the
+  fixed account-ready message. End-to-end sign-in remains Phase 4b.
+- The snapshot client and its test, all decision records, the Portal
+  repository, existing migrations and the shared fixture are unchanged.
+  PortalConfig adds independent SSO validation/accessors without retaining
+  credentials in object state. SSO errors/debug output and audits exclude
+  credentials. All new SQL uses prepared statements.
+- Account creation/recovery reuses the existing network Hall Staff creation
+  lock through one narrow core wrapper. It uses the existing exact username
+  matcher, planned-username exception, mandatory creation witness and grant.
+  No Portal dependency or link-table read was added to core. Temporary-role
+  cleanup is restricted to the pending link's creation Hall and exact verified
+  rows. Creation facts survive retries from other Halls.
+- Verification used PHP `/opt/homebrew/opt/php@8.4/bin/php`, with every database
+  test explicitly bound to `BC_TEST_DB=bingocommerce_state_recon`. The existing
+  fixture's approved development access was limited to `SHOW CREATE TABLE`
+  structure reads. No development data read/write or migration was performed.
+  Every Portal request was mocked; no real Portal was contacted.
+- Commands and measured results, run sequentially:
+  - `BC_TEST_DB=bingocommerce_state_recon /opt/homebrew/opt/php@8.4/bin/php tests/portal-sso-provisioning.php`
+    — last complete successful run: **421 assertions PASS**. Covers private
+    browser binding, atomic callback consumption (including synchronized
+    workers), first-login/recovery races, actual process interruptions,
+    creation/grant audit failures and retries, temporary-record cleanup,
+    PHP/DB clock differences, immutable creation references, identity restore
+    protection, missing/renamed/reused user IDs, email collisions, ordinary
+    account behavior, transport validation, CGI headers/cookies, and absence
+    of authentication/session creation.
+  - **Initial start-limit finding (resolved in the follow-up below):** a
+    subsequently added synchronized boundary test failed. With nine starts
+    already saved, both concurrent requests created a tenth attempt, producing
+    eleven. The failure was `concurrent boundary starts must create exactly
+    one attempt; created=2`. Approval was requested before adding the short
+    per-IP lock; the approved fix and final verification are recorded below.
+  - `BC_TEST_DB=bingocommerce_state_recon /opt/homebrew/opt/php@8.4/bin/php tests/portal-sso-foundation.php`
+    — **381 assertions PASS**.
+  - `BC_TEST_DB=bingocommerce_state_recon /opt/homebrew/opt/php@8.4/bin/php tests/hall-staff-sso.php`
+    — **101 assertions PASS**.
+  - `BC_TEST_DB=bingocommerce_state_recon /opt/homebrew/opt/php@8.4/bin/php tests/hall-staff-phase-a-fixes.php`
+    — **67 assertions PASS**.
+  - `BC_TEST_DB=bingocommerce_state_recon /opt/homebrew/opt/php@8.4/bin/php tests/hall-staff-create-invite.php`
+    — **262 passed, 0 failed**. The first run printed membership baseline
+    restored NO, as previously observed in Phase 2. A diagnostic rerun passed
+    262/262 and printed YES; independent before/after isolated membership
+    snapshots showed no added or removed rows. The initial discrepancy remains
+    unexplained. Existing assertions and fixture files were not changed.
+  - `BC_TEST_DB=bingocommerce_state_recon /opt/homebrew/opt/php@8.4/bin/php tests/portal-integration-foundation.php`
+    — **77 assertions PASS**.
+- Existing fault-injection SQL errors and writer-guard refusal diagnostics
+  occurred in the legacy suites as expected. Their tests were not modified.
+- No staging, commit, installation, production migration, real-domain browser
+  validation, production log inspection or sign-in/session implementation.
+- Final static checks: PHP syntax passed for all **12** changed/new PHP files;
+  `git diff --check` passed. Exactly **13** files are changed/new, including
+  this status entry. The following entry records the approved concurrency fix.
+
+
+### 2026-10-14 — ADR-048 Phase 4a start-limit fix and final verification
+
+- Implemented the user-approved per-IP start lock in `SsoRepository`. Its
+  64-character name is `bc:sso:start:` plus 51 characters of the keyed IP
+  fingerprint. No raw IP, request-supplied lock name or new table is used.
+  `GET_LOCK` waits at most one second; unsuccessful acquisition refuses the
+  start without inserting an attempt. The lock covers only the authoritative
+  count and insert, and is released in `finally`, including error paths.
+- `SsoLogin` keeps cleanup, Hall mapping, random generation, redirects and all
+  Portal requests outside that lock. The existing Hall Staff creation lock is
+  unchanged. The exact SSO username matcher and ordinary-account behavior are
+  unchanged.
+- Extended the two Phase 4a test files to verify the concurrent tenth-start
+  boundary, the lock's name and timeout, real contention from a separate
+  connection, no insertion/audit on acquisition failure, release after count
+  or insert errors and exceptions, and release before CGI redirects and Portal
+  HTTP. No legacy assertion or shared fixture was changed.
+- Ran all six suites **sequentially in the requested order**, with commands:
+
+  ```bash
+  BC_TEST_DB=bingocommerce_state_recon /opt/homebrew/opt/php@8.4/bin/php tests/portal-sso-provisioning.php
+  BC_TEST_DB=bingocommerce_state_recon /opt/homebrew/opt/php@8.4/bin/php tests/portal-sso-foundation.php
+  BC_TEST_DB=bingocommerce_state_recon /opt/homebrew/opt/php@8.4/bin/php tests/hall-staff-sso.php
+  BC_TEST_DB=bingocommerce_state_recon /opt/homebrew/opt/php@8.4/bin/php tests/hall-staff-phase-a-fixes.php
+  BC_TEST_DB=bingocommerce_state_recon /opt/homebrew/opt/php@8.4/bin/php tests/hall-staff-create-invite.php
+  BC_TEST_DB=bingocommerce_state_recon /opt/homebrew/opt/php@8.4/bin/php tests/portal-integration-foundation.php
+  ```
+
+  | Suite | Final result |
+  |---|---|
+  | Portal SSO provisioning / Phase 4a | **469 assertions PASS** |
+  | Portal SSO foundation / Phase 1 | **381 assertions PASS** |
+  | Hall Staff SSO / Phase 2 | **101 assertions PASS** |
+  | Hall Staff Phase A fixes | **67 assertions PASS** |
+  | Hall Staff Create/Invite | **262 passed, 0 failed** |
+  | Portal integration foundation | **77 assertions PASS** |
+
+- The final Create/Invite run reported **membership baseline restored: YES**
+  and zero leftover test users, orphan metadata, triggers and locks. Expected
+  fault-injection duplicate-key errors and writer-guard diagnostics appeared
+  in the unchanged legacy suites; no test failed.
+- This follow-up changed only `SsoRepository.php`, `SsoLogin.php`,
+  `tests/portal-sso-provisioning.php`, `tests/portal-sso-provisioning-worker.php`
+  and this status file. The total Phase 4a scope remains **13 files**, including
+  **12 PHP files**. No new file was needed for the fix.
+- All tests used the isolated database. The existing fixture performed only
+  the approved structure-only `SHOW CREATE TABLE` reads from development;
+  no development data read/write or migration, real Portal request, staging,
+  commit or installation was performed. Decision documents and both snapshot
+  client files remain unchanged. Phase 4a still creates **no WordPress auth
+  cookie or session**; sign-in/session behavior belongs to Phase 4b.
+- Final static checks passed: `php -l` with PHP 8.4 for all **12** changed/new
+  PHP files, and `git diff --check`. The staged-file list is empty.

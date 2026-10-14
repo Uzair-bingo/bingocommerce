@@ -36,6 +36,28 @@ final class HallStaffProvisioningService {
 	public const UNEXPECTED_MEMBERSHIP  = 'unexpected_membership_state';
 
 	/**
+	 * Serialize trusted SSO creation/recovery with the existing human writer.
+	 * No network call belongs inside this callback. This exposes no second lock,
+	 * actor bypass, account writer, or knowledge of the integration's tables.
+	 *
+	 * @return mixed|\WP_Error
+	 */
+	public static function with_portal_sso_creation_lock( string $planned_username, callable $work ) {
+		if ( ! HallContext::is_hall() || ! HallStaffIdentity::is_portal_sso_username( $planned_username ) ) {
+			return self::error( 'invalid_sso_creation', 'The SSO creation identity is invalid.' );
+		}
+		$locked = self::acquire_lock();
+		if ( is_wp_error( $locked ) ) {
+			return $locked;
+		}
+		try {
+			return $work();
+		} finally {
+			self::release_lock();
+		}
+	}
+
+	/**
 	 * Confirm only the creation audit for an already-created SSO account.
 	 * The trusted integration supplies the link's original creation facts.
 	 * This entry creates no account, role, invitation, link, or retry token.
