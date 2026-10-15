@@ -8536,8 +8536,8 @@ delete_users.
      separate and survive Portal removal (accepted); a Platform Admin or another
      Hall Manager reviews the Hall's staff list when a Hall Super Admin is
      removed.
-  6. In the store's Hall Staff screen every SSO account (username starting with
-     `portal-`), including a former owner's, is shown as "Managed by Portal".
+  6. In the store's Hall Staff screen every SSO account (username in the
+     exact SSO format `portal-<installation>-<number>`), including a former owner's, is shown as "Managed by Portal".
      Hall Managers (employees) cannot add, change or remove a role for it on any
      Hall; only the SSO grant and a Platform Admin can. The owner's store access is controlled only from the
      Portal. In an emergency: Remove Portal access first, wait two minutes, then remove the store role. This wait reduces the chance of an unfinished login restoring access, but does not guarantee cancellation of a delayed login. This is an accepted v1 limitation. A Hall transfer in the Portal gives the new owner the `super_admin`

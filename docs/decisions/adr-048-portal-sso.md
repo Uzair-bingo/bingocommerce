@@ -33,7 +33,7 @@
 | 5 | Each SSO login works **only on the Hall store it was opened for**. |
 | 6 | Logged out after **30 minutes without activity**, or **1 hour at most**. |
 | 7 | **Removed in the Portal:** no new logins; an open session ends by rule 6 (accepted business risk: up to 1 hour). |
-| 8 | **SSO accounts protected in the store:** every SSO account (username starting with `portal-`) is shown as "Managed by Portal". Hall Managers (employees) cannot remove it or change its role; only a Platform Admin can. The owner's store access is controlled only from the Portal. (Replaces the earlier "blocked until a Platform Admin allows them again" decision; no block is needed.) |
+| 8 | **SSO accounts protected in the store:** every SSO account (username in the exact SSO format `portal-<installation>-<number>`) is shown as "Managed by Portal". Hall Managers (employees) cannot remove it or change its role; only a Platform Admin can. The owner's store access is controlled only from the Portal. (Replaces the earlier "blocked until a Platform Admin allows them again" decision; no block is needed.) |
 | 9 | **Email already used in the store:** refused; the person must use a different Portal email. |
 | 10 | **Portal Global Admin is not part of SSO.** They keep the platform admin login. |
 | 11 | **No MFA in v1** (written exception to ADR-012). |
@@ -101,7 +101,7 @@
   usually succeeds because WooCommerce picks new digits. No extra code is
   added for it.
 - **"Managed by Portal" label:** the store's Hall Staff screen marks every SSO
-  account (username starting with `portal-`) as "Managed by Portal".
+  account (username in the exact SSO format `portal-<installation>-<number>`) as "Managed by Portal".
 
 ## 3. Who gets access
 
@@ -509,7 +509,7 @@ eligible for Hall roles (BR-035, BR-036). SSO therefore uses this rule:
    (`app/Services/Hall/HallManagementService.php:280-302`) changes only
    `halls.user_id`, so this Portal change is built as part of SSO.
 4. **SSO accounts protected in the store.** One rule: **every SSO account
-   (username starting with `portal-`) on a Hall is "Managed by Portal".** The
+   (username in the exact SSO format `portal-<installation>-<number>`) on a Hall is "Managed by Portal".** The
    store does not try to know who the current owner is.
    - The Hall Staff screen shows these accounts as "Managed by Portal", so other
      staff can see they are controlled from the Portal.
@@ -693,7 +693,10 @@ eligible for Hall roles (BR-035, BR-036). SSO therefore uses this rule:
    the email, because the account still owns it; removing old staff access is a
    separate action.)
 3. **Reserved usernames.** Before SSO is switched on, confirm that no existing
-   store account has a username starting with `portal-`.
+   store account has a username in the exact SSO format
+   `portal-<installation>-<number>` (section 2). Ordinary names that merely
+   begin with `portal-`, such as `portal-mike`, are normal accounts and need
+   no action.
 3a. **Former owners from earlier transfers.** Hall transfers made before the
     Phase 3b change only updated the Hall's owner field and left the previous
     owner's `super_admin` role in place. Before SSO is switched on in an
