@@ -17,6 +17,9 @@ final class SsoMigrations {
 	public const LINKS_TABLE = 'bingo_portal_sso_links';
 	public const ATTEMPTS_TABLE = 'bingo_portal_sso_attempts';
 
+	/** Only successful readiness is remembered, for this PHP request only. */
+	private static ?bool $ready_cache = null;
+
 	public static function links_table(): string {
 		global $wpdb;
 		return $wpdb->base_prefix . self::LINKS_TABLE;
@@ -29,6 +32,7 @@ final class SsoMigrations {
 
 	/** @return true|\WP_Error */
 	public static function migrate() {
+		self::flush_ready_cache();
 		if ( ! is_multisite() ) {
 			return self::error( 'Portal SSO requires WordPress Multisite.' );
 		}
@@ -100,8 +104,21 @@ final class SsoMigrations {
 
 	/** Version alone is not proof of a usable schema. No automatic repair. */
 	public static function is_ready(): bool {
+		if ( true === self::$ready_cache ) {
+			return true;
+		}
 		$version = self::read_version();
-		return ! is_wp_error( $version ) && $version >= self::DB_VERSION && true === self::verify_schema();
+		if ( is_wp_error( $version ) || $version < self::DB_VERSION || true !== self::verify_schema() ) {
+			self::flush_ready_cache();
+			return false;
+		}
+		self::$ready_cache = true;
+		return true;
+	}
+
+	/** Explicit migrations and test schema changes must re-derive readiness. */
+	public static function flush_ready_cache(): void {
+		self::$ready_cache = null;
 	}
 
 	/** @return int|\WP_Error */
@@ -218,6 +235,7 @@ final class SsoMigrations {
 	}
 
 	private static function error( string $message ): \WP_Error {
+		self::flush_ready_cache();
 		return new \WP_Error( 'portal_sso_schema_unavailable', __( $message, 'bingocommerce-portal-integration' ) );
 	}
 }

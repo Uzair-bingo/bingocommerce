@@ -53,6 +53,7 @@ final class PortalSsoFoundationTest {
 			add_user_to_blog( BC_FIXTURE_HALL_A, $this->normal, 'customer' );
 			$this->test_guards_without_schema();
 			$this->test_schema();
+			$this->test_readiness_cache();
 			$this->test_reservation();
 			$this->test_creation_routes();
 			$this->test_email_generated_customers();
@@ -132,12 +133,47 @@ final class PortalSsoFoundationTest {
 		$this->ok( true === Schema::migrate(), 'migration rerun succeeds' );
 		$this->ok( $before === $wpdb->get_results( $wpdb->prepare( 'SELECT * FROM %i ORDER BY portal_user_id', $links ), ARRAY_A ), 'migration rerun preserves rows and references' );
 		$wpdb->query( $wpdb->prepare( 'ALTER TABLE %i DROP INDEX creation_blog_id', $links ) );
+		Schema::flush_ready_cache(); // Model a new request after deliberately changing the fixture schema.
 		$this->ok( ! Schema::is_ready() && is_wp_error( Schema::migrate() ), 'recorded version does not hide a missing index or silently repair it' );
 		$wpdb->query( $wpdb->prepare( 'ALTER TABLE %i ADD KEY creation_blog_id (creation_blog_id)', $links ) );
 		$this->ok( true === Schema::verify_schema(), 'restored schema verifies' );
 		switch_to_blog( 1 );
 		$this->ok( $links === Schema::links_table(), 'same network table on main site' );
 		restore_current_blog();
+	}
+
+	private function test_readiness_cache(): void {
+		global $wpdb;
+		Schema::flush_ready_cache();
+		$before = $wpdb->num_queries;
+		$this->ok( Schema::is_ready() && $wpdb->num_queries > $before, 'first readiness check reads the version and schema' );
+		$before = $wpdb->num_queries;
+		$this->ok( Schema::is_ready() && $before === $wpdb->num_queries, 'successful readiness is reused without queries in this request' );
+		Schema::flush_ready_cache();
+		$this->ok( Schema::is_ready() && $wpdb->num_queries > $before, 'explicit reset forces readiness verification' );
+		$version = get_site_option( Schema::VERSION_OPTION );
+		try {
+			update_site_option( Schema::VERSION_OPTION, 0 );
+			Schema::flush_ready_cache();
+			$this->ok( ! Schema::is_ready(), 'outdated version refuses readiness' );
+		} finally { update_site_option( Schema::VERSION_OPTION, $version ); }
+		$this->ok( Schema::is_ready(), 'outdated-version failure is not cached' );
+		foreach ( [ 'version', 'schema' ] as $failure ) {
+			$break = static function ( $sql ) use ( $failure ) {
+				$matches = 'version' === $failure
+					? str_starts_with( $sql, 'SELECT meta_value FROM' ) && str_contains( $sql, Schema::VERSION_OPTION )
+					: str_starts_with( $sql, 'SHOW INDEX FROM' ) && str_contains( $sql, Schema::LINKS_TABLE );
+				return $matches ? 'SELECT * FROM bc_sso_deliberately_absent_fixture_table' : $sql;
+			};
+			add_filter( 'query', $break );
+			try {
+				if ( 'schema' === $failure ) {
+					$this->ok( is_wp_error( Schema::verify_schema() ), 'explicit schema failure clears previously cached readiness' );
+				} else { Schema::flush_ready_cache(); }
+				$this->ok( ! Schema::is_ready(), 'readiness refuses ' . $failure . ' read failure' );
+			} finally { remove_filter( 'query', $break ); }
+			$this->ok( Schema::is_ready(), $failure . ' read failure is not cached' );
+		}
 	}
 
 	private function test_reservation(): void {

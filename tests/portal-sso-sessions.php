@@ -59,6 +59,7 @@ final class Phase4bTest {
 			$this->expiry_and_activity();
 			$this->configuration_and_failures();
 			$this->presentation_and_logout();
+			$this->button_queries_and_readiness();
 			$this->performance();
 		} finally { $this->cleanup(); }
 		echo "PASS: {$this->assertions} Phase 4b SSO session assertions.\n";
@@ -281,9 +282,9 @@ final class Phase4bTest {
 		$r = $this->worker( [ 'mode' => 'popup', 'id' => $this->ordinary, 'token' => $normal ] );
 		$this->ok( str_contains( $r['html'], 'wp-auth-check-form' ) && ! str_contains( $r['html'], 'bc_portal_sso_start' ), 'ordinary account keeps native password popup' );
 		$this->ok( str_contains( $this->worker( [ 'mode' => 'login-button' ] )['html'], 'bc_portal_sso_start' ), 'configured mapped Hall login button' );
-		foreach ( [ [ 'off' => true ], [ 'no_installation' => true ], [ 'blog' => 1 ] ] as $case ) { $this->ok( '' === $this->worker( $case + [ 'mode' => 'login-button' ] )['html'], 'no button when unavailable or unmapped' ); }
+		foreach ( [ [ 'off' => true ], [ 'no_installation' => true ], [ 'blog' => 1 ] ] as $case ) { $this->ok( '' === $this->worker( $case + [ 'mode' => 'login-button' ] )['html'], 'no button when configuration is unavailable or on the main site' ); }
 		update_blog_status( 2, 'archived', 1 );
-		try { $this->ok( '' === $this->worker( [ 'mode' => 'login-button' ] )['html'], 'no button on blocked Hall' ); }
+		try { $this->ok( str_contains( $this->worker( [ 'mode' => 'login-button' ] )['html'], 'bc_portal_sso_start' ), 'configured Hall button renders without checking suspension; start still refuses' ); }
 		finally { update_blog_status( 2, 'archived', 0 ); }
 		$this->ok( false === has_action( 'woocommerce_login_form', [ SsoLogin::class, 'login_button' ] ), 'no customer My Account SSO button hook' );
 		$other = $this->seed( $this->sso, 3 );
@@ -291,6 +292,40 @@ final class Phase4bTest {
 		$this->ok( 0 === $r['user'] && 0 === $r['http'] && ! isset( $this->sessions( $this->sso )[ hash( 'sha256', $token ) ] ), 'standard WP logout destroys this session only, no Portal call' );
 		$this->ok( isset( $this->sessions( $this->sso )[ hash( 'sha256', $other ) ] ), 'logout preserves other browser sessions' );
 		$this->ok( $this->sso === $this->worker( $this->login_job( $this->identity ) )['result'], 'fresh Portal click signs in after store logout' );
+	}
+
+	private function button_queries_and_readiness(): void {
+		foreach ( [
+			[ [], true ], [ [ 'off' => true ], false ], [ [ 'no_installation' => true ], false ],
+			[ [ 'blog' => 1 ], false ], [ [ 'installation' => 'Bad' ], false ],
+			[ [ 'sso_token' => "bad\nsecret" ], false ],
+			[ [ 'https' => false, 'environment' => 'production' ], false ],
+			[ [ 'https' => false, 'environment' => 'local' ], true ],
+		] as [ $configuration, $visible ] ) {
+			$r = $this->worker( $configuration + [ 'mode' => 'login-button', 'pagenow' => 'wp-login.php' ] );
+			$this->ok( 0 === $r['button_queries'], 'login form button adds zero database queries' );
+			$this->ok( $visible === str_contains( $r['html'], 'bc_portal_sso_start' ), 'button follows only Hall context, constants and HTTPS' );
+		}
+		// The parent has already cached a successful readiness check. Separate
+		// request workers must still inspect the damaged schema before any login.
+		global $wpdb;
+		$person = $this->person();
+		$job = $this->login_job( $person );
+		$links = SsoMigrations::links_table();
+		$this->ok( false !== $wpdb->query( $wpdb->prepare( 'ALTER TABLE %i DROP INDEX creation_blog_id', $links ) ), 'fixture removes required SSO index' );
+		try {
+			$r = $this->worker( [ 'mode' => 'login-button' ] );
+			$this->ok( 0 === $r['button_queries'] && str_contains( $r['html'], 'bc_portal_sso_start' ), 'button does not probe an unavailable schema' );
+			foreach ( [ [ 'mode' => 'start' ], $job ] as $request ) {
+				$r = $this->worker( $request );
+				$this->ok( 'sso_refused' === $r['result'] && 'general' === $r['message_key'], 'start/return refuse damaged schema with general message' );
+				$this->ok( $r['schema_queries'] > 0 && 0 === $r['http'] && [] === $r['cookies'] && 0 === $r['user'], 'each request verifies schema before exchange or sign-in' );
+			}
+			$this->ok( is_array( $this->repository->attempt( $job['attempt'], 2 ) ), 'schema refusal does not consume the return attempt' );
+		} finally {
+			$wpdb->query( $wpdb->prepare( 'ALTER TABLE %i ADD KEY creation_blog_id (creation_blog_id)', $links ) );
+		}
+		$this->ok( is_int( $this->worker( $job )['result'] ), 'return succeeds after fixture schema is repaired' );
 	}
 
 	private function performance(): void {

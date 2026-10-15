@@ -151,7 +151,10 @@ final class SsoLogin {
 
 	/** Only WordPress's staff login form; never hooked to WooCommerce My Account. */
 	public static function login_button(): void {
-		if ( is_wp_error( self::configuration() ) || ! is_array( self::mapping( get_current_blog_id() ) ) ) { return; }
+		// Presentation only: start/return retain the schema, mapping and suspension checks.
+		if ( ! class_exists( '\\BingoCommerce\\Core\\HallContext' ) || ! \BingoCommerce\Core\HallContext::is_hall() ) { return; }
+		$local = in_array( wp_get_environment_type(), [ 'local', 'development' ], true );
+		if ( is_wp_error( PortalConfig::fromSsoConstants() ) || ( ! $local && ! is_ssl() ) ) { return; }
 		echo '<p><a class="button button-secondary" href="' . esc_url( self::start_url() ) . '">' . esc_html__( 'Sign in with Portal', 'bingocommerce-portal-integration' ) . '</a></p>';
 	}
 

@@ -5727,3 +5727,83 @@ were permitted. The Portal repository, AGENTS.md, decision records, core,
 WooCommerce and existing fixtures were not edited. No installation or real
 Portal request was performed. Real-domain browser/end-to-end verification and
 production deployment are not claimed.
+
+### 2026-10-14 — SSO login button query reduction and request-local readiness
+
+- Implemented the approved six-file follow-up on `ssoImplementation`.
+  `SsoLogin::login_button()` now checks `HallContext::is_hall()`, the SSO
+  constants and the existing HTTPS rule only. It does not query the SSO schema,
+  version, Hall mapping or suspension state. The main-site Platform Admin login
+  keeps the button hidden. A configured Hall can display the button before its
+  store is ready; the existing start/return checks still enforce readiness,
+  mapping and suspension before login.
+- `SsoMigrations::is_ready()` remembers only a successful check in a static
+  property for the current PHP request, following `ProvisioningMigrations`.
+  Failures clear that value and are never cached. Explicit migration entry
+  clears it, and `flush_ready_cache()` supports deliberate schema rechecks in
+  the isolated harness. There is no transient, object-cache entry or TTL.
+  Table definitions and schema version are unchanged.
+- Tests measured **zero database queries for the login-form button hook** on
+  configured and unconfigured Hall requests and on the main site. They also
+  cover invalid constants, production HTTPS enforcement and the existing local
+  HTTP exception. With a required SSO index deliberately removed in the isolated
+  database, separate start and return workers both rechecked the schema and
+  refused with the general message before HTTP, cookie creation or sign-in;
+  the return attempt remained unused and succeeded after the fixture repaired
+  its index. This also proves a successful check in the parent process does not
+  carry into a new request. Foundation tests prove zero queries for a second
+  successful readiness check, explicit reset, and recovery after version/schema
+  failures without retaining a negative result.
+- Existing assertions changed in `tests/portal-sso-sessions.php`:
+  1. `no button on blocked Hall` now expects the configured Hall button to
+     render, reflecting the approved removal of the suspension lookup from
+     presentation. Start/return enforcement is unchanged.
+  2. `no button when unavailable or unmapped` was relabelled
+     `no button when configuration is unavailable or on the main site`.
+     Its three inputs and its assertion condition are unchanged.
+  All other existing assertions in that suite are unchanged. The foundation
+  missing-index assertion is unchanged; an explicit request-cache reset was
+  added before it because that test alters schema within the same process.
+
+Verification ran sequentially using the existing guarded fixture and mocked
+Portal, with `BC_TEST_DB=bingocommerce_state_recon`:
+
+```bash
+BC_TEST_DB=bingocommerce_state_recon /opt/homebrew/opt/php@8.4/bin/php tests/portal-sso-sessions.php
+BC_TEST_DB=bingocommerce_state_recon /opt/homebrew/opt/php@8.4/bin/php tests/portal-sso-provisioning.php
+BC_TEST_DB=bingocommerce_state_recon /opt/homebrew/opt/php@8.4/bin/php tests/portal-sso-foundation.php
+BC_TEST_DB=bingocommerce_state_recon /opt/homebrew/opt/php@8.4/bin/php tests/hall-staff-sso.php
+BC_TEST_DB=bingocommerce_state_recon /opt/homebrew/opt/php@8.4/bin/php tests/hall-staff-phase-a-fixes.php
+BC_TEST_DB=bingocommerce_state_recon /opt/homebrew/opt/php@8.4/bin/php tests/hall-staff-create-invite.php
+BC_TEST_DB=bingocommerce_state_recon /opt/homebrew/opt/php@8.4/bin/php tests/portal-integration-foundation.php
+```
+
+| Suite | Result |
+|---|---|
+| SSO sessions | PASS — 650 assertions |
+| SSO provisioning | PASS — 469 assertions |
+| SSO foundation | PASS — 391 assertions |
+| Hall Staff SSO | PASS — 101 assertions |
+| Hall Staff Phase A fixes | PASS — 67 assertions |
+| Hall Staff Create/Invite | PASS — 262 assertions, zero failures |
+| Portal integration foundation | PASS — 77 assertions |
+
+The initial sandboxed session-suite invocation stopped at the database connection
+guard before tests ran. The guarded isolated run then passed with local server
+access. PHP 8.4 syntax checks passed for the five changed PHP files, and
+`git diff --check` passed.
+
+Exactly six existing files changed:
+
+- `wp-content/plugins/bingocommerce-portal-integration/src/SsoLogin.php`
+- `wp-content/plugins/bingocommerce-portal-integration/src/SsoMigrations.php`
+- `tests/portal-sso-foundation.php`
+- `tests/portal-sso-sessions.php`
+- `tests/portal-sso-sessions-worker.php`
+- `PROJECT_STATUS.md`
+
+No account matcher, session logic, Portal code, decision document, fixture,
+WordPress/WooCommerce core or legacy Hall Staff test was changed. No development
+data read/write or migration; only the existing approved fixture structure-only
+reads were permitted. Nothing staged or committed. No installation or real
+Portal request was performed.

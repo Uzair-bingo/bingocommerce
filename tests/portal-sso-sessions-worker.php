@@ -7,7 +7,8 @@ namespace {
 	if ( ! in_array( PHP_SAPI, [ 'cli', 'cgi-fcgi' ], true ) || 'bingocommerce_state_recon' !== getenv( 'BC_TEST_DB' ) ) { exit( 1 ); }
 	$job = json_decode( 'cli' === PHP_SAPI ? ( $argv[1] ?? '{}' ) : ( getenv( 'BC_SSO_SESSION_JOB' ) ?: '{}' ), true, 32, JSON_THROW_ON_ERROR );
 	$mode = $job['mode'] ?? 'request';
-	if ( ! in_array( $mode, [ 'request', 'rest', 'ajax', 'login-button', 'popup', 'logout', 'complete', 'return', 'gate' ], true ) ) { exit( 1 ); }
+	if ( ! in_array( $mode, [ 'request', 'rest', 'ajax', 'login-button', 'popup', 'logout', 'start', 'complete', 'return', 'gate' ], true ) ) { exit( 1 ); }
+	if ( isset( $job['environment'] ) ) { define( 'WP_ENVIRONMENT_TYPE', $job['environment'] ); }
 	putenv( 'BC_FIXTURE_NETWORK_ACTIVE=1' );
 	putenv( 'BC_FIXTURE_WOOCOMMERCE=1' );
 	putenv( 'BC_FIXTURE_CGI=1' );
@@ -39,7 +40,8 @@ namespace {
 	}, 10, 3 );
 	add_filter( 'pre_wp_mail', '__return_true' );
 	switch_to_blog( $job['blog'] ?? 2 );
-	$_SERVER['HTTPS'] = 'on';
+	$_SERVER['HTTPS'] = ( $job['https'] ?? true ) ? 'on' : 'off';
+	$_SERVER['SERVER_PORT'] = ( $job['https'] ?? true ) ? '443' : '80';
 	$_SERVER['HTTP_HOST'] = wp_parse_url( home_url(), PHP_URL_HOST );
 	$_SERVER['REQUEST_METHOD'] = $job['method'] ?? 'GET';
 	$_SERVER['REMOTE_ADDR'] = '192.0.2.250';
@@ -94,11 +96,13 @@ namespace {
 		add_filter( 'query', static fn( $sql ) => str_contains( $sql, 'bingo_portal_sso_' ) || str_contains( $sql, 'bingo_portal_user_links' ) ? 'SELECT * FROM bc_phase4b_absent_sso_table' : $sql, 20 );
 	}
 	$result = null;
+	$button_queries = null;
 	$routes = [];
 	add_filter( 'rest_request_before_callbacks', static function ( $response, $handler, $request ) use ( &$routes ) {
 		$routes[] = [ $request->get_method(), $request->get_route() ];
 		return $response;
 	}, 1, 3 );
+	if ( 'start' === $mode ) { $result = SsoLogin::prepare_start( $_SERVER['REMOTE_ADDR'] ); }
 	if ( in_array( $mode, [ 'complete', 'return' ], true ) ) {
 		$_GET = [ 'code' => str_repeat( 'a', 64 ), 'attempt_reference' => $job['attempt'] ];
 		$_COOKIE[ SsoLogin::cookie_name() ] = $job['browser'];
@@ -138,7 +142,11 @@ namespace {
 		if ( is_user_logged_in() ) { do_action( 'wp_ajax_' . $action ); } // Core's dispatch condition.
 		$status = $called ? 200 : 403;
 	}
-	if ( 'login-button' === $mode ) { ob_start(); do_action( 'login_form' ); $html = ob_get_clean(); }
+	if ( 'login-button' === $mode ) {
+		$before_button = $wpdb->num_queries;
+		ob_start(); do_action( 'login_form' ); $html = ob_get_clean();
+		$button_queries = $wpdb->num_queries - $before_button;
+	}
 	if ( 'popup' === $mode ) {
 		apply_filters( 'wp_auth_check_load', true, null );
 		add_action( 'admin_print_footer_scripts', 'wp_auth_check_html', 5 );
@@ -155,8 +163,11 @@ namespace {
 		'user' => get_current_user_id(), 'status' => $status, 'html' => $html, 'http' => $http,
 		'routes' => $routes,
 		'auth_queries' => $auth_queries, 'save_queries' => $save_queries, 'session_writes' => count( $session_writes ),
+		'button_queries' => $button_queries,
+		'schema_queries' => count( array_filter( $queries, static fn( $sql ) => 1 === preg_match( '/^SHOW (TABLE STATUS|FULL COLUMNS|INDEX) /', $sql ) ) ),
 		'cookies' => $cookies, 'login_actions' => $login_actions, 'audit_before_cookie' => $audit_before_cookie,
 		'result' => is_wp_error( $result ) ? $result->get_error_code() : $result,
+		'message_key' => is_wp_error( $result ) ? ( $result->get_error_data()['message_key'] ?? null ) : null,
 		'filters_removed' => 2 * DAY_IN_SECONDS === apply_filters( 'auth_cookie_expiration', 2 * DAY_IN_SECONDS, $filter_user, false )
 			&& ! isset( apply_filters( 'attach_session_information', [], $filter_user )[ SsoSession::MARKER ] ),
 		'session_table_queries' => count( array_filter( $queries, static fn( $sql ) => str_contains( $sql, 'bingo_portal_sso_' ) || str_contains( $sql, 'bingo_portal_user_links' ) ) ),
