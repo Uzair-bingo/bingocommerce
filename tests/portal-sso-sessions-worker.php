@@ -154,15 +154,38 @@ namespace {
 	}
 	if ( 'logout' === $mode ) { wp_logout(); }
 	if ( 'gate' === $mode ) { HallCommerceGate::handle_request(); }
+	// Test-only barrier: another isolated worker finishes its request while this
+	// authenticated request retains its original usermeta cache. No timing sleeps.
+	$pause = static function (): void {
+		if ( 'cli' !== PHP_SAPI ) { throw new \RuntimeException( 'Activity barrier requires CLI.' ); }
+		fwrite( STDOUT, "activity-paused\n" ); fflush( STDOUT );
+		stream_set_timeout( STDIN, 20 );
+		if ( "continue\n" !== fgets( STDIN ) ) { throw new \RuntimeException( 'Activity barrier was not released.' ); }
+	};
+	if ( 'before_read' === ( $job['pause_activity'] ?? null ) ) { $pause(); }
+	$pause_update = static function ( $sql ) use ( $pause ) {
+		if ( str_starts_with( $sql, 'UPDATE ' ) && str_contains( $sql, 'session_tokens' ) ) { $pause(); }
+		return $sql;
+	};
+	if ( 'before_update' === ( $job['pause_activity'] ?? null ) ) { add_filter( 'query', $pause_update, PHP_INT_MAX ); }
 	$before_save = $wpdb->num_queries;
 	SsoSession::save_activity();
 	$save_queries = $wpdb->num_queries - $before_save;
+	remove_filter( 'query', $pause_update, PHP_INT_MAX );
+	$activity_after_save = null;
+	$meta_cached_after_save = null;
+	if ( ! empty( $job['inspect_activity'] ) ) {
+		wp_cache_get( $id, 'user_meta', false, $meta_cached_after_save );
+		$stored = get_user_meta( $id, 'session_tokens', true );
+		$activity_after_save = $stored[ hash( 'sha256', $token ) ][ SsoSession::MARKER ]['last_activity_at'] ?? null;
+	}
 	$session_writes = array_values( array_filter( $queries, static fn( $sql ) => str_starts_with( $sql, 'UPDATE ' ) && str_contains( $sql, 'session_tokens' ) ) );
 	$filter_user = is_int( $result ) ? $result : $id;
 	echo json_encode( [
 		'user' => get_current_user_id(), 'status' => $status, 'html' => $html, 'http' => $http,
 		'routes' => $routes,
 		'auth_queries' => $auth_queries, 'save_queries' => $save_queries, 'session_writes' => count( $session_writes ),
+		'activity_after_save' => $activity_after_save, 'meta_cached_after_save' => $meta_cached_after_save,
 		'button_queries' => $button_queries,
 		'schema_queries' => count( array_filter( $queries, static fn( $sql ) => 1 === preg_match( '/^SHOW (TABLE STATUS|FULL COLUMNS|INDEX) /', $sql ) ) ),
 		'cookies' => $cookies, 'login_actions' => $login_actions, 'audit_before_cookie' => $audit_before_cookie,

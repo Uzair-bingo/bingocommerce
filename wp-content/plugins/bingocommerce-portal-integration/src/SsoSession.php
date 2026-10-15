@@ -200,11 +200,21 @@ final class SsoSession {
 		$now = time();
 		if ( ! is_array( $session ) || ! self::valid_marker( $session[ self::MARKER ] ?? null )
 			|| self::expired( $session, $now ) || $now - $session[ self::MARKER ]['last_activity_at'] < 60 ) { return; }
-		$updated = $sessions;
-		$updated[ $key ][ self::MARKER ]['last_activity_at'] = $now;
-		// Compare-and-set via WordPress metadata API: a concurrent logout or login
-		// cannot be overwritten by this request's older cached list of sessions.
-		update_user_meta( $user->ID, 'session_tokens', $updated, $sessions );
+		// The cached copy only decides when a save is due. Re-read the raw value
+		// so persistent or request-local caches cannot supply the update predicate.
+		global $wpdb;
+		$raw = $wpdb->get_var( $wpdb->prepare( 'SELECT meta_value FROM %i WHERE user_id = %d AND meta_key = %s', $wpdb->usermeta, $user->ID, 'session_tokens' ) );
+		if ( ! is_string( $raw ) ) { return; }
+		$sessions = maybe_unserialize( $raw );
+		$session = is_array( $sessions ) ? ( $sessions[ $key ] ?? null ) : null;
+		if ( ! is_array( $session ) || ! self::valid_marker( $session[ self::MARKER ] ?? null )
+			|| $session[ self::MARKER ]['blog_id'] !== $accepted['blog_id'] || self::expired( $session, $now )
+			|| $now - $session[ self::MARKER ]['last_activity_at'] < 60 ) { return; }
+		$sessions[ $key ][ self::MARKER ]['last_activity_at'] = $now;
+		// Update only, with a byte-exact comparison: a concurrent logout can
+		// delete/change the row, but this save must never recreate or overwrite it.
+		$changed = $wpdb->query( $wpdb->prepare( 'UPDATE %i SET meta_value = %s WHERE user_id = %d AND meta_key = %s AND BINARY meta_value = %s', $wpdb->usermeta, maybe_serialize( $sessions ), $user->ID, 'session_tokens', $raw ) );
+		if ( $changed > 0 ) { wp_cache_delete( $user->ID, 'user_meta' ); }
 	}
 
 	private static function failure(): \WP_Error {

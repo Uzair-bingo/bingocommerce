@@ -61,6 +61,7 @@ final class Phase4bTest {
 			$this->presentation_and_logout();
 			$this->button_queries_and_readiness();
 			$this->performance();
+			$this->activity_save_races();
 		} finally { $this->cleanup(); }
 		echo "PASS: {$this->assertions} Phase 4b SSO session assertions.\n";
 	}
@@ -346,7 +347,78 @@ final class Phase4bTest {
 		$this->ok( $this->ordinary === $this->worker( [ 'id' => $this->ordinary, 'token' => $this->seed( $this->ordinary, 2, time() - 7200, time() - 7200, false ), 'off' => true ] )['user'], 'ordinary long-lived session unaffected with SSO off' );
 	}
 
-	private function worker( array $job, bool $cgi = false ) {
+	private function activity_save_races(): void {
+		global $wpdb;
+		$now = time();
+		foreach ( [ 'before_read', 'before_update' ] as $pause ) {
+			foreach ( [ false, true ] as $two_sessions ) {
+				\WP_Session_Tokens::get_instance( $this->sso )->destroy_all();
+				$token = $this->seed( $this->sso, 2, $now - 120, $now - 120 );
+				$other = $two_sessions ? $this->seed( $this->sso, 3 ) : null;
+				$before = $this->sessions( $this->sso );
+				$r = $this->worker( [ 'id' => $this->sso, 'token' => $token, 'now' => $now, 'pause_activity' => $pause, 'inspect_activity' => true ], false, function () use ( $token, $two_sessions ) {
+					$logout = $this->worker( [ 'mode' => 'logout', 'id' => $this->sso, 'token' => $token ] );
+					$this->ok( 0 === $logout['user'] && 0 === $logout['http'], 'overlapping worker completes native logout without Portal HTTP' );
+					$this->sessions( $this->sso );
+					$this->ok( $two_sessions || ! metadata_exists( 'user', $this->sso, 'session_tokens' ), 'last-session logout deletes the metadata row' );
+				} );
+				$remaining = $this->sessions( $this->sso );
+				$this->ok( ! isset( $remaining[ hash( 'sha256', $token ) ] ), 'pending activity never recreates logged-out token: ' . $pause );
+				$this->ok( $two_sessions || ! metadata_exists( 'user', $this->sso, 'session_tokens' ), 'pending save never inserts the deleted session row' );
+				$this->ok( 0 === $this->worker( [ 'id' => $this->sso, 'token' => $token ] )['user'], 'logged-out cookie remains rejected after pending save' );
+				$this->ok( ( 'before_read' === $pause ? 1 : 2 ) === $r['save_queries'], 'due save uses only fresh read and, if needed, one conditional update' );
+				$this->ok( true === $r['meta_cached_after_save'], 'zero-row save does not clear the user meta cache' );
+				if ( $two_sessions ) {
+					$this->ok( [ hash( 'sha256', $other ) => $before[ hash( 'sha256', $other ) ] ] === $remaining, 'overlapping save preserves the other session exactly' );
+					$this->ok( $this->sso === $this->worker( [ 'id' => $this->sso, 'token' => $other, 'blog' => 3 ] )['user'], 'other Hall session remains usable' );
+				}
+			}
+		}
+
+		// The second request changes another session while the first request's
+		// cached copy stays old. Saving must use the fresh raw row, not that cache.
+		\WP_Session_Tokens::get_instance( $this->sso )->destroy_all();
+		$token = $this->seed( $this->sso, 2, $now - 120, $now - 120 );
+		$other = $this->seed( $this->sso, 3, $now - 120, $now - 120 );
+		$r = $this->worker( [ 'id' => $this->sso, 'token' => $token, 'now' => $now, 'pause_activity' => 'before_read', 'inspect_activity' => true ], false, function () use ( $other, $now ) {
+			$changed = $this->worker( [ 'id' => $this->sso, 'token' => $other, 'blog' => 3, 'now' => $now ] );
+			$this->ok( 1 === $changed['session_writes'], 'other request refreshes its own session before pending save' );
+		} );
+		$sessions = $this->sessions( $this->sso );
+		$this->ok( $now === $sessions[ hash( 'sha256', $token ) ][ SsoSession::MARKER ]['last_activity_at'], 'stale cache does not falsely skip a due activity save' );
+		$this->ok( $now === $sessions[ hash( 'sha256', $other ) ][ SsoSession::MARKER ]['last_activity_at'], 'fresh raw value preserves the other request update' );
+		$this->ok( 2 === $r['save_queries'] && 1 === $r['session_writes'], 'successful due save is one SELECT and one UPDATE' );
+		$this->ok( false === $r['meta_cached_after_save'] && $now === $r['activity_after_save'], 'successful update invalidates metadata cache and later read sees new activity' );
+		$next = $this->worker( [ 'id' => $this->sso, 'token' => $token, 'now' => $now + 59 ] );
+		$this->ok( 0 === $next['save_queries'], 'no database read or write before next minute' );
+		$next = $this->worker( [ 'id' => $this->sso, 'token' => $token, 'now' => $now + 60, 'inspect_activity' => true ] );
+		$this->ok( 2 === $next['save_queries'] && $now + 60 === $next['activity_after_save'], 'next minute saves normally and refreshes cache' );
+
+		foreach ( [ 'missing_marker', 'wrong_hall', 'idle_expired', 'absolute_expired', 'already_refreshed' ] as $change ) {
+			\WP_Session_Tokens::get_instance( $this->sso )->destroy_all();
+			$token = $this->seed( $this->sso, 2, $now - 120, $now - 120 );
+			$raw = null;
+			$r = $this->worker( [ 'id' => $this->sso, 'token' => $token, 'now' => $now, 'pause_activity' => 'before_read' ], false, function () use ( $token, $now, $change, &$raw ) {
+				global $wpdb;
+				$sessions = $this->sessions( $this->sso );
+				$marker = &$sessions[ hash( 'sha256', $token ) ][ SsoSession::MARKER ];
+				if ( 'missing_marker' === $change ) { $marker = null; }
+				if ( 'wrong_hall' === $change ) { $marker['blog_id'] = 3; }
+				if ( 'idle_expired' === $change ) { $marker['login_at'] = $now - 1800; $marker['last_activity_at'] = $now - 1800; }
+				if ( 'absolute_expired' === $change ) { $marker['login_at'] = $now - 3600; }
+				if ( 'already_refreshed' === $change ) { $marker['last_activity_at'] = $now; }
+				$raw = serialize( $sessions );
+				$this->ok( 1 === $wpdb->query( $wpdb->prepare( 'UPDATE %i SET meta_value = %s WHERE user_id = %d AND meta_key = %s', $wpdb->usermeta, $raw, $this->sso, 'session_tokens' ) ), 'fixture changes fresh row without refreshing pending request cache' );
+			} );
+			$this->ok( 1 === $r['save_queries'] && 0 === $r['session_writes'], 'fresh session is revalidated before writing: ' . $change );
+			$this->ok( $raw === $wpdb->get_var( $wpdb->prepare( 'SELECT meta_value FROM %i WHERE user_id = %d AND meta_key = %s', $wpdb->usermeta, $this->sso, 'session_tokens' ) ), 'refused fresh value remains unchanged' );
+		}
+		$ordinary = $this->seed( $this->ordinary, 2, $now - 120, $now - 120, false );
+		$r = $this->worker( [ 'id' => $this->ordinary, 'token' => $ordinary, 'now' => $now ] );
+		$this->ok( $this->ordinary === $r['user'] && 0 === $r['save_queries'], 'ordinary portal-mike has no activity query even after a minute' );
+	}
+
+	private function worker( array $job, bool $cgi = false, ?callable $during_save = null ) {
 		$env = null;
 		$command = [ PHP_BINARY, __DIR__ . '/portal-sso-sessions-worker.php', json_encode( $job ) ];
 		if ( $cgi ) {
@@ -354,8 +426,20 @@ final class Phase4bTest {
 			$env['BC_SSO_SESSION_JOB'] = json_encode( $job ); $env['SCRIPT_FILENAME'] = __DIR__ . '/portal-sso-sessions-worker.php';
 			$env['REDIRECT_STATUS'] = '1'; $env['BC_FIXTURE_CGI'] = '1'; unset( $env['REMOTE_ADDR'], $env['SERVER_SOFTWARE'] );
 		}
-		$p = proc_open( $command, [ 1 => [ 'pipe', 'w' ], 2 => [ 'pipe', 'w' ] ], $pipes, null, $env );
+		$p = proc_open( $command, [ 0 => [ 'pipe', 'r' ], 1 => [ 'pipe', 'w' ], 2 => [ 'pipe', 'w' ] ], $pipes, null, $env );
 		$this->ok( is_resource( $p ), 'isolated worker started' );
+		if ( $during_save ) {
+			stream_set_timeout( $pipes[1], 20 );
+			try {
+				$this->ok( "activity-paused\n" === fgets( $pipes[1] ), 'authenticated worker paused before activity save boundary' );
+				$during_save();
+				fwrite( $pipes[0], "continue\n" );
+			} catch ( \Throwable $error ) {
+				fclose( $pipes[0] ); fclose( $pipes[1] ); fclose( $pipes[2] ); proc_terminate( $p ); proc_close( $p );
+				throw $error;
+			}
+		}
+		fclose( $pipes[0] );
 		$out = stream_get_contents( $pipes[1] ); $err = stream_get_contents( $pipes[2] ); fclose( $pipes[1] ); fclose( $pipes[2] );
 		$this->ok( 0 === proc_close( $p ) && '' === $err, 'isolated worker succeeds: ' . $err . ( str_contains( $out, 'Fatal' ) ? $out : '' ) );
 		if ( $cgi ) { return $out; }

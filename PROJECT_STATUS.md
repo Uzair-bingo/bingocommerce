@@ -5832,3 +5832,47 @@ Portal request was performed.
   and 19.
 - Documentation updated: ADR-048 status, DECISIONS.md (ADR-048, BR-085),
   AGENTS.md §2 and §4. Not deployed to production. No code changed in this entry.
+
+### 2026-10-15 — ADR-048 security fix: activity saves cannot recreate logged-out sessions
+
+- Changed only `SsoSession::save_activity()` in production code. When the
+  cached activity timestamp makes a save due, one prepared SELECT reads the
+  current raw `session_tokens` value directly from the database. The token,
+  SSO marker, Hall, expiry and minute interval are checked again against that
+  fresh value. One prepared UPDATE then matches the user, key and byte-exact
+  raw previous value. There is no insert path; a missing or concurrently
+  changed row is left alone. Only a successful update clears that user's
+  `user_meta` cache. Ordinary accounts still incur no extra query.
+- The new regression reproduced the last-session resurrection against the
+  original production code before the fix. Separate isolated request workers
+  now prove logout is preserved both before the fresh read and between the
+  read and update, for one-session and two-session accounts. Removed cookies
+  stay rejected; the other Hall's session stays unchanged and usable.
+- A stale-cache regression changes another session in a separate request,
+  then proves the pending save uses the fresh database value, saves activity
+  and preserves that other update. Tests also cover cache invalidation,
+  once-per-minute saving, fresh marker/Hall/expiry refusals and ordinary
+  `portal-mike` behavior. Stale WordPress object-cache values were exercised;
+  no live Redis backend test is claimed. All existing assertions are unchanged.
+- Verification ran sequentially with the existing guarded isolated database
+  and mocked Portal. The initial sandboxed attempt stopped at the connection
+  guard; the authorized isolated runs completed. Results after the fix:
+
+  | Suite | Result |
+  |---|---|
+  | SSO sessions | PASS — 787 assertions (previously 650) |
+  | SSO provisioning | PASS — 469 assertions |
+  | Portal integration foundation | PASS — 77 assertions |
+
+  ```bash
+  BC_TEST_DB=bingocommerce_state_recon /opt/homebrew/opt/php@8.4/bin/php tests/portal-sso-sessions.php
+  BC_TEST_DB=bingocommerce_state_recon /opt/homebrew/opt/php@8.4/bin/php tests/portal-sso-provisioning.php
+  BC_TEST_DB=bingocommerce_state_recon /opt/homebrew/opt/php@8.4/bin/php tests/portal-integration-foundation.php
+  ```
+
+- PHP 8.4 `-l` passed for `SsoSession.php`, `portal-sso-sessions.php` and
+  `portal-sso-sessions-worker.php`; `git diff --check` passed.
+- Exactly four files changed: those three PHP files and `PROJECT_STATUS.md`.
+  No Portal, decision, core, fixture or matcher changes. No development data
+  read/write; only the previously approved structure-only fixture reads.
+  Nothing staged or committed.
