@@ -67,6 +67,18 @@ BingoCommerce is a hosted multi-tenant e-commerce platform for bingo halls, chur
   Session-template identity; BingoCommerce owns commerce schedules, dated
   occurrences, Catalog/commerce, checkout, orders, and Hall-local entitlement/
   ticket state
+- ADR-048 Portal SSO (BR-085): a Portal user holding `super_admin` on a Hall
+  signs in to that Hall's store as Hall Manager through the Portal's "Open
+  Ecommerce Store" button. SSO accounts are recognised ONLY by the exact
+  username format `portal-<installation>-<number>`
+  (`HallStaffIdentity::is_portal_sso_username()`); every other account,
+  including names such as `portal-mike`, behaves as before. SSO accounts have
+  no usable password or other credential, are "Managed by Portal" in Hall
+  Staff, and their sessions are limited to one Hall, 30 minutes idle and 1
+  hour. SSO is on only when `BINGOCOMMERCE_PORTAL_SSO_TOKEN` and
+  `BINGOCOMMERCE_PORTAL_INSTALLATION_ID` are configured. Implemented and
+  verified in local development on 2026-10-14; production deployment is not
+  claimed.
 - Redis persistent object caching approach (ADR-007)
 - S3-compatible object storage approach (ADR-009)
 
@@ -94,6 +106,7 @@ Custom code lives ONLY in:
 - **Game Operator:** Floor/session role only. Can scan and redeem digital QR receipts, lookup redemptions, and execute staff-gated ticket reactivations. Zero access to pricing, products, or billing settings.
 - **Hall Manager:** Runs one or more assigned hall stores. Manages products, Packages, add-ons, pricing, inventory, sessions, orders, staff, refunds, payment gateway setup, the optional hall electronic-limit override, and approved storefront customization. In v1 (BR-084 / ADR-045) that customization is the Hall logo, primary/footer menu links and their order, the public Store Details, page content, and homepage text, images and map location (the slider and Shop by Category cards have separate Appearance → Homepage editors (category addition 2026-10-01); the homepage Google Maps iframe uses the public address edited in Appearance → Store Details; other homepage sections and their controls remain pending); homepage section order, the shared BingoThemev1 header/footer structure, and its colours and fonts are fixed. Cannot install/upload/switch/activate themes, install or activate plugins, alter network configuration, or set the platform electronic maximum (BR-064).
 - **Platform Admin:** Bingo Innovation network-wide administrator. May edit any hall store, manage platform billing status (BR-016), manage starter WooCommerce Products/Bingo Play Products when that deferred mechanism exists (starter Package templates are not a v1 requirement), set the platform electronic-card maximum (BR-038), oversee data retention, and perform **explicit** Network Super Admin / Platform Admin recovery: legacy Hall backfill/enrolment and ownership-unproven orphan-site recovery. Portal Game Types synchronize by Portal ID under ADR-035. Automatic Enable Ecommerce / Disable Ecommerce is **Portal Global Admin-only** via the BingoCommerce machine API (BR-075, BR-076 / ADR-042) and is not initiated by WordPress Platform Admin. The BingoCommerce REST endpoint, orchestrator, provisioning-operation persistence, platform plugin/filter and automatic site-creation path are implemented and tested. The Portal Global Admin Enable, Suspend, Re-enable and Retry Ecommerce controls are implemented and tested. Hall Owner Ecommerce access is read-only; assigned Hall Managers cannot see the Ecommerce section or store URL; mutation remains Global Admin-only. A user-performed local-development Open Store → Suspend → Re-enable workflow passed against one mapped WordPress multisite test site, and re-enable reused the same site. Production deployment is not claimed. The automatic-provisioning MVP creates an empty ready store (no starter Product / Play Product copy).
+- **Portal Hall Super Admin (SSO, ADR-048 / BR-085):** a Portal user holding `super_admin` on a Hall becomes that Hall's **Hall Manager** on their first Portal SSO login (account created automatically; no password). The account is "Managed by Portal": other Hall Managers cannot add, change or remove its role; only a Platform Admin can. Portal Global Admins and Hall `admin`/`manager`/`scheduler` roles get no store access through SSO. Removing the Portal role stops new SSO logins at once; an open store session ends within 1 hour.
 
 ---
 

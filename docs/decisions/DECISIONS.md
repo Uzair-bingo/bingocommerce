@@ -6682,7 +6682,8 @@ by construction, never deleted by anything.
     allowed). Script and stylesheet version 1.3.2.
 
 - **ADR-048 — [2026-10-12] — Portal to BingoCommerce single sign-on for Hall
-  Super Admins (APPROVED 2026-10-13, not implemented):**
+  Super Admins (APPROVED 2026-10-13; implemented and verified in local
+  development 2026-10-14; not deployed):**
 
   Full record: [`adr-048-portal-sso.md`](adr-048-portal-sso.md). Business rules:
   BR-085. Decisions confirmed by the user in discussion (2026-10-09 to
@@ -8502,7 +8503,8 @@ delete_users.
   shopping-screen slice, not an accepted finished-storefront behaviour.
 
 - **BR-085 — [2026-10-12] — Portal SSO for Hall Super Admins (APPROVED
-  2026-10-13, not implemented; design: ADR-048):**
+  2026-10-13; implemented and verified in local development 2026-10-14; not
+  deployed; design: ADR-048):**
 
   1. Only a Portal user with the `super_admin` role on a specific Hall may sign
      in to that Hall's store through SSO, and only as Hall Manager of that

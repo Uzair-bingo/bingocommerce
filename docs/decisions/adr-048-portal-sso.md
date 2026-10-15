@@ -1,10 +1,20 @@
 # ADR-048 — Portal to BingoCommerce single sign-on (SSO) for Hall Super Admins
 
 - Date: 2026-10-12
-- Status: **Approved** by the user on 2026-10-13. The decisions below were
-  confirmed by the user in discussion between 2026-10-09 and 2026-10-12, and
-  the written record was reviewed and approved on 2026-10-13. **Nothing is
-  implemented.**
+- Status: **Approved** by the user on 2026-10-13. **Implemented and verified
+  in local development on 2026-10-14; not deployed to production.** The
+  decisions below were confirmed by the user in discussion between 2026-10-09
+  and 2026-10-12, and the written record was reviewed and approved on
+  2026-10-13.
+- Implementation: BingoCommerce Phases 1, 2, 4a and 4b plus the security-review
+  fix (branch `ssoImplementation`); Portal Phases 3a and 3b (Portal branch
+  `ssoImplementation`). A user-performed browser test on 2026-10-14 passed:
+  first and repeat SSO login, profile without password fields, "Managed by
+  Portal", password login refused, email conflict refused, Global Admin
+  without SSO, and an ordinary customer unchanged. Before production, every
+  item in section 13 (Rollout) and the environment checks in section 19
+  (HTTPS and client IP behind any proxy, return-path logging) must be done,
+  with new production keys.
 - Scope: BingoCommerce (this repository) and Bingo Portal
   (`bingo_portal`). The Portal side is summarised in the Portal's
   `docs/BINGOCOMMERCE_INTEGRATION.md`; this file is the joint record.

@@ -5807,3 +5807,28 @@ WordPress/WooCommerce core or legacy Hall Staff test was changed. No development
 data read/write or migration; only the existing approved fixture structure-only
 reads were permitted. Nothing staged or committed. No installation or real
 Portal request was performed.
+
+### 2026-10-14 — ADR-048 Portal SSO: development verification and documentation
+
+- Local development setup (user-performed, documented here without secrets):
+  SSO tables created with `SsoMigrations::migrate()`; a separate Portal
+  integration token with `purpose = sso` issued (row ID 3); Portal
+  `.env` `BINGOCOMMERCE_SSO_TOKEN_ID` and `BINGOCOMMERCE_INSTALLATION_ID`
+  (`bingodev`) and store `wp-config.php` `BINGOCOMMERCE_PORTAL_SSO_TOKEN` and
+  `BINGOCOMMERCE_PORTAL_INSTALLATION_ID` set; the key and installation ID were
+  checked to match without displaying the secret; `php artisan
+  commerce:sso-grant-enabled-halls` granted Halls 7, 8 and 9.
+- Browser test passed: Texas Hall owner signed in with one click (account
+  `portal-bingodev-14`, Hall Manager on blog 870, identity type `portal_sso`,
+  marked 1-hour session, full audit trail); repeat login reused the account;
+  profile shows no password fields; Hall Staff shows "Managed by Portal";
+  password login refused; Star Bingo Hall owner refused with the email-conflict
+  message (an existing password account `bingostarthm` already uses
+  `bingo@test.com`); Global Admin sees no SSO; an ordinary customer is
+  unchanged.
+- Security review of all SSO changes in both repositories: no critical or high
+  finding. One performance finding fixed in `a6d5ad4` (no database work for the
+  login-page button). Production prerequisites remain in ADR-048 sections 13
+  and 19.
+- Documentation updated: ADR-048 status, DECISIONS.md (ADR-048, BR-085),
+  AGENTS.md §2 and §4. Not deployed to production. No code changed in this entry.
