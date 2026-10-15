@@ -42,8 +42,9 @@ remains Global Admin-only. A user-performed local-development Open Store →
 Suspend → Re-enable workflow passed against one mapped WordPress
 multisite test site, and re-enable reused the same site. Commerce scheduling and occurrence
 reconciliation exist in the current repository under approved ADR-043.
-**Production deployment is NOT claimed.** Portal webhooks,
-SSO and transitional local-writer policy remain future work.
+Portal SSO is implemented and verified in local development under ADR-048 /
+BR-085. Production deployment is not claimed. Portal webhooks and transitional
+local-writer policy remain future work.
 
 All Portal identities below belong to the single authoritative Bingo Innovation
 Portal environment:
@@ -502,7 +503,8 @@ Implementation order is fixed by ADR-042 / BR-076:
    and tested; a user-performed local-development Open Store → Suspend →
    Re-enable workflow passed against one mapped WordPress multisite test
    site, and re-enable reused the same site;
-6. SSO — later;
+6. Portal SSO is implemented and verified in local development under ADR-048 /
+   BR-085. Production deployment is not claimed.
 7. Portal webhooks — later; Commerce scheduling and occurrence reconciliation
    exist under approved ADR-043.
 
@@ -510,8 +512,8 @@ Webhooks and reconciliation are **not** prerequisites for automatic
 provisioning. Full pull and idempotent mapping remain the recovery baseline
 those later increments will depend on.
 
-Except for ADR-036 through ADR-042’s decided contracts, the following details
-remain undecided or deferred until their dedicated reviews:
+Except for contracts decided by ADR-036 through ADR-042 and ADR-048, the
+following details remain undecided or deferred until their dedicated reviews:
 
 - local writer restrictions after synchronization, which ADR-040 deliberately
   leaves transitional until reconciliation and recovery are proven;
@@ -519,7 +521,6 @@ remain undecided or deferred until their dedicated reviews:
 - any additional sync-state/cursor persistence and reconciliation state;
 - conflict policy for transitional local Game Type changes;
 - production deployment of approved ADR-043;
-- SSO protocol/account/tenant mapping; and
 - monitoring, alerting, retention, and operational runbooks.
 
 ADR-042 decides automatic enable/suspend machine authentication, REST path,
@@ -691,20 +692,24 @@ mapping conflicts, and `UNIQUE(blog_id)` collisions require explicit operator
 recovery. Legacy sites 1–4 and Portal Hall 2 -> site 2 remain untouched until
 explicit operator backfill.
 
-## 7. Future SSO Requirement
+## 7. Portal SSO (ADR-048 / BR-085)
 
-Future SSO is approved in principle:
+Portal SSO is implemented and verified in local development under ADR-048 /
+BR-085. Production deployment is not claimed.
 
 ```text
-authenticated Portal staff
+authenticated Portal Hall Super Admin
         -> short-lived secure handoff
         -> correct mapped BingoCommerce Hall tenant
 ```
 
-SSO is not part of the first integration increment. The later security design
-must decide identity/account mapping, authorization claims, tenant binding,
-expiry, one-time use/replay defense, revocation, MFA interaction, auditing, and
-failure behavior. This document does not select a protocol or token format.
+[ADR-048](../decisions/adr-048-portal-sso.md) defines the protocol,
+identity/account mapping, authorization claims, tenant binding, expiry,
+one-time use/replay defense, revocation, MFA exception, auditing and failure
+behavior. That joint record owns the SSO implementation design. The exact wire
+formats (field names, value formats and rate limits) are recorded in the
+Portal repository's `docs/BINGOCOMMERCE_INTEGRATION.md`, section "Phase 3a
+wire contract".
 
 ## 8. V1 Exclusions
 

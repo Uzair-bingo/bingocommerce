@@ -171,7 +171,9 @@ only after complete verification; new sites receive the final v5 schema
 directly. Transaction/locking mechanics, replay/stale-order handling,
 Session-template application, and local writer restrictions after
 synchronization remain governed by ADR-040 and later reconciliation work.
-Portal webhooks, SSO and transitional local-writer reconciliation remain open.
+Portal SSO is implemented and verified in local development under ADR-048 /
+BR-085. Production deployment is not claimed. Portal webhooks and transitional
+local-writer reconciliation remain open.
 Commerce scheduling and occurrence reconciliation exist in the current
 repository under approved ADR-043. ADR-042's BingoCommerce-side machine provisioning path
 is implemented and tested. The Portal Global Admin Enable/Suspend/Re-enable/Retry
@@ -1357,8 +1359,11 @@ depend on network plugin deactivate/reactivate.
 This persistence design deliberately does not decide:
 
 - Portal webhook/reconciliation persistence and protocols.
-- SSO persistence/protocol.
 - Production deployment of approved ADR-043.
+
+SSO persistence and protocol are defined by
+[ADR-048](../decisions/adr-048-portal-sso.md) / BR-085 and remain outside
+Catalog/Session persistence ownership.
 
 ADR-042 decides the automatic enable/suspend provisioning operations table
 (including permanent internal `site_ownership_id`,

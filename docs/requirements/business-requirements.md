@@ -193,8 +193,10 @@ Portal Global Admin is an external Portal authority, not a fourth
 BingoCommerce role. Its ADR-035/BR-075 authority here is the platform-level
 `Enable BingoCommerce` decision, now implemented as the ADR-042 / BR-076
 Enable, Suspend, Re-enable and Retry Ecommerce path (BingoCommerce machine
-endpoint plus Portal Global Admin controls; not deployed). SSO and exact
-identity/role mapping remain deferred.
+endpoint plus Portal Global Admin controls; not deployed). Portal SSO is
+implemented and verified in local development under ADR-048 / BR-085.
+Production deployment is not claimed. Identity/role mapping is defined in
+[ADR-048](../decisions/adr-048-portal-sso.md).
 
 ## Customer Accounts
 - Guest checkout is the primary path, no account required. (BR-007)
@@ -594,15 +596,19 @@ identity/role mapping remain deferred.
   lifecycle are implemented and tested in the repository.
   (BR-072)
 - Approved integration shape: authenticated Portal read API, initial/full pull,
-  proven idempotent mapping, Portal webhooks, reconciliation, tenant provisioning,
-  then SSO. Individual Games, Patterns, Caller/device data, Portal users, Portal
+  proven idempotent mapping, tenant provisioning and Portal SSO; Portal webhooks
+  and reconciliation remain later increments. Individual Games, Patterns,
+  Caller/device data, Portal users, Portal
   Session `days`, `device_group_id`, and XML GameGroup IDs are excluded from v1
   sync. (BR-074, ADR-035)
 - `Enable BingoCommerce` is a separate Portal Global Admin-only platform
   capability and does not inherit ordinary Hall Settings authorization. Hall
-  Managers/Admins may manage commerce only after enablement. Future SSO is a
-  short-lived secure handoff into the correct mapped tenant, but is not in the
-  first integration increment. (BR-075)
+  Managers/Admins may manage commerce only after enablement. Portal SSO provides
+  the short-lived secure handoff into the correct mapped tenant under
+  [ADR-048](../decisions/adr-048-portal-sso.md) / BR-085. This permits first-login
+  store-account creation for eligible Hall Super Admins; bulk Portal user
+  synchronization remains excluded.
+  (BR-075)
 - The authenticated snapshot/full-pull path, mapping persistence, manual Hall
   synchronization, machine provisioning endpoint/orchestrator, platform
   provisioning filter and automatic site-creation path are implemented and
@@ -612,8 +618,9 @@ identity/role mapping remain deferred.
   store URL; mutation remains Global Admin-only. A user-performed
   local-development Open Store → Suspend → Re-enable workflow passed
   against one mapped WordPress multisite test site, and re-enable reused
-  the same site. Portal webhooks and
-  SSO remain deferred. Commerce schedule persistence, recurrence,
+  the same site. Portal SSO is implemented and verified in local development
+  under ADR-048 / BR-085. Production deployment is not claimed. Portal webhooks
+  remain deferred. Commerce schedule persistence, recurrence,
   timezone/DST behavior and occurrence reconciliation exist in the current
   repository under approved ADR-043; production deployment is not
   claimed.
@@ -699,9 +706,10 @@ for the smaller real starting scale. (BR-014)
 
 ## Still Open (do not build against an assumed answer)
 - Portal integration work still open: webhook
-  signature/retry/order behavior, transitional synchronization conflict policy,
-  and SSO protocol/account mapping. The Portal Global Admin Enable, Suspend,
-  Re-enable and Retry Ecommerce controls are implemented and tested. A
+  signature/retry/order behavior and transitional synchronization conflict policy.
+  SSO protocol/account mapping is defined by
+  [ADR-048](../decisions/adr-048-portal-sso.md) / BR-085. The Portal Global Admin
+  Enable, Suspend, Re-enable and Retry Ecommerce controls are implemented and tested. A
   user-performed local-development Open Store → Suspend → Re-enable workflow
   passed against one mapped WordPress multisite test site, and re-enable
   reused the same site. Production deployment is not claimed.

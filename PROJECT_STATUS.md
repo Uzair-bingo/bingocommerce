@@ -3189,8 +3189,9 @@ Everything below is tracked work that is NOT a blocker to that demo.
    Re-enable and Retry Ecommerce controls are implemented and tested. A
    user-performed local-development Open Store → Suspend → Re-enable
    workflow passed against one mapped WordPress multisite test site, and
-   re-enable reused the same site. Portal
-   webhooks and SSO remain later integration phases.
+   re-enable reused the same site. Portal SSO is implemented and verified in
+   local development under ADR-048 / BR-085. Production deployment is not
+   claimed. Portal webhooks remain a later integration phase.
    Commerce scheduling and occurrence reconciliation exist under approved
    ADR-043; production deployment is not claimed.
 2. WooCommerce's native payment retry flow remains in use; isolated retries with
@@ -3220,10 +3221,10 @@ Everything below is tracked work that is NOT a blocker to that demo.
    The injected post-commit list-read failure and its recovery-only Retry screen
    are covered by automated tests but have not been browser-tested by the user.
    BR-081 customer cart enforcement, BR-082 electronic checkout validation and
-   BR-083 order recording are implemented. The homepage date → Session →
-   informational Package display is implemented (2026-10-01, uncommitted);
-   add-on selection and purchase actions remain outstanding; payment-retry
-   status is summarized in item 2 above.
+   BR-083 order recording are implemented. The homepage Session → Package →
+   optional add-on purchase flow is implemented through the existing WooCommerce
+   Store API cart-extension route. Payment-retry status is summarized in item 2
+   above.
 4. Redemption accumulation (BR-045). BR-064 authorized configuration screens
    and save/removal actions are implemented and isolated-tested. BR-082 keeps
    the read-only effective-limit resolver and electronic validation at cart
@@ -3501,7 +3502,10 @@ Everything below is tracked work that is NOT a blocker to that demo.
   implemented and tested in the Laravel Portal repository. A
   user-performed local-development Open Store → Suspend → Re-enable
   workflow passed against one mapped WordPress multisite test site, and
-  re-enable reused the same site. SSO does not exist.
+  re-enable reused the same site. Portal SSO is implemented and verified in
+  local development under ADR-048 / BR-085. Production deployment is not claimed.
+  The protocol/account mapping is defined in
+  [ADR-048](docs/decisions/adr-048-portal-sso.md).
   **`bingocommerce-portal-integration` is network-active on this local
   environment** — as is `bingocommerce-platform`, as stated above — and the
   ADR-036 Portal constants are configured in the git-ignored `wp-config.php` for
@@ -3545,8 +3549,9 @@ Everything below is tracked work that is NOT a blocker to that demo.
   checks at cart addition and classic/Store API checkout are implemented; the
   BingoThemev1 storefront foundation and core Store Details are implemented
   (ADR-045 / BR-084), as is the homepage Session calendar with informational
-  Package display (2026-10-01); add-on selection and purchase actions remain
-  pending. No real Hall migration or deployment is claimed.
+  Package display (2026-10-01). The homepage Session → Package → optional add-on
+  purchase flow is implemented through the existing WooCommerce Store API
+  cart-extension route. No real Hall migration or deployment is claimed.
 - **Rule for AI agents:** Read `AGENTS.md`, `docs/architecture/plugin-architecture.md`, and this file before coding. Do not re-scaffold Multisite, WooCommerce, or core bootstrap.
 
 ### Current checkpoint — user-reported commit `2f886fc` (2026-09-28)
@@ -5876,3 +5881,19 @@ Portal request was performed.
   No Portal, decision, core, fixture or matcher changes. No development data
   read/write; only the previously approved structure-only fixture reads.
   Nothing staged or committed.
+
+### 2026-10-15 — Current documentation summaries aligned with implemented features
+
+- Updated current SSO summaries in Business Requirements, Technical
+  Architecture, Portal Integration Architecture, Plugin Architecture,
+  Catalog/Session Persistence Design and this status file to reflect
+  implementation and local verification under ADR-048 / BR-085. SSO protocol
+  and account mapping now point to ADR-048 rather than remaining undecided.
+- Recorded ADR-048's approved v1 MFA exception in Technical Architecture,
+  preserving ADR-012 requirements for other covered accounts. Corrected Plugin
+  Architecture's cart Session-label summary and this file's two current
+  homepage purchase summaries to match the implemented October 2 additions.
+- Preserved dated historical entries, document ownership boundaries, open
+  Portal webhook/reconciliation work and production-deployment limitations.
+  Documentation-only review and `git diff --check`; no code, tests, migrations,
+  database access, staging or commit.

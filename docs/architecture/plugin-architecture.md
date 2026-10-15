@@ -107,8 +107,8 @@ reconciliation. Slice 3 implements Package administration UI and request handlin
 the customer cart backend and electronic-limit checks at cart addition and
 classic/Store API checkout are implemented. The BingoThemev1 storefront
 foundation is implemented (ADR-045), as is the homepage date → Session →
-Package display and its purchase step (addition 2026-10-02); Bingo cart-line
-labels remain pending.
+Package display and its purchase step (addition 2026-10-02). Bingo Session
+labels on verified Package cart lines are implemented.
 No real Hall migration or deployment is claimed. Its two
 baseline Session tables belong to `bingocommerce-sessions`. Session schema v3
 adds the Portal-template replica and three schedule-definition tables in the
@@ -167,8 +167,11 @@ deployment is not claimed.
   (implemented and tested); Portal Global Admin Enable/Suspend/Re-enable/Retry
   controls (implemented and tested); a user-performed local-development Open
   Store → Suspend → Re-enable workflow passed against one mapped WordPress
-  multisite test site, and re-enable reused the same site; SSO later;
-  Portal webhooks later. Commerce scheduling and occurrence reconciliation
+  multisite test site, and re-enable reused the same site. Portal SSO is
+  implemented and verified in local development under ADR-048 / BR-085.
+  Production deployment is not claimed. Its protocol/account mapping is defined
+  by [ADR-048](../decisions/adr-048-portal-sso.md). Portal webhooks remain later
+  work. Commerce scheduling and occurrence reconciliation
   exist under approved ADR-043.
 - `Enable BingoCommerce` / Disable Ecommerce is a Portal Global Admin-only
   platform capability (BR-075, BR-076), separate from normal Hall Settings

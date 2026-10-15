@@ -101,7 +101,8 @@ Approved delivery order (ADR-042 / BR-076) is:
    and tested; a user-performed local-development Open Store → Suspend →
    Re-enable workflow passed against one mapped WordPress multisite test
    site, and re-enable reused the same site;
-6. SSO — later;
+6. Portal SSO is implemented and verified in local development under ADR-048 /
+   BR-085. Production deployment is not claimed.
 7. Portal webhooks — later; Commerce scheduling and occurrence reconciliation
    exist under approved ADR-043.
 
@@ -312,8 +313,10 @@ automatic Enable/Disable. See
 - Served via CDN.
 
 ## Security
-- **Human auth**: mandatory 2FA (TOTP minimum) for Hall Manager, Game Operator,
-  Platform Admin (ADR-012).
+- **Human auth**: mandatory 2FA (TOTP minimum) for Hall Manager, Game Operator
+  and Platform Admin (ADR-012), except Portal SSO Hall Manager accounts under
+  ADR-048's approved v1 MFA exception. Requirements for every other covered
+  account remain unchanged.
 - **Machine auth**: WooCommerce Consumer Keys (per-integration, scoped Read/Write)
   for WooCommerce-specific integrations; WordPress core Application Passwords for
   non-WooCommerce REST integrations (ADR-011).
@@ -358,8 +361,10 @@ Must explicitly support (confirm before committing to a provider, don't assume):
 - Object storage provider (AWS S3 vs. Cloudflare R2 vs. other)
 - Overall hosting provider
 - Parent domain name
-- Portal webhook contracts, transitional synchronization conflict policy and
-  SSO security protocol. The BingoCommerce-side ADR-042 provisioning path is
+- Portal webhook contracts and transitional synchronization conflict policy.
+  The SSO security protocol is defined by
+  [ADR-048](../decisions/adr-048-portal-sso.md) / BR-085.
+  The BingoCommerce-side ADR-042 provisioning path is
   implemented and tested. The Portal Global Admin Enable/Suspend/Re-enable/Retry
   controls are implemented and tested. A user-performed local-development
   Open Store → Suspend → Re-enable workflow passed against one mapped
