@@ -6,7 +6,7 @@
  * resume, and platform-owned site/WooCommerce initialization.
  *
  * Run from the repository root:
- *   BC_TEST_DB=bingocommerce_state_test php tests/platform-hall-site-provisioning.php
+ *   BC_TEST_DB=bingocommerce_state_provisioning php tests/platform-hall-site-provisioning.php
  *
  * WordPress boots against the isolated fixture — see
  * tests/fixtures/isolated-multisite.php. The development database is never
@@ -87,6 +87,7 @@ final class PlatformHallSiteProvisioningTest {
 			$this->test_command_validation();
 			$this->test_address_resolution();
 			$this->test_hall_admin_configuration();
+			$this->test_missing_theme_prevents_creation();
 			$this->test_create_archived_and_marked();
 			$this->test_no_starter_products();
 			$this->test_initialization_is_idempotent();
@@ -620,7 +621,49 @@ final class PlatformHallSiteProvisioningTest {
 	 * Creation
 	 * ------------------------------------------------------------------ */
 
+	private function test_missing_theme_prevents_creation(): void {
+		global $wp_theme_directories;
+
+		$before      = $this->site_count();
+		$directories = $wp_theme_directories;
+		$address     = HallSiteAddress::forSlug( self::SLUG_CREATE );
+		$hide_theme  = static fn() => [ 'bingocommerce-bingothemev1' => __DIR__ . '/fixtures' ];
+		$track_site  = function ( WP_Site $site ) use ( $address ): void {
+			// Track an unexpected insertion too, so a failing regression cleans up.
+			if ( $address instanceof HallSiteAddress && $address->matchesSite( $site ) && (int) $site->blog_id > 3 ) {
+				$this->disposable_sites[ (int) $site->blog_id ] = true;
+			}
+		};
+
+		// Redirect native theme discovery in this process; never rename theme files.
+		$wp_theme_directories = [ WP_CONTENT_DIR . '/themes', __DIR__ . '/fixtures' ];
+		add_filter( 'pre_site_transient_theme_roots', $hide_theme );
+		add_action( 'wp_insert_site', $track_site );
+		try {
+			$this->assert_true( ! wp_get_theme( 'bingocommerce-bingothemev1' )->exists(), 'the missing-theme fixture hides BingoThemev1' );
+			$result = HallSiteProvisioner::provision( null, $this->command( self::SLUG_CREATE ) );
+		} finally {
+			remove_action( 'wp_insert_site', $track_site );
+			remove_filter( 'pre_site_transient_theme_roots', $hide_theme );
+			$wp_theme_directories = $directories;
+		}
+
+		$this->assert_true( $result instanceof WP_Error, 'a missing storefront theme refuses fresh creation' );
+		if ( $result instanceof WP_Error ) {
+			$this->assert_same( 'platform_unavailable', $result->get_error_code(), 'a missing theme uses the existing platform_unavailable category' );
+			$this->assert_same( 'The Hall site could not be initialized.', $result->get_error_message(), 'theme validation returns the fixed response without theme diagnostics' );
+		}
+		$this->assert_same( $before, $this->site_count(), 'a missing theme creates no site' );
+		$this->assert_same( 0, $this->created_site( self::SLUG_CREATE ), 'the refused address remains unoccupied' );
+		$this->assert_true( wp_get_theme( 'bingocommerce-bingothemev1' )->exists(), 'native theme discovery is restored after the missing-theme test' );
+	}
+
 	private function test_create_archived_and_marked(): void {
+		$main_site  = get_main_site_id();
+		$main_theme = [
+			'template'   => get_blog_option( $main_site, 'template' ),
+			'stylesheet' => get_blog_option( $main_site, 'stylesheet' ),
+		];
 		$command  = $this->command( self::SLUG_CREATE );
 		$before   = $this->site_count();
 		$result   = HallSiteProvisioner::provision( null, $command );
@@ -638,6 +681,10 @@ final class PlatformHallSiteProvisioningTest {
 		$this->disposable_sites[ $blog_id ] = true;
 
 		$this->assert_same( $before + 1, $this->site_count(), 'exactly one site was created' );
+		foreach ( $main_theme as $option => $value ) {
+			$this->assert_same( 'bingocommerce-bingothemev1', get_blog_option( $blog_id, $option ), "the new Hall's {$option} is BingoThemev1" );
+			$this->assert_same( $value, get_blog_option( $main_site, $option ), "the main site's {$option} is unchanged" );
+		}
 		$this->assert_same(
 			[ 'blog_id', 'created', 'managed_marker_present', 'site_url' ],
 			$this->sorted_keys( $result ),
@@ -814,6 +861,8 @@ final class PlatformHallSiteProvisioningTest {
 		$this->assert_same( $before, $this->site_count(), 'recovery creates no second site' );
 		$this->assert_same( $ownership, $this->marker( $blog_id ), 'recovery leaves the marker untouched' );
 		$this->assert_same( '1', (string) get_site( $blog_id )->archived, 'the recovered site stays archived' );
+		$this->assert_same( 'bingocommerce-bingothemev1', get_blog_option( $blog_id, 'template' ), 'same-site recovery retains the assigned template' );
+		$this->assert_same( 'bingocommerce-bingothemev1', get_blog_option( $blog_id, 'stylesheet' ), 'same-site recovery retains the assigned stylesheet' );
 	}
 
 	private function test_unproven_marker_states(): void {

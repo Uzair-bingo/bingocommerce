@@ -6152,9 +6152,10 @@ by construction, never deleted by anything.
   capability mapping. Authorization stays in core; the theme remains
   presentation only.
 
-  **Not decided here.** Automatic assignment of BingoThemev1 to newly created
-  Halls (required before the storefront is complete), rollout to existing Halls,
-  the Session → Package → add-on selection screens, customer listing reads,
+  **Follow-up scope.** Automatic assignment of BingoThemev1 on fresh Portal
+  Enable Ecommerce creation is covered by the 2026-10-16 addition below.
+  Rollout to existing Halls, the Session → Package → add-on selection screens,
+  customer listing reads,
   Bingo cart-line labels, and the remaining homepage sections, map and the
   mechanism for Hall Managers to edit homepage text, images and map location
   (BR-084) are separate follow-up work. BR-022's Phase 2
@@ -6543,6 +6544,44 @@ by construction, never deleted by anything.
   `overflow-wrap: anywhere` on block item-data values and on classic
   `td.product-name` item data. No layout, font, colour, spacing or width
   changes.
+
+- **ADR-045 addition — [2026-10-16] — BingoThemev1 on Fresh Portal Hall Creation (user-approved, implemented, verified in local development):**
+
+  `HallSiteProvisioner::create()` validates `bingocommerce-bingothemev1`
+  before inserting a new site: WordPress must find the theme without
+  structural errors, both template and stylesheet identifiers must equal the
+  expected slug, and native WordPress/PHP requirements must pass. A failure
+  returns the existing fixed `platform_unavailable` response without creating
+  a site. The existing `wpmu_create_blog()` options now include `template` and
+  `stylesheet`, both set to that slug, alongside archiving and the permanent
+  ownership marker. WordPress persists the theme during site initialization;
+  its ordinary frontend bootstrap loads the theme and its setup hooks.
+
+  **Accepted fresh-only limitation.** Existing Halls, partial-site recovery
+  and re-enable keep their current behavior and theme settings. No later
+  recovery of an interrupted creation gains a theme-verification guarantee.
+  There is no production theme read-back, pending/status option, activation
+  call, new service/table or provisioning-lifecycle change. The direct return
+  from `initialize()` and existing ownership/context-restoration safeguards
+  remain unchanged. Other site-creation routes and existing-Hall rollout are
+  outside this decision.
+
+  **Verification on 2026-10-16.** Focused scenarios cover fresh assignment
+  with readiness and main-site preservation, missing theme with no creation,
+  same-site recovery retaining the theme, fresh Portal Enable assigning
+  BingoThemev1 as both template and stylesheet, and re-enable preserving
+  Twenty Twenty-Five and its customization options. With PHP 8.4.24, on the
+  dedicated isolated fixture `bingocommerce_state_provisioning`, the platform
+  suite passed 504/504 and the endpoint suite passed 50361/50361, and cleanup
+  left that fixture at its three seeded sites. Initial attempts against
+  `bingocommerce_state_test` were blocked. Successful verification used
+  `bingocommerce_state_provisioning`; site 474 was preserved. Fixture bootstrap
+  ran during the earlier attempts, so preservation of the original database's
+  site list does not establish that the entire database was unchanged.
+  The manual Portal Enable → first homepage
+  check passed in local development for Miami Bingo Arena
+  (`miami-bingo-arena.bingocommerce.test`): BingoThemev1 rendered with no PHP
+  error and no activation step. No production deployment is claimed.
 
 - **ADR-046 — [2026-10-05] — Read-Only Digital Ticket Status Route and AGENTS.md Rule 5 Exception (user-approved, implemented):**
 
@@ -8580,13 +8619,18 @@ delete_users.
   2026-10-02), as are its reference two-column layout, each Package's "What's
   included", the ordinary Shop's exclusion of Bingo Packages and Play Products,
   the add-on price presentation correction and the Package lines' Bingo
-  Session labels (same-day additions), while automatic theme assignment for new
-  Halls, and the remaining homepage sections and homepage editing controls
-  (BR-084) remain pending. ADR-044 and BR-079 business decisions are unchanged; no real
+  Session labels (same-day additions). Fresh Portal-created Halls now receive
+  BingoThemev1 during site initialization (ADR-045 addition 2026-10-16; isolated
+  provisioning suites pass; manual Portal Enable homepage check passed).
+  Existing-Hall rollout and the remaining homepage sections and homepage
+  editing controls (BR-084) remain pending. Interrupted-create recovery gains
+  no theme-verification guarantee. ADR-044 and BR-079 business decisions are unchanged; no real
   Hall migration, deployment or production readiness is claimed.
 - Portal integration details still open after ADR-036 through ADR-042: webhook
   signing, retry, replay and ordering; transitional synchronization conflict
-  policy; and SSO protocol/account/tenant mapping. Commerce-schedule recurrence,
+  policy. SSO protocol, account identity and tenant mapping are approved,
+  implemented and verified in local development under ADR-048 / BR-085;
+  production deployment is not claimed. Commerce-schedule recurrence,
   timezone/DST, regeneration and occurrence reconciliation are specified by
   approved ADR-043 and implemented in the current repository; they
   are not deployed. ADR-036 fixed the Hall
@@ -8625,8 +8669,9 @@ delete_users.
   after synchronization stay deliberately transitional until reconciliation
   and recovery are proven. Webhooks remain deferred and unimplemented.
   Commerce scheduling and occurrence reconciliation exist in the current
-  repository under approved ADR-043 and are not deployed. SSO
-  remains later.
+  repository under approved ADR-043 and are not deployed. SSO is approved,
+  implemented and verified in local development under ADR-048 / BR-085;
+  production deployment is not claimed.
 - ADR-043 is approved and implemented; the implementation was committed in
   262b250. Production deployment is not claimed.
 - Offline QR/Package usability **technical implementation** (local-server /

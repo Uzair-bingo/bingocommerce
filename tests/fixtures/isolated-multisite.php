@@ -54,7 +54,7 @@ unset( $bc_fixture_sapi_allowed );
 /**
  * Databases this fixture may create, own, write and drop tables in.
  *
- * Four names, with different jobs, so no suite has to run before or after
+ * Five names, with different jobs, so no suite has to run before or after
  * another:
  *
  *   - `bingocommerce_state_test` — the general fixture.
@@ -75,6 +75,13 @@ unset( $bc_fixture_sapi_allowed );
  *     guesswork is worse than building the harness a database of its own: this
  *     one is created empty by `ensure_database_exists()`, stamped with the
  *     sentinel, and carries nothing another suite depends on.
+ *   - `bingocommerce_state_provisioning` — for the two ADR-042 provisioning
+ *     suites (tests/platform-hall-site-provisioning.php and
+ *     tests/portal-provisioning-endpoint.php). They refuse to start unless the
+ *     database holds only the three seeded sites, and any suite that boots
+ *     through tests/fixtures/wordpress-bootstrap.php permanently adds a fourth
+ *     (`hall-c`), so they cannot share `bingocommerce_state_test` with those
+ *     suites.
  *
  * ADDING A NAME HERE DOES NOT WEAKEN THE GUARD. The allowlist is one of three
  * independent checks: the development database is refused BY NAME regardless of
@@ -86,6 +93,7 @@ const BC_FIXTURE_DB_ALLOWLIST = [
 	'bingocommerce_state_test_scratch',
 	'bingocommerce_state_test_suites',
 	'bingocommerce_state_recon',
+	'bingocommerce_state_provisioning',
 ];
 
 /** Sentinel table and the exact identity this fixture claims. */

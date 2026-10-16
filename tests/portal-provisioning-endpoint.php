@@ -9,7 +9,7 @@
  * matrix and the terminal audit.
  *
  * Run from the repository root:
- *   BC_TEST_DB=bingocommerce_state_test php tests/portal-provisioning-endpoint.php
+ *   BC_TEST_DB=bingocommerce_state_provisioning php tests/portal-provisioning-endpoint.php
  *
  * WordPress boots against the isolated fixture — see
  * tests/fixtures/isolated-multisite.php. The development database is never
@@ -4457,6 +4457,8 @@ final class PortalProvisioningEndpointTest {
 		$this->assert_same( 200, $response['status'], 'the lifecycle Hall is enabled' );
 		$blog_id = (int) $response['body']['blog_id'];
 		$this->disposable_sites[ $blog_id ] = true;
+		$this->assert_same( 'bingocommerce-bingothemev1', get_blog_option( $blog_id, 'template' ), 'a fresh Portal Enable assigns BingoThemev1 as the template' );
+		$this->assert_same( 'bingocommerce-bingothemev1', get_blog_option( $blog_id, 'stylesheet' ), 'a fresh Portal Enable assigns BingoThemev1 as the stylesheet' );
 
 		$row       = Repo::load( $hall );
 		$ownership = $row['site_ownership_id'];
@@ -4467,6 +4469,18 @@ final class PortalProvisioningEndpointTest {
 		$product_id = $this->seed_product( $blog_id );
 		$this->assert_true( $product_id > 0, 'a product is created in the store before suspension' );
 		$before_tables = $this->site_table_names( $blog_id );
+		switch_to_blog( $blog_id );
+		try {
+			switch_theme( 'twentytwentyfive' );
+			set_theme_mod( 'background_color', 'f4eee8' );
+			update_option( 'blogdescription', 'Cycle Hall storefront description' );
+			$theme_mods = get_option( 'theme_mods_twentytwentyfive' );
+			$this->assert_same( 'f4eee8', $theme_mods['background_color'] ?? null, 'the existing Hall has a saved theme customization before suspension' );
+			$this->assert_same( 'twentytwentyfive', get_option( 'template' ), 'the existing Hall uses Twenty Twenty-Five before suspension' );
+			$this->assert_same( 'twentytwentyfive', get_option( 'stylesheet' ), 'the existing Hall stylesheet is Twenty Twenty-Five before suspension' );
+		} finally {
+			restore_current_blog();
+		}
 
 		/* SUSPEND. */
 		$suspend  = $this->payload( [ 'intent_sequence' => 2, 'desired_state' => 'suspended', 'site_slug' => null, 'hall_name' => null ] );
@@ -4514,6 +4528,10 @@ final class PortalProvisioningEndpointTest {
 		$this->assert_same( $blog_id, $response['body']['blog_id'] ?? 0, 'it reuses the SAME site' );
 		$this->assert_same( $site_url, $response['body']['site_url'] ?? '', 'and the same URL' );
 		$this->assert_same( $before_sites, $this->count_sites_above( 3 ), 'a re-enable creates NO second site' );
+		$this->assert_same( 'twentytwentyfive', get_blog_option( $blog_id, 'template' ), 're-enable preserves the existing Twenty Twenty-Five template' );
+		$this->assert_same( 'twentytwentyfive', get_blog_option( $blog_id, 'stylesheet' ), 're-enable preserves the existing Twenty Twenty-Five stylesheet' );
+		$this->assert_same( $theme_mods, get_blog_option( $blog_id, 'theme_mods_twentytwentyfive' ), 're-enable preserves the existing theme customizations exactly' );
+		$this->assert_same( 'Cycle Hall storefront description', get_blog_option( $blog_id, 'blogdescription' ), 're-enable preserves the existing storefront description' );
 
 		$after = Repo::load( $hall );
 		$this->assert_same( $ownership, $after['site_ownership_id'], 'the permanent ownership identity is reused' );

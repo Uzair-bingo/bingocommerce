@@ -5897,3 +5897,101 @@ Portal request was performed.
   Portal webhook/reconciliation work and production-deployment limitations.
   Documentation-only review and `git diff --check`; no code, tests, migrations,
   database access, staging or commit.
+
+### 2026-10-16 — BingoThemev1 assignment on fresh Portal Hall creation
+
+- Production changes are confined to `HallSiteProvisioner.php`: validate
+  theme existence, structural validity, expected template/stylesheet and
+  WordPress/PHP compatibility before fresh creation; pass both theme options
+  through the existing `wpmu_create_blog()` call. Validation failure uses the
+  existing fixed `platform_unavailable` response. Ownership, archiving,
+  context restoration and the direct `initialize()` return are unchanged.
+- Existing Halls, recovered partial sites and re-enabled Halls keep their
+  current behavior. Accepted limitation: later recovery of interrupted
+  creation gains no theme-verification guarantee. No production read-back,
+  status option, CGI worker, activation call or recovery change was added.
+- Extended the existing platform and endpoint harnesses: missing theme
+  refuses creation; fresh assignment with readiness and main-site
+  preservation; same-site recovery retaining the theme; fresh Portal Enable
+  assigning BingoThemev1 as both template and stylesheet; re-enable preserving
+  Twenty Twenty-Five, its theme modifications and storefront description.
+  All existing test cases remain in place.
+- **Original fixture:** Initial attempts against `bingocommerce_state_test`
+  were blocked. Successful verification used `bingocommerce_state_provisioning`;
+  site 474 was preserved. The initial runs exited 1 with `HARNESS GUARD: the
+  fixture already carries sites beyond the seeded three.` A
+  read-only lookup identified site 474 as `hall-c.fixture.bingocommerce.test`
+  ("Fixture legacy hall C", registered 2026-09-22), which
+  `tests/fixtures/wordpress-bootstrap.php` seeds on purpose as permanent
+  fixture data. It asks for blog ID 4, but `wp_insert_site()` ignores a
+  requested ID, so it took the next free ID. The provisioning suites accept
+  only the three seeded sites, so they cannot share a database with suites
+  that boot through that bootstrap. Fixture bootstrap ran during the earlier
+  attempts; the preserved site list does not establish that the entire
+  `bingocommerce_state_test` database was unchanged.
+- **Dedicated fixture.** The approved databases were checked read-only first:
+  `bingocommerce_state_test` (sites 1-3, 474), `_test_suites` (1-4, 683-686)
+  and `_recon` (1-4) carry extra sites; `_test_scratch` (1-3) is created and
+  dropped by `tests/hall-commerce-state.php`'s ownership controls, so it is
+  not a stable home. `bingocommerce_state_provisioning` was added to
+  `BC_FIXTURE_DB_ALLOWLIST` in `tests/fixtures/isolated-multisite.php`, with
+  its job documented; no guard changed (sentinel, ownership proof and
+  development-database refusal are as before). The fixture's existing guarded
+  setup created the database and stamped its sentinel. Both suites' run
+  instructions now name it. `tests/fixtures/wordpress-bootstrap.php` is
+  unchanged.
+- **Results (PHP 8.4.24, run one after the other):**
+  - `php -l` passed for `HallSiteProvisioner.php`, both suites and
+    `isolated-multisite.php`.
+  - `tests/platform-hall-site-provisioning.php`: **504/504 passed**, exit 0
+    (previous recorded 491/491; +13 new assertions).
+  - `tests/portal-provisioning-endpoint.php`: **50361/50361 passed**, exit 0
+    (previous recorded 50352/50352; +9 new assertions).
+  - Diagnostics observed during verification, none of them a failed
+    assertion. Explanations are from local log and source review: two
+    WooCommerce lookups (`bc_wc_webhooks`,
+    `bc_woocommerce_attribute_taxonomies`) on the brand-new database's first
+    start, before those main-site tables existed; WooCommerce/Jetpack shutdown
+    and teardown handlers querying an already-deleted disposable site's tables;
+    a context switch to seeded Hall 2 (which has no tables in this fixture);
+    and the endpoint harness's injected "could not restore the site context"
+    case.
+
+  ```bash
+  BC_TEST_DB=bingocommerce_state_provisioning /opt/homebrew/opt/php@8.4/bin/php tests/platform-hall-site-provisioning.php
+  BC_TEST_DB=bingocommerce_state_provisioning /opt/homebrew/opt/php@8.4/bin/php tests/portal-provisioning-endpoint.php
+  ```
+
+- **Cleanup evidence** (read-only SELECT after both runs, no WordPress
+  bootstrap): `bingocommerce_state_provisioning` keeps its sentinel and sites
+  1, 2, 3 only. No disposable Hall tables remain; the seeded fixture baseline
+  is preserved. No provisioning-operations, Commerce-state or Hall-mapping
+  table remains, and no users remain.
+  `bingocommerce_state_test` still has sites 1, 2, 3, 474; `_test_scratch`,
+  `_test_suites` and `_recon` site lists are unchanged from before the runs.
+  The production patch is byte-identical before and after.
+- Six files changed; no commit, push or deployment.
+- **Manual check PASSED (2026-10-16, local development).** The user, as a
+  Portal Global Admin, enabled Ecommerce for Miami Bingo Arena; the Hall site
+  was created at `http://miami-bingo-arena.bingocommerce.test/` and its
+  homepage showed BingoThemev1's header, footer and styling with no PHP error
+  and no theme activation step (user-reported). An agent read-only check of
+  the same homepage in the browser pane confirmed the page title "Miami Bingo
+  Arena", body class `wp-theme-bingocommerce-bingothemev1`, the theme's
+  `main.css` and homepage/theme scripts loading, header and footer present,
+  and no PHP error text in the page. No login, setting change or WordPress
+  admin visit was part of that check. WooCommerce's existing Coming Soon
+  setting (store pages only) is unchanged by this work.
+
+### 2026-10-16 — Documentation corrections for SSO and provisioning verification
+
+- Corrected the pre-existing SSO open-item summaries in DECISIONS.md to
+  reference approved, implemented ADR-048 / BR-085, separately from theme
+  assignment. Production deployment remains unclaimed.
+- Clarified the blocked attempts against `bingocommerce_state_test`, successful
+  verification on `bingocommerce_state_provisioning`, and preservation of
+  site 474 without claiming the original database was entirely unchanged.
+  Scoped cleanup evidence to disposable Hall tables and the preserved seeded
+  fixture baseline.
+- Documentation-only changes to DECISIONS.md and this file; `git diff --check`
+  passed. No tests, database access, commit, push or deployment in this correction.

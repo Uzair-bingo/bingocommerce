@@ -45,6 +45,9 @@ final class HallSiteProvisioner {
 	/** Site option carrying the permanent BingoCommerce ownership witness. */
 	public const MARKER_OPTION = 'bc_commerce_managed';
 
+	/** Shared storefront assigned only when this consumer creates a new site. */
+	private const THEME_SLUG = 'bingocommerce-bingothemev1';
+
 	/** The only WP_Error codes ADR-042 permits this filter to return. */
 	public const ERROR_CODES = [
 		'site_create_failed',
@@ -191,11 +194,21 @@ final class HallSiteProvisioner {
 		/*
 		 * THE ADMINISTRATOR IDENTITY IS SETTLED BEFORE ANYTHING EXISTS. A bad
 		 * constant discovered after creation leaves a site with no usable
-		 * administrator, so this is the last check before the site row.
+		 * administrator, so it must be checked before the site row.
 		 */
 		$admin_user_id = HallSiteAdminUser::resolve( (int) get_current_user_id() );
 		if ( $admin_user_id instanceof \WP_Error ) {
 			return $admin_user_id;
+		}
+
+		// Fresh creation only: recovery and re-enable preserve the site's theme.
+		$theme = wp_get_theme( self::THEME_SLUG );
+		if ( ! $theme->exists()
+			|| $theme->errors()
+			|| self::THEME_SLUG !== $theme->get_template()
+			|| self::THEME_SLUG !== $theme->get_stylesheet()
+			|| true !== validate_theme_requirements( self::THEME_SLUG ) ) {
+			return self::error( 'platform_unavailable', 'The Hall site could not be initialized.' );
 		}
 
 		/*
@@ -226,6 +239,8 @@ final class HallSiteProvisioner {
 		$options = [
 			'archived'          => 1,
 			self::MARKER_OPTION => $command->site_ownership_id,
+			'template'          => self::THEME_SLUG,
+			'stylesheet'        => self::THEME_SLUG,
 		];
 
 		$installing = wp_installing();
