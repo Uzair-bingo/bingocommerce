@@ -330,18 +330,28 @@ async function guestPurchase(browser) {
 	await page.keyboard.press('Tab');
 	check(`bc-addon-${A.packages.paper}-${A.relations.paper_shared}` === await focused(page), 'keyboard: then to its first add-on card');
 	await page.keyboard.press('Space');
-	await sleep(300);
+	await page.waitForFunction(selector => getComputedStyle(document.querySelector(selector).closest('.addon-card')).boxShadow.includes('rgb(31, 111, 196)'), box(A, 'paper', 'paper_shared'));
 	check((await page.$eval(box(A, 'paper', 'paper_shared'), element => getComputedStyle(element.closest('.addon-card')).boxShadow)).includes('rgb(31, 111, 196)'), 'keyboard focus ring visible on the add-on card');
 	check(await page.isVisible('text=Choose one Bingo Package. Add-ons are optional.') && await page.isVisible(`${panel(A, 'paper')} >> text=Add-ons are optional. Select an add-on, then choose its quantity.`), 'intro above the choices; add-ons are optional, quantity follows selection');
 	check(!(await page.isDisabled(qty(A, 'paper', 'paper_shared'))) && await page.isDisabled(qty(A, 'digital', 'digital_shared')), 'quantity enabled only for a selected add-on of the chosen Package');
-	check('Maximum quantity: 2' === await text(page, `#${qty(A, 'paper', 'paper_shared').slice(1)}-range`) && await page.isVisible(`li.addon-card:has(${box(A, 'paper', 'paper_chips')}) >> text=Quantity: 1`), '“Maximum quantity: 2”; the maximum-one add-on shows a fixed “Quantity: 1”');
+	check('Maximum quantity: 2' === await text(page, `#${qty(A, 'paper', 'paper_shared').slice(1)}-range`) && await page.isVisible(`li.addon-card:has(${box(A, 'paper', 'paper_chips')}) >> text=Maximum quantity: 1`), 'relationship maximum shown for both add-ons, including the maximum of one');
 	await page.keyboard.press('Tab');
 	check(qty(A, 'paper', 'paper_shared').slice(1) === await focused(page), 'keyboard: Tab moves from the selected add-on to its quantity');
+	check('0' === await page.inputValue(qty(A, 'paper', 'paper_shared')), 'first selection starts at zero');
+	await page.keyboard.press('ArrowUp');
+	check('1' === await page.inputValue(qty(A, 'paper', 'paper_shared')), 'keyboard: first ArrowUp chooses one');
 	await page.keyboard.press('ArrowUp');
 	check('2' === await page.inputValue(qty(A, 'paper', 'paper_shared')), 'keyboard: ArrowUp in the quantity field steps it to 2');
 	await page.keyboard.press('Tab');
 	check(`bc-addon-${A.packages.paper}-${A.relations.paper_chips}` === await focused(page), 'keyboard: Tab skips the pointer −/+ buttons to the next add-on');
 	await page.keyboard.press('Space');
+	await page.keyboard.press('Tab');
+	check(qty(A, 'paper', 'paper_chips').slice(1) === await focused(page) && '0' === await page.inputValue(qty(A, 'paper', 'paper_chips')), 'maximum-one add-on: keyboard reaches its quantity, starting at zero');
+	await page.keyboard.press('ArrowUp');
+	check('1' === await page.inputValue(qty(A, 'paper', 'paper_chips')) && await page.isDisabled(stepButton(A, 'paper', 'paper_chips', '1')), 'maximum-one add-on: choosing one disables +');
+	await page.click(stepButton(A, 'paper', 'paper_chips', '-1'));
+	check('0' === await page.inputValue(qty(A, 'paper', 'paper_chips')) && await page.isDisabled(stepButton(A, 'paper', 'paper_chips', '-1')), 'maximum-one add-on: − returns to zero');
+	await page.click(stepButton(A, 'paper', 'paper_chips', '1'));
 	const pkgName = A.names[A.packages.paper].name;
 	const [shared, chips] = A.names[A.packages.paper].addons;
 	const summaryPackage = await text(page, '[data-summary-package]');
@@ -363,8 +373,8 @@ async function guestPurchase(browser) {
 	check(same(sent[0].json, selection(A, 'paper', [['paper_shared', 2], ['paper_chips', 1]])), 'real JSON body: Session ID, Package ID, add-on relationship IDs and quantities only');
 	check(sent[0].headers.nonce === rendered && /^application\/json/.test(sent[0].headers['content-type']) && sent[0].headers.cookie.includes(session.name), 'sent with the rendered Store API nonce, JSON and the guest session cookie (normal nonce validation passed)');
 	const outcome = await result(page);
-	const message = `Added ${pkgName} for ${A.session_name} on ${when} to your cart. Add-ons: ${shared.name} × 2, ${chips.name} × 1. This selection is in your cart. To choose a different Package, remove it from your cart first.`;
-	check(outcome.kind.includes('is-success') && outcome.message === message, 'success describes the captured selection');
+	const message = `Added to cart. ${pkgName} + 2 add-ons. Add-ons: ${shared.name} × 2, ${chips.name} × 1. To choose another package, remove this selection from your cart first.`;
+	check(outcome.kind.includes('is-success') && outcome.message === `${pkgName} + 2 add-ons`, 'success describes the captured selection');
 	check(await announced(page) === message && !outcome.live, 'announced once, by the polite region outside the block (the visible message is not a live region)');
 	check(await page.isVisible('[data-purchase-view-cart]') && await page.isHidden('[data-purchase-submit]') && 'view-cart' === await focused(page), 'View cart shown and focused; Add to cart gone');
 	check(await page.$eval('fieldset[data-purchase-packages]', element => element.disabled) && await page.$eval(panel(A, 'paper'), element => element.disabled), 'completed form locked');
@@ -426,8 +436,10 @@ async function switching(browser) {
 		await page.check(box(A, 'paper', 'paper_shared'));
 		await page.fill(qty(A, 'paper', 'paper_shared'), '2');
 		await page.check(box(A, 'paper', 'paper_chips'));
+		await page.fill(qty(A, 'paper', 'paper_chips'), '1');
 		await page.check(radio(A, 'digital'));
 		await page.check(box(A, 'digital', 'digital_extra'));
+		await page.fill(qty(A, 'digital', 'digital_extra'), '1');
 		check(await page.$eval(panel(A, 'paper'), element => element.hidden && element.disabled) && await page.isChecked(box(A, 'paper', 'paper_shared')), `${back ? 'A→B→A' : 'A→B'}: Package A’s panel hidden and disabled, its choices kept`);
 		check(A.names[A.packages.digital].name === await text(page, '[data-selected-name]') && (await page.$$('li.session-package.is-selected')).length === 1 && await page.$eval(card(A, 'digital'), element => element.classList.contains('is-selected')), `${back ? 'A→B→A' : 'A→B'}: the selected panel and the one selected card follow the choice`);
 		const contents = {paper: await contentsOf(page, A, 'paper'), digital: await contentsOf(page, A, 'digital')};
@@ -514,7 +526,20 @@ async function addonControls(browser) {
 	const minus = stepButton(A, 'digital', 'digital_shared', '-1');
 	check(await page.isDisabled(field) && await page.isDisabled(plus) && await page.isDisabled(minus), 'before selection: the quantity and its buttons are unavailable');
 	await page.click(`label[for="${box(A, 'digital', 'digital_shared').slice(1)}"] .addon-card__name`);
-	check(await page.isChecked(box(A, 'digital', 'digital_shared')) && !(await page.isDisabled(field)) && await page.isDisabled(minus) && !(await page.isDisabled(plus)), 'clicking the card selects it: quantity 1, − unavailable, + available');
+	check(await page.isChecked(box(A, 'digital', 'digital_shared')) && '0' === await page.inputValue(field) && !(await page.isDisabled(field)) && await page.isDisabled(minus) && !(await page.isDisabled(plus)), 'clicking the card selects it: quantity 0, − unavailable, + available');
+	await shot(page, '.bc-purchase__details', 'purchase-addon-initial-zero.png');
+	const initial = api.length;
+	await submit(page);
+	check(0 === posts(initial).length && 'true' === await page.getAttribute(field, 'aria-invalid'), 'untouched zero: quantity required, no cart request');
+	await page.click(plus);
+	check('1' === await page.inputValue(field) && null === await page.getAttribute(field, 'aria-invalid') && !(await page.isDisabled(minus)), '+ chooses one and clears the quantity error');
+	await page.click(minus);
+	check('0' === await page.inputValue(field) && await page.isDisabled(minus) && await page.isChecked(box(A, 'digital', 'digital_shared')), '− returns to zero without unchecking or going negative');
+	await page.fill(field, '3');
+	await page.uncheck(box(A, 'digital', 'digital_shared'));
+	check(await page.isDisabled(field) && await page.isDisabled(plus) && await page.isDisabled(minus), 'unchecking disables the quantity controls');
+	await page.check(box(A, 'digital', 'digital_shared'));
+	check('3' === await page.inputValue(field), 'rechecking preserves the customer’s chosen quantity');
 	for (let i = 0; i < 6; i++) await page.click(plus, {force: true});
 	check('5' === await page.inputValue(field) && await page.isDisabled(plus) && await page.isChecked(box(A, 'digital', 'digital_shared')), '+ stops at the relationship maximum (5) and never toggles the checkbox');
 	await page.click(minus);
@@ -524,6 +549,7 @@ async function addonControls(browser) {
 	await page.click(minus);
 	check('4' === await page.inputValue(field), '− from an out-of-range value steps down from the maximum');
 	await page.check(box(A, 'digital', 'digital_extra'));
+	await page.fill(qty(A, 'digital', 'digital_extra'), '1');
 	const shown = () => page.$$eval(`${panel(A, 'digital')} li.addon-card`, cards => cards.filter(item => !item.hidden).map(item => item.querySelector('.addon-card__name').textContent.trim()));
 	const status = `${search(A, 'digital')}-status`;
 	await page.fill(search(A, 'digital'), 'dau');
@@ -565,16 +591,19 @@ async function rejections(browser) {
 			await page.check(radio(A, 'digital'));
 			await page.$eval(box(A, 'digital', 'digital_shared'), (element, id) => element.setAttribute('data-addon-id', String(id)), A.relations.paper_shared);
 			await page.check(box(A, 'digital', 'digital_shared'));
+			await page.fill(qty(A, 'digital', 'digital_shared'), '1');
 		}, MSG.addonIneligible, [REFRESH], 'bc_cart_addon_ineligible'],
 		['relationship ID that exists only in Hall B (forged in the page)', async page => {
 			await page.check(radio(A, 'paper'));
 			await page.$eval(box(A, 'paper', 'paper_chips'), (element, id) => element.setAttribute('data-addon-id', String(id)), B.only_relation);
 			await page.check(box(A, 'paper', 'paper_chips'));
+			await page.fill(qty(A, 'paper', 'paper_chips'), '1');
 		}, MSG.addonIneligible, [REFRESH], 'bc_cart_addon_ineligible'],
 		['unreadable relationship (forged to the fixture’s corrupted row)', async page => {
 			await page.check(radio(A, 'partial'));
 			await page.$eval(box(A, 'partial', 'partial_ok'), (element, id) => element.setAttribute('data-addon-id', String(id)), A.relations.partial_bad);
 			await page.check(box(A, 'partial', 'partial_ok'));
+			await page.fill(qty(A, 'partial', 'partial_ok'), '1');
 		}, MSG.unchecked, [REFRESH], 'bc_cart_catalog_unavailable'],
 		['over the electronic-face limit', async page => {
 			await page.check(radio(A, 'digital'));
@@ -641,6 +670,7 @@ async function noticeRecovery(browser) {
 	await open(page, A);
 	await page.check(radio(A, 'digital'));
 	await page.check(box(A, 'digital', 'digital_stock'));
+	await page.fill(qty(A, 'digital', 'digital_stock'), '1');
 	await submit(page);
 	await settled(page);
 	check((await result(page)).kind.includes('is-success') && (await cookieOf(ctx)).value === session.value, 'a valid purchase then succeeds in the same guest session');
@@ -658,6 +688,7 @@ async function firstTime(browser) {
 		check(null === await cookieOf(ctx), 'first-time guest: no WooCommerce session cookie before adding');
 		await page.check(radio(A, 'paper'));
 		await page.check(box(A, 'paper', 'paper_chips'));
+		await page.fill(qty(A, 'paper', 'paper_chips'), '1');
 		await submit(page);
 		await settled(page);
 		const session = await cookieOf(ctx);
@@ -777,6 +808,7 @@ async function nonces(browser) {
 		await open(page, A);
 		await page.check(radio(A, 'paper'));
 		await page.check(box(A, 'paper', 'paper_chips'));
+		await page.fill(qty(A, 'paper', 'paper_chips'), '1');
 		const before = api.length;
 		await submit(page);
 		await settled(page);
@@ -907,6 +939,7 @@ async function pending(browser) {
 		await open(page, A);
 		await page.check(radio(A, 'paper'));
 		await page.check(box(A, 'paper', 'paper_chips'));
+		await page.fill(qty(A, 'paper', 'paper_chips'), '1');
 		await page.click(`a[data-calendar-date="${A.date}"]`);
 		check(await page.isHidden('#session-packages') && !new URL(page.url()).searchParams.has('bc_session'), 'date click before adding: the purchase block hides, the address drops the Session');
 		await page.click(`a[data-calendar-date="${A.date}"]`);
@@ -940,7 +973,7 @@ async function pending(browser) {
 		check(await page.isHidden('#session-packages'), 'date click during the request hides the block');
 		release();
 		const said = await announced(page);
-		check(said.startsWith(`Added ${A.names[A.packages.paper].name} for ${A.session_name}`), 'the result is still announced outside the hidden block, for the captured selection');
+		check(said === `Added to cart. ${A.names[A.packages.paper].name}. To choose another package, remove this selection from your cart first.`, 'the result is still announced outside the hidden block, for the captured selection');
 		await page.waitForFunction(() => '1' === (document.querySelector('.bc-cart-link .cart-count') || {}).textContent, null, {timeout: 15000});
 		check(1 === lines(await cart(page, A)).filter(line => 'package' === line.x.role).length, 'and the header count and cart reflect the confirmed add');
 		intercept = null;
@@ -955,6 +988,7 @@ async function collisions(browser) {
 	check(B.names[B.packages.paper].addons[0].price === '$9.50' && (await text(page, `${panel(B, 'paper')} .addon-card__price [data-purchase-price]`)) === '$9.50', 'Hall B renders its own relationship price for the colliding ID');
 	await page.check(radio(B, 'paper'));
 	await page.check(box(B, 'paper', 'paper_shared'));
+	await page.fill(qty(B, 'paper', 'paper_shared'), '1');
 	const before = api.length;
 	await submit(page);
 	await settled(page);
@@ -1012,6 +1046,7 @@ async function responsive(browser) {
 		await open(page, A);
 		await page.check(radio(A, 'digital'));
 		await page.check(box(A, 'digital', 'digital_shared'));
+		await page.fill(qty(A, 'digital', 'digital_shared'), '1');
 		// Selected states are 0.2s border/box-shadow transitions: measure once they have finished.
 		await sleep(350);
 		const metrics = await page.evaluate(() => {
@@ -1332,6 +1367,7 @@ async function labelSessionSwitch(browser) {
 		check(201 === await seed(page, hall), `Hall ${label}: merchandise in the cart`);
 		await page.check(radio(hall, 'paper'));
 		await page.check(box(hall, 'paper', 'paper_shared'));
+		await page.fill(qty(hall, 'paper', 'paper_shared'), '1');
 		await submit(page);
 		await settled(page);
 		check((await result(page)).kind.includes('is-success'), `Hall ${label}: Session A (${first.name}) Package and add-on added through the purchase step`);
@@ -1508,6 +1544,7 @@ async function labelSignedIn(browser) {
 		check(0 === lines(await cart(page, A)).length, 'signed-in customer: starts with an empty cart');
 		await page.check(radio(A, 'paper'));
 		await page.check(box(A, 'paper', 'paper_shared'));
+		await page.fill(qty(A, 'paper', 'paper_shared'), '1');
 		await submit(page);
 		await settled(page);
 		const outcome = await result(page);

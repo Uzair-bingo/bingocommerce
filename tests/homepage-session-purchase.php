@@ -542,11 +542,11 @@ final class HomepageSessionPurchaseTest {
 
 			// Quantity wording and controls.
 			$paper_panel = '//fieldset[@data-addons-for="' . $a['packages']['paper'] . '"]';
-			$this->same( [ 'Maximum quantity: 2', 'Quantity: 1' ], array_map( static fn( DOMElement $s ): string => trim( $s->textContent ), iterator_to_array( $xpath->query( $paper_panel . '//span[contains(@class,"addon-card__range")]' ) ) ), '“Maximum quantity: N”; a maximum of one shows a fixed “Quantity: 1”' );
+			$this->same( [ 'Maximum quantity: 2', 'Maximum quantity: 1' ], array_map( static fn( DOMElement $s ): string => trim( $s->textContent ), iterator_to_array( $xpath->query( $paper_panel . '//span[contains(@class,"addon-card__range")]' ) ) ), '“Maximum quantity: N” includes add-ons with a maximum of one' );
 			$this->same( 0, substr_count( $html, 'Up to ' ), 'no “Up to N” wording' );
 			$this->same( 1, $xpath->query( $paper_panel . '/p[contains(@class,"bc-addons__note")][normalize-space()="Add-ons are optional. Select an add-on, then choose its quantity."]' )->length, 'add-ons are optional; quantity follows selection' );
 			$steps = iterator_to_array( $xpath->query( $paper_panel . '//button[@data-step]' ) );
-			$this->ok( 2 === count( $steps ) && array_reduce( $steps, static fn( bool $ok, DOMElement $b ): bool => $ok && 'button' === $b->getAttribute( 'type' ) && '-1' === $b->getAttribute( 'tabindex' ) && $b->hasAttribute( 'disabled' ) && str_ends_with( $b->getAttribute( 'aria-label' ), 'quantity of Extra paper pack' ), true ), 'stepper buttons: labelled, disabled until selected, outside the tab order (the field’s own arrow keys work)' );
+			$this->ok( 4 === count( $steps ) && array_reduce( $steps, static fn( bool $ok, DOMElement $b ): bool => $ok && 'button' === $b->getAttribute( 'type' ) && '-1' === $b->getAttribute( 'tabindex' ) && $b->hasAttribute( 'disabled' ) && ( str_ends_with( $b->getAttribute( 'aria-label' ), 'quantity of Extra paper pack' ) || str_ends_with( $b->getAttribute( 'aria-label' ), 'quantity of Magnetic chips' ) ), true ), 'stepper buttons: labelled, disabled until selected, outside the tab order (the field’s own arrow keys work)' );
 
 			// Search: local name filtering for Packages with more than one add-on.
 			$this->same( [ 1, 1, 'Search add-ons for Paper Night Pack by name' ], [
@@ -566,7 +566,8 @@ final class HomepageSessionPurchaseTest {
 			$panel = static fn( int $package ): string => '//fieldset[@data-addons-for="' . $package . '"]';
 			$this->same( [ (string) $a['relations']['paper_shared'], (string) $a['relations']['paper_chips'] ], array_map( static fn( DOMElement $c ): string => $c->getAttribute( 'data-addon-id' ), iterator_to_array( $xpath->query( $panel( $a['packages']['paper'] ) . '//input[@type="checkbox"]' ) ) ), 'Paper panel holds only the Paper Package’s relationship IDs' );
 			$this->same( [ '2', '5' ], [ $xpath->evaluate( 'string(' . $panel( $a['packages']['paper'] ) . '//input[@type="number"]/@max)' ), $xpath->evaluate( 'string(' . $panel( $a['packages']['digital'] ) . '//input[@type="number"]/@max)' ) ], 'each relationship’s own maximum' );
-			$this->same( 0, $xpath->query( $panel( $a['packages']['paper'] ) . '//li[2]//input[@type="number"]' )->length, 'maximum one: no quantity field' );
+			$this->same( 1, $xpath->query( $panel( $a['packages']['paper'] ) . '//li[2]//input[@type="number"][@min="0"][@max="1"][@value="0"]' )->length, 'maximum one: customer chooses a quantity starting at zero' );
+			$this->same( $xpath->query( '//input[@data-addon-id]' )->length, $xpath->query( '//input[contains(@class,"addon-card__qty")][@min="0"][@value="0"][@disabled]' )->length, 'every add-on quantity starts at zero and disabled' );
 			$this->same( [ 'ok', 'ok', 'partial', 'unavailable', 'empty' ], array_map( static fn( DOMElement $p ): string => $p->getAttribute( 'data-addons-state' ), iterator_to_array( $xpath->query( '//fieldset[@data-addons-for]' ) ) ), 'panel states' );
 			$this->same( 1, $xpath->query( $panel( $a['packages']['none'] ) . '//p[normalize-space()="No add-ons are available for this Package."]' )->length, 'successful empty list wording' );
 			$this->same( 1, $xpath->query( $panel( $a['packages']['partial'] ) . '//p[normalize-space()="Some add-ons for this Package couldn’t be checked right now."]' )->length, 'partial list wording' );

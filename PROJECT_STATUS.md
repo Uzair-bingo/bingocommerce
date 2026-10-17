@@ -5995,3 +5995,24 @@ Portal request was performed.
   fixture baseline.
 - Documentation-only changes to DECISIONS.md and this file; `git diff --check`
   passed. No tests, database access, commit, push or deployment in this correction.
+
+
+### 2026-10-16 — Session Package add-on quantities start at zero
+
+- Every storefront add-on quantity starts at `0`; checking the card enables
+  its field without choosing a positive quantity. Add-ons with a maximum of
+  one now have the same editable quantity control.
+- Customers type a quantity or use −/+ within `0…maximum`. Their chosen
+  quantities survive unchecking/rechecking and Package switching. A checked
+  add-on left at zero requires a positive whole quantity before submission;
+  existing server-side purchase rules are unchanged.
+- Updated ADR-045 / BR-084 and the existing rendering/browser harness for the
+  zero default, keyboard/pointer controls, maximum-one add-ons, quantity
+  preservation and zero submission refusal. The browser harness also waits
+  for the existing focus animation and expects the current success message.
+- Verification PASS against the guarded `bingocommerce_state_recon` fixture:
+  **570 integration assertions and 1,097 browser assertions, zero failures**.
+  Verified the rendered zero state visually; PHP/JavaScript syntax checks and
+  `git diff --check` passed. Disposable Hall/customer cleanup and preservation
+  of the persistent fixture Halls, main-site sessions and network limit passed.
+- No commit, push or deployment.

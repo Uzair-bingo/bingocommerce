@@ -120,7 +120,7 @@
 		var raw = String( input.value ).trim();
 		return QUANTITY.test( raw ) && Number.isSafeInteger( Number( raw ) ) ? Number( raw ) : 0;
 	}
-	/* The −/+ buttons follow their field: usable only while the add-on is selected, never past 1 or the maximum. */
+	/* Zero is the initial choice; the −/+ buttons stay between zero and the maximum. */
 	function syncStepper( input ) {
 		var stepper = input.closest( '.addon-card__stepper' );
 		if ( ! stepper ) { return; }
@@ -128,17 +128,17 @@
 		var value = typed( input );
 		Array.prototype.forEach.call( stepper.querySelectorAll( 'button[data-step]' ), function ( button ) {
 			var down = '-1' === button.getAttribute( 'data-step' );
-			button.disabled = input.disabled || ( value > 0 && value <= max && ( down ? value <= 1 : value >= max ) );
+			button.disabled = input.disabled || ( down ? value <= 0 : value >= max );
 		} );
 	}
-	/* One step from the typed value, clamped to 1…maximum; an unusable value restarts at 1. */
+	/* One step from the typed value, clamped to 0…maximum; + from an unusable value starts at 1. */
 	function step( button ) {
 		var stepper = button.closest( '.addon-card__stepper' );
 		var input = stepper ? stepper.querySelector( 'input[type="number"]' ) : null;
 		if ( ! input || input.disabled ) { return; }
 		var max = int( input.getAttribute( 'max' ) ) || 1;
 		var value = typed( input );
-		input.value = String( value < 1 ? 1 : Math.max( 1, Math.min( max, Math.min( value, max ) + Number( button.getAttribute( 'data-step' ) ) ) ) );
+		input.value = String( Math.max( 0, Math.min( max, Math.min( value, max ) + Number( button.getAttribute( 'data-step' ) ) ) ) );
 		quantityChanged( input );
 	}
 	function cardOf( element ) {
@@ -234,7 +234,7 @@
 			Array.prototype.forEach.call( panel.querySelectorAll( 'input[data-addon-id]:checked' ), function ( checkbox ) {
 				var max = int( checkbox.getAttribute( 'data-max' ) ) || 1;
 				var input = quantityInput( checkbox );
-				var raw = input ? String( input.value ).trim() : '1';
+				var raw = input ? String( input.value ).trim() : '0';
 				var quantity = QUANTITY.test( raw ) && Number( raw ) <= max ? Number( raw ) : 0;
 				var addon = { id: int( checkbox.getAttribute( 'data-addon-id' ) ), name: checkbox.getAttribute( 'data-addon-name' ) || '', quantity: quantity, max: max, input: input, checkbox: checkbox };
 				if ( ( ! quantity || ! addon.id ) && ! picked.invalid ) { picked.invalid = addon; }

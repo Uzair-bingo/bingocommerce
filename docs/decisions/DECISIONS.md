@@ -6405,6 +6405,19 @@ by construction, never deleted by anything.
   step. Bingo Session/date labels on cart lines are the next separate
   presentation task.
 
+- **ADR-045 / BR-084 addition — [2026-10-16] — Add-on Quantities Start at Zero (user-requested, implemented):**
+
+  Every add-on quantity field starts at zero, including relationships with a
+  maximum of one; selecting the checkbox enables the field without assigning
+  a positive quantity. Customers type a quantity or use −/+ within 0…maximum.
+  Unchecking/rechecking or switching Packages retains the customer's choice.
+  A checked add-on at zero still needs a whole quantity from 1 to its configured
+  maximum before Add to cart can send a request; zero is never sent as a cart
+  quantity and checked add-ons are never silently omitted. This supersedes the
+  initial minimum of one and fixed "Quantity: 1" presentation in the historical
+  entries below. Purchase validation, relationship maxima and server rules
+  remain unchanged.
+
 - **ADR-045 / BR-084 addition — [2026-10-02] — Purchase-Step Reference Layout, Package Contents, Shop Listing and Add-on Price Presentation (user-requested, implemented):**
 
   This dated addition changes presentation and one listing only; the two

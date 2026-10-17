@@ -122,8 +122,11 @@ Three roles — do not conflate or merge:
   only its own optional add-ons as compact rows: currently eligible
   relationships (enabled, active parents, compatible medium — Paper Packages
   show only Paper add-ons), each with a checkbox, optional thumbnail, its
-  relationship unit price and, when selected, a labelled quantity from 1 to its
-  maximum. A successful empty list says "No
+  relationship unit price and, when selected, a labelled quantity starting at
+  zero. Customers enter a quantity or use −/+ within 0…maximum; a checked
+  add-on must have a whole quantity from 1 to its maximum before submission.
+  Zero is an initial UI state, never a submitted cart quantity (2026-10-16
+  update). A successful empty list says "No
   add-ons are available for this Package."; a partial read shows the verified
   add-ons with a notice; a failed or malformed read says "Add-ons can't be
   shown right now." and still permits an explicit Package-only purchase. A
@@ -157,8 +160,10 @@ Three roles — do not conflate or merge:
   cannot be verified), and a wider right column with the selected Package,
   its optional add-ons as image cards and, below them, the dark summary and
   Add to cart; the columns stack on tablets and phones. Add-on quantities read
-  "Maximum quantity: N" (a fixed "Quantity: 1" for a maximum of one) and become
-  available once the add-on is selected; a name search filters a Package's
+  "Maximum quantity: N" and become available once the add-on is selected;
+  all start at zero, including add-ons with a maximum of one, and retain the
+  customer's entered quantity when unchecked/rechecked or switching Packages
+  (2026-10-16 update). A name search filters a Package's
   add-on cards without dropping any selection. The ordinary Shop (Shop page,
   product categories and product search) lists ordinary merchandise only: the
   Hall's own Bingo Packages and Bingo Play Products are left out by Catalog

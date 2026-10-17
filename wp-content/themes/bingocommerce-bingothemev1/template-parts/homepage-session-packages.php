@@ -171,7 +171,7 @@ $bingothemev1_contents = static function ( array $item, string $id ): void {
 												<li class="addon-card" data-addon-card>
 													<input type="checkbox" class="addon-card__check" id="<?php echo esc_attr( $bingothemev1_check ); ?>"
 														data-addon-id="<?php echo esc_attr( (string) $bingothemev1_addon['id'] ); ?>" data-addon-name="<?php echo esc_attr( $bingothemev1_addon['name'] ); ?>"
-														data-max="<?php echo esc_attr( (string) $bingothemev1_max ); ?>"<?php echo $bingothemev1_max > 1 ? ' data-quantity="' . esc_attr( $bingothemev1_qty ) . '"' : ''; ?>>
+														data-max="<?php echo esc_attr( (string) $bingothemev1_max ); ?>" data-quantity="<?php echo esc_attr( $bingothemev1_qty ); ?>">
 													<label class="addon-card__label" for="<?php echo esc_attr( $bingothemev1_check ); ?>">
 														<?php if ( '' !== $bingothemev1_image ) : ?>
 															<span class="addon-card__media"><?php echo $bingothemev1_image; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- native escaped image markup; the name labels the control. ?></span>
@@ -182,23 +182,17 @@ $bingothemev1_contents = static function ( array $item, string $id ): void {
 														<span class="addon-card__price"><span data-purchase-price><?php echo wp_kses_post( $bingothemev1_addon['price_html'] ); ?></span> <?php esc_html_e( 'each', Theme::TEXT_DOMAIN ); ?></span>
 													</label>
 													<div class="addon-card__quantity">
-														<?php if ( $bingothemev1_max > 1 ) : ?>
-															<label class="addon-card__quantity-label" for="<?php echo esc_attr( $bingothemev1_qty ); ?>"><?php esc_html_e( 'Quantity', Theme::TEXT_DOMAIN ); ?><span class="screen-reader-text"> <?php /* translators: %s: add-on name. */ echo esc_html( sprintf( __( 'of %s', Theme::TEXT_DOMAIN ), $bingothemev1_addon['name'] ) ); ?></span></label>
-															<?php // The buttons are pointer conveniences; keyboards use the field's own arrow keys, so they stay out of the tab order. ?>
-															<span class="addon-card__stepper">
-																<button type="button" class="addon-card__step" data-step="-1" tabindex="-1" disabled aria-label="<?php /* translators: %s: add-on name. */ echo esc_attr( sprintf( __( 'Decrease quantity of %s', Theme::TEXT_DOMAIN ), $bingothemev1_addon['name'] ) ); ?>">&minus;</button>
-																<input type="number" class="addon-card__qty" id="<?php echo esc_attr( $bingothemev1_qty ); ?>" min="1" max="<?php echo esc_attr( (string) $bingothemev1_max ); ?>" step="1" value="1" inputmode="numeric" disabled
-																	aria-describedby="<?php echo esc_attr( $bingothemev1_qty . '-range ' . $bingothemev1_qty . '-error' ); ?>">
-																<button type="button" class="addon-card__step" data-step="1" tabindex="-1" disabled aria-label="<?php /* translators: %s: add-on name. */ echo esc_attr( sprintf( __( 'Increase quantity of %s', Theme::TEXT_DOMAIN ), $bingothemev1_addon['name'] ) ); ?>">+</button>
-															</span>
-															<span class="addon-card__range" id="<?php echo esc_attr( $bingothemev1_qty . '-range' ); ?>"><?php /* translators: %d: largest permitted quantity. */ echo esc_html( sprintf( __( 'Maximum quantity: %d', Theme::TEXT_DOMAIN ), $bingothemev1_max ) ); ?></span>
-														<?php else : ?>
-															<span class="addon-card__range"><?php esc_html_e( 'Quantity: 1', Theme::TEXT_DOMAIN ); ?></span>
-														<?php endif; ?>
+														<label class="addon-card__quantity-label" for="<?php echo esc_attr( $bingothemev1_qty ); ?>"><?php esc_html_e( 'Quantity', Theme::TEXT_DOMAIN ); ?><span class="screen-reader-text"> <?php /* translators: %s: add-on name. */ echo esc_html( sprintf( __( 'of %s', Theme::TEXT_DOMAIN ), $bingothemev1_addon['name'] ) ); ?></span></label>
+														<?php // The buttons are pointer conveniences; keyboards use the field's own arrow keys, so they stay out of the tab order. ?>
+														<span class="addon-card__stepper">
+															<button type="button" class="addon-card__step" data-step="-1" tabindex="-1" disabled aria-label="<?php /* translators: %s: add-on name. */ echo esc_attr( sprintf( __( 'Decrease quantity of %s', Theme::TEXT_DOMAIN ), $bingothemev1_addon['name'] ) ); ?>">&minus;</button>
+															<input type="number" class="addon-card__qty" id="<?php echo esc_attr( $bingothemev1_qty ); ?>" min="0" max="<?php echo esc_attr( (string) $bingothemev1_max ); ?>" step="1" value="0" inputmode="numeric" disabled
+																aria-describedby="<?php echo esc_attr( $bingothemev1_qty . '-range ' . $bingothemev1_qty . '-error' ); ?>">
+															<button type="button" class="addon-card__step" data-step="1" tabindex="-1" disabled aria-label="<?php /* translators: %s: add-on name. */ echo esc_attr( sprintf( __( 'Increase quantity of %s', Theme::TEXT_DOMAIN ), $bingothemev1_addon['name'] ) ); ?>">+</button>
+														</span>
+														<span class="addon-card__range" id="<?php echo esc_attr( $bingothemev1_qty . '-range' ); ?>"><?php /* translators: %d: largest permitted quantity. */ echo esc_html( sprintf( __( 'Maximum quantity: %d', Theme::TEXT_DOMAIN ), $bingothemev1_max ) ); ?></span>
 													</div>
-													<?php if ( $bingothemev1_max > 1 ) : ?>
-														<p class="addon-card__error" id="<?php echo esc_attr( $bingothemev1_qty . '-error' ); ?>" hidden></p>
-													<?php endif; ?>
+													<p class="addon-card__error" id="<?php echo esc_attr( $bingothemev1_qty . '-error' ); ?>" hidden></p>
 												</li>
 											<?php endforeach; ?>
 										</ul>
