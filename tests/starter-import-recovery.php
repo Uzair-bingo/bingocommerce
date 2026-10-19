@@ -446,7 +446,7 @@ final class StarterImportRecoveryTest {
 				$items = StarterSchema::import_products_table();
 				$first = $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM %i ORDER BY item_id ASC LIMIT 1', $items ), ARRAY_A );
 
-				$failed = $this->fault( 'SELECT ID, post_type, post_status FROM `' . $wpdb->posts . '`', static fn() => ( new StarterImporter() )->process_next( 60.0 ) );
+				$failed = $this->fault( 'SELECT ID, post_type, post_status, post_parent FROM `' . $wpdb->posts . '`', static fn() => ( new StarterImporter() )->process_next( 60.0 ) );
 				$this->code( 'starter_import_db_error', $failed, 'a failed product read stops the item instead of skipping it' );
 				$row = $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM %i WHERE item_id = %d', $items, (int) $first['item_id'] ), ARRAY_A );
 				$this->same( Repo::ITEM_CREATED, $row['status'], 'the product is not marked removed after a failed read' );

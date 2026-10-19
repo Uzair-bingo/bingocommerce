@@ -27,6 +27,7 @@ require_once BINGOCOMMERCE_CATALOG_PATH . 'src/CatalogWriteOutcome.php';
 require_once BINGOCOMMERCE_CATALOG_PATH . 'src/Migrations.php';
 require_once BINGOCOMMERCE_CATALOG_PATH . 'src/StarterImportMigrations.php';
 require_once BINGOCOMMERCE_CATALOG_PATH . 'src/StarterImportLock.php';
+require_once BINGOCOMMERCE_CATALOG_PATH . 'src/StarterCatalogStorage.php';
 require_once BINGOCOMMERCE_CATALOG_PATH . 'src/StarterCatalogVersions.php';
 require_once BINGOCOMMERCE_CATALOG_PATH . 'src/StarterImportRepository.php';
 require_once BINGOCOMMERCE_CATALOG_PATH . 'src/StarterImporter.php';

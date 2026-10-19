@@ -32,8 +32,9 @@ Confirmed in discussion between 2026-10-17 and 2026-10-19:
 8. No edit locks on unfinished copies; warnings are shown instead.
 9. Super Admin **Resolve** settles the rare cases the importer cannot decide.
    Resolve has no "create it" action.
-10. **Simple and variable** products are supported. Variable products may use
-    **product-level attributes only**; global attributes (`pa_*`) are out of v1.
+10. **Simple and variable** products are supported. Both may use
+    **product-level attributes only**; global attributes (`pa_*`) are out of v1
+    and Publish rejects them on either type.
 11. Text verification and Resolve eligibility use the wording in sections 11
     and 13 of this record.
 
@@ -138,8 +139,8 @@ Publish runs in small steps:
 - a description contains embedded images, links to the main site or
   shortcodes;
 - a variable product has no variations;
-- a variable product uses a global attribute (WooCommerce's `is_taxonomy` flag
-  is set). The message names the product and the attribute;
+- a simple or variable product uses a global attribute (WooCommerce's
+  `is_taxonomy` flag is set). The message names the product and the attribute;
 - a variation is downloadable, has a regular price that is neither blank nor a
   valid decimal, is not enabled or disabled (`publish` / `private`), or has an
   image outside the limits.
@@ -157,9 +158,9 @@ name. If that is empty, use `starter-product-<source-product-ID>`.
   descriptions, slug, regular price, SKU, category and tag slugs, tax status,
   tax class, stock tracking on/off, featured and gallery image references in
   order;
-- for a variable product: each product-level attribute (name, options,
-  visible on the product page, used for variations, position) and the default
-  attributes;
+- for each simple and variable product: each product-level attribute (name,
+  options, visible on the product page, used for variations, position);
+- for a variable product: the default attributes;
 - for each variation: source ID, parent source ID, display order, attribute
   values (blank means "Any"), regular price, SKU, stock tracking on/off,
   enabled or disabled, tax class (including "Same as parent"), cleaned
@@ -677,7 +678,7 @@ Variable products:
 | Dab O Ink (13 variations, Assorted untracked) | 12 variations out of stock and Assorted in stock; parent price range $1.06–$13.12 |
 | Untracked variation (Assorted) verification | Saved with no quantity and in stock; verification passes |
 | 12 variations complete and one deliberately skipped | Parent is synced, verified and completed with an omission note |
-| Global attribute (`pa_color`) | Publish blocked, naming the product |
+| Global attribute (`pa_color`) on a simple or variable product | Publish blocked, naming the product |
 | Variable product with no variations | Publish blocked |
 | Variation SKU conflict (`S0101BSP9` at Star Bingo Hall) | That variation without an SKU plus a note; others keep their SKUs |
 | Crash between variation creation and saving its ID | Needs attention; Resolve rules apply |

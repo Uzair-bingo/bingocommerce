@@ -30,6 +30,22 @@ final class StarterImportRepository {
 	public const ITEM_SKIPPED         = 'skipped';
 	public const ITEM_NEEDS_ATTENTION = 'needs_attention';
 
+	public const IMAGE_PLANNED         = 'planned';
+	public const IMAGE_FILE_WRITTEN    = 'file_written';
+	public const IMAGE_CREATING        = 'creating';
+	public const IMAGE_CREATED         = 'attachment_created';
+	public const IMAGE_COMPLETE        = 'complete';
+	public const IMAGE_OMITTED         = 'omitted';
+	public const IMAGE_NEEDS_ATTENTION = 'needs_attention';
+
+	private const IMAGE_FIELDS = [
+		'status'        => '%s',
+		'attachment_id' => '%d',
+		'note'          => '%s',
+		'updated_at'    => '%s',
+		'completed_at'  => '%s',
+	];
+
 	private const RECEIPT_FIELDS = [
 		'status'             => '%s',
 		'total_products'     => '%d',
@@ -203,6 +219,98 @@ final class StarterImportRepository {
 		}
 
 		return is_array( $row ) ? $row : null;
+	}
+
+	/**
+	 * Mark a skipped parent's unfinished variation items skipped too.
+	 *
+	 * @return true|\WP_Error
+	 */
+	public static function skip_children( int $import_id, int $parent_item_id, string $note ) {
+		global $wpdb;
+
+		$updated = $wpdb->query(
+			$wpdb->prepare(
+				'UPDATE %i SET status = %s, note = %s, updated_at = %s, completed_at = %s'
+				. ' WHERE import_id = %d AND parent_item_id = %d AND status NOT IN ( %s, %s )',
+				StarterImportMigrations::import_products_table(),
+				self::ITEM_SKIPPED,
+				$note,
+				self::now(),
+				self::now(),
+				$import_id,
+				$parent_item_id,
+				self::ITEM_COMPLETE,
+				self::ITEM_SKIPPED
+			)
+		);
+		if ( false === $updated || '' !== (string) $wpdb->last_error ) {
+			return self::db_error();
+		}
+
+		return true;
+	}
+
+	/* ------------------------------------------------------------------ *
+	 * Images
+	 * ------------------------------------------------------------------ */
+
+	/** @return array<string,mixed>|null|\WP_Error */
+	public static function image( int $import_id, int $version_image_id ) {
+		global $wpdb;
+
+		$row = $wpdb->get_row(
+			$wpdb->prepare(
+				'SELECT * FROM %i WHERE import_id = %d AND version_image_id = %d',
+				StarterImportMigrations::import_images_table(),
+				$import_id,
+				$version_image_id
+			),
+			ARRAY_A
+		);
+		if ( '' !== (string) $wpdb->last_error ) {
+			return self::db_error();
+		}
+
+		return is_array( $row ) ? $row : null;
+	}
+
+	/**
+	 * Save an image's planned Hall path and recovery identifier (status
+	 * "planned") before any file is written.
+	 *
+	 * @return array<string,mixed>|\WP_Error The new row, read back.
+	 */
+	public static function insert_image( int $import_id, int $version_image_id, string $planned_path, string $recovery_slug ) {
+		global $wpdb;
+
+		$inserted = $wpdb->insert(
+			StarterImportMigrations::import_images_table(),
+			[
+				'import_id'        => $import_id,
+				'version_image_id' => $version_image_id,
+				'status'           => self::IMAGE_PLANNED,
+				'planned_path'     => $planned_path,
+				'recovery_slug'    => $recovery_slug,
+				'updated_at'       => self::now(),
+			],
+			[ '%d', '%d', '%s', '%s', '%s', '%s' ]
+		);
+		if ( 1 !== $inserted ) {
+			return self::db_error();
+		}
+
+		$row = self::image( $import_id, $version_image_id );
+		if ( ! is_array( $row ) || $recovery_slug !== (string) $row['recovery_slug'] ) {
+			return self::db_error();
+		}
+
+		return $row;
+	}
+
+	/** @return true|\WP_Error */
+	public static function update_image( int $import_image_id, array $fields ) {
+		return self::update( StarterImportMigrations::import_images_table(), 'import_image_id', $import_image_id, $fields, self::IMAGE_FIELDS );
 	}
 
 	/** @return array{imported:int,skipped:int}|\WP_Error Top-level counts. */

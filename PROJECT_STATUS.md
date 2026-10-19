@@ -6143,3 +6143,82 @@ Portal request was performed.
   passed, `tests/package-addons-schema.php` 196 passed,
   `tests/customer-cart-increment-1.php` 140 passed, all with zero failures.
 - Not committed by Claude; no push or deployment.
+
+
+### 2026-10-19 — ADR-049 stage 3, slice 3.3: variable products and images
+
+- `StarterImporter` now copies variable products (product-level attributes
+  only) and images. A variable parent is created like a simple product, then
+  each variation is its own item (claim, recovery slug as its first slug,
+  variation ID saved at once, fields and image applied, verified, completed),
+  then `WC_Product_Variable::sync()` runs, the parent is verified, gets its
+  normal slug and completes with any omission notes. Variation retry rules:
+  removed or moved variation skipped with a note; creation started without a
+  saved ID becomes Needs attention; a skipped parent skips its variations.
+  Variation stock is checked by tracking (an untracked variation has no
+  quantity and is in stock). Product-level attributes are copied and verified
+  for simple products too (review fix).
+- Images follow ADR-049 section 12: planned Hall path and recovery slug saved
+  first; type, size (5 MB), dimensions (4,000 px) and space checked; file
+  copied and checksum verified; "attachment creation starting" recorded,
+  attachment created with the recovery slug, its ID saved at once; alt text;
+  sizes through `wp_update_image_subsizes()`; storage cache refreshed;
+  saved metadata and sizes checked (review fix: WordPress returns metadata
+  even when its image editor fails, so the image completes only when the
+  saved metadata is usable and every registered size that fits the image
+  exists; otherwise it stays unfinished and Retry makes the missing sizes for
+  the same attachment; a server with no image editor for the type stops with
+  a clear "fix the server's image support" message before any metadata is
+  saved, and Retry then finishes the same attachment); original path and
+  checksum verified. Each version image is copied once per
+  import. Completed media the Hall deleted is left out with a note; a missing
+  or changed original stops with a clear reason; an uncertain attachment
+  creation becomes Needs attention. Quota is checked only when quota checking
+  is on. Space is checked right before every image write, including a
+  resumed planned image (review fix; the check moved from planning to the
+  write, matching ADR-049 section 12's order). Start now also checks the
+  estimated image storage.
+- New `StarterCatalogStorage`: the frozen-image folder (constant
+  `BINGOCOMMERCE_STARTER_CATALOG_DIR`, otherwise
+  `wp-content/uploads/bingo-starter-catalog`), the image limits and the space
+  checks. New reads in `StarterCatalogVersions` (variations, images, total
+  image bytes) and `StarterImportRepository` (image rows, skipping a parent's
+  variations).
+- A request now stops at a safe point once its budget is used, after at least
+  one unit of work (a product, a variation or an image); the next request
+  continues. A repeated audit transition is skipped instead of colliding with
+  the unique key.
+- New harness `tests/starter-import-media.php` (real image files in a
+  temporary frozen folder; the recovery worker gained crash points inside
+  variation and attachment inserts and a budget setting). Verification PASS
+  against the guarded `bingocommerce_state_recon` fixture, run twice:
+  **288 assertions, zero failures** each time. Covered: catalogs shaped like
+  the two real samples (15 and 13 colour variations, "Color" attribute,
+  28 images each copied once, the `S0101BSP9` SKU conflict, Assorted
+  untracked, WooCommerce price range $1.06–$13.12 and parent stock status);
+  pausing at safe points; a crash at 14 image/variation/parent steps finishing
+  with exactly one parent, three variations and three images, and at 6 steps
+  becoming Needs attention with nothing new created; a deleted variation, a
+  trashed parent; an image the Hall deleted, a missing or changed original,
+  an unsupported type, an oversized file or dimensions; a "-scaled" image
+  resumed after a crash; quota on (refused) and off (written); a simple
+  product's two attributes, including a save that lost them (verification
+  stops it, Retry completes); a thumbnail size WordPress could not make
+  (image stays unfinished, Retry completes the same attachment with every
+  size); a server with no image editor (clear stop, no metadata saved, Retry
+  completes the same attachment); space used up after an image was planned
+  (Retry stops before copying, then completes once space is back). Putting
+  back eight protections (image and variation "no ID saved" rules, pausing,
+  simple attributes copied and verified, the size check, the image-editor
+  stop and the resumed space check) makes their tests fail.
+- Regression on the same fixture: `tests/starter-import-recovery.php` 245
+  (its read-failure fault now targets the extended product-row read),
+  `tests/starter-import-schema.php` 118, `tests/package-addons-schema.php`
+  196 and `tests/customer-cart-increment-1.php` 140, all with zero failures.
+- ADR-049 corrected in the same change: product-level attributes are
+  captured for simple and variable products, and Publish rejects global
+  attributes on both.
+- Stage 3 (storage and recovery proof) is complete; no page, hook or caller
+  yet, so no Hall's behaviour changes. Next is stage 4: master selection and
+  Publish.
+- Not committed by Claude; no push or deployment.

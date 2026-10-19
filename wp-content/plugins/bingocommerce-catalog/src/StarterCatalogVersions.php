@@ -20,7 +20,17 @@ if ( ! defined( 'ABSPATH' ) ) {
  *   name, description, short_description, slug, regular_price, sku,
  *   categories (product_cat slugs), tags (product_tag slugs), tax_status,
  *   tax_class (slug, '' for Standard), manage_stock (bool),
- *   image_id and gallery_image_ids (version image IDs, slice 3.3).
+ *   image_id and gallery_image_ids (version image IDs),
+ *   attributes: [ {name, options[], visible, variation, position} ]
+ *   (product-level attributes only; may be empty for a simple product).
+ * A variable product (product_type "variable") also has
+ *   default_attributes: { key: value }.
+ * A variation (product_type "variation", parent_source_id = its parent's
+ * source_product_id) has:
+ *   attributes: { key: value } ('' means "Any"), regular_price, sku,
+ *   manage_stock, enabled (bool), tax_class (slug, '' or 'parent'),
+ *   description, image_id.
+ * Attribute keys are sanitize_title() of the attribute name.
  * The version's `terms` column holds the category tree and tag list:
  *   { "product_cat": [ {slug, name, parent} ], "product_tag": [ {slug, name} ] }
  * where `parent` is a category slug or ''.
@@ -99,6 +109,60 @@ final class StarterCatalogVersions {
 		}
 
 		return (int) $count;
+	}
+
+	/**
+	 * A variable product's variations in display order.
+	 *
+	 * @return array<int,array<string,mixed>>|\WP_Error
+	 */
+	public static function variations( int $version_id, int $parent_source_id ) {
+		global $wpdb;
+
+		$rows = $wpdb->get_results(
+			$wpdb->prepare(
+				'SELECT * FROM %i WHERE version_id = %d AND parent_source_id = %d ORDER BY position ASC, version_product_id ASC',
+				StarterImportMigrations::version_products_table(),
+				$version_id,
+				$parent_source_id
+			),
+			ARRAY_A
+		);
+		if ( ! is_array( $rows ) || '' !== (string) $wpdb->last_error ) {
+			return self::db_error();
+		}
+
+		return $rows;
+	}
+
+	/** @return array<string,mixed>|null|\WP_Error One version image row. */
+	public static function image( int $version_image_id ) {
+		global $wpdb;
+
+		if ( $version_image_id < 1 ) {
+			return null;
+		}
+
+		$row = $wpdb->get_row(
+			$wpdb->prepare( 'SELECT * FROM %i WHERE version_image_id = %d', StarterImportMigrations::version_images_table(), $version_image_id ),
+			ARRAY_A
+		);
+
+		return self::row_or_error( $row );
+	}
+
+	/** @return int|\WP_Error Total bytes of a version's image files. */
+	public static function total_image_bytes( int $version_id ) {
+		global $wpdb;
+
+		$total = $wpdb->get_var(
+			$wpdb->prepare( 'SELECT COALESCE( SUM( file_size ), 0 ) FROM %i WHERE version_id = %d', StarterImportMigrations::version_images_table(), $version_id )
+		);
+		if ( null === $total || '' !== (string) $wpdb->last_error ) {
+			return self::db_error();
+		}
+
+		return (int) $total;
 	}
 
 	/**
