@@ -3249,10 +3249,12 @@ Everything below is tracked work that is NOT a blocker to that demo.
    remained pending without webhook delivery and was later cancelled
    automatically by WooCommerce's hold-stock timeout. Production webhook
    delivery remains unverified.
-7. Coordinated starter-product catalog copy at provisioning (BR-047, ADR-027);
-   Game Types instead follow ADR-035 synchronization. ADR-042 / BR-076 narrow
-   this for the automatic-provisioning MVP: no starter Product / Play Product
-   copy runs until that deferred mechanism is separately designed.
+7. Starter products: ADR-049 / BR-086 approved on 2026-10-19 (documentation
+   only). They replace the deferred provisioning copy with an optional,
+   one-time Hall import of ordinary WooCommerce simple and variable products
+   (product-level attributes only) from a published main-site catalog; Game
+   Types still follow ADR-035 synchronization and Enable still creates an empty
+   store. Not implemented; next is stage 3, the storage and recovery proof.
 8. Package hard delete, including BR-065's mandatory linked-product
    disposition. No hard delete exists in any Catalog entity today.
 9. Checkout review follow-ups still pending after the 2026-10-03 recovery
@@ -6016,3 +6018,34 @@ Portal request was performed.
   `git diff --check` passed. Disposable Hall/customer cleanup and preservation
   of the persistent fixture Halls, main-site sessions and network limit passed.
 - No commit, push or deployment.
+
+
+### 2026-10-19 — Starter product import decision recorded (documentation only)
+
+- Recorded and approved ADR-049 (new file
+  `docs/decisions/adr-049-starter-product-import.md`) and BR-086, which amends
+  and narrows BR-047. Starter products are no longer copied during
+  provisioning: a Network Super Admin publishes frozen versions of a master
+  catalog kept on the main site, and a Hall Manager may optionally import the
+  latest version once, as drafts of ordinary WooCommerce simple or variable
+  products (product-level attributes only). No Play Products, Game Types,
+  Packages, add-ons or Sessions are imported. Enable still creates an empty
+  store (ADR-042 unchanged).
+- Aligned AGENTS.md (Hall Manager and Platform Admin lines),
+  `business-requirements.md` (starter section), `plugin-architecture.md`
+  (Catalog and platform rows, the provisioning-contract exception for the
+  importer's tables), `catalog-session-persistence-design.md` and
+  `portal-integration-architecture.md`, and item 7 above.
+- Stage 1 checks, read-only on the local installation: the main site runs
+  WooCommerce 11.1.2, sells nothing, uses USD with prices excluding tax and has
+  the Reduced rate and Zero rate tax classes; all seven local Halls match those
+  settings; network upload quota checking is off. Two sample master products
+  exist and both are variable (one "Color" product-level attribute): "1on Bingo
+  Paper By The Case 9,000 Sheets" is Published and must become Draft or
+  Private before a Publish, and "Dab O Ink 3 Ounce By the Bottle" is a Draft.
+  Star Bingo Hall already uses SKU `S0101BSP9`, which one sample variation also
+  uses. The production main site, the full starter catalog, production storage
+  and image timing remain release checks.
+- Documentation only, on branch `starterImport` (created from
+  `ssoImplementation`). No code, tests, migrations or database changes. Not
+  staged or committed; no push or deployment.

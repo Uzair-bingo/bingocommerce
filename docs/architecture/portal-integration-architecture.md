@@ -648,7 +648,8 @@ re-enable reused the same site.
 `bingocommerce-portal-integration` orchestrates;
 `bingocommerce-platform` creates/initializes via the decided filter
 `bingocommerce_platform_provision_hall_site` (implemented);
-`bingocommerce-catalog` owns Catalog rules with no MVP starter copy;
+`bingocommerce-catalog` owns Catalog rules; starter products are a Hall-started
+import (ADR-049), never part of provisioning;
 `bingocommerce-core` supplies shared roles/capabilities and AuditLog, plus
 ADR-045's Hall Store Details profile and the BR-084 storefront style policy.
 Core does not own Commerce provisioning orchestration or site creation.

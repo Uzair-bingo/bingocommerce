@@ -6,11 +6,11 @@ independently activatable and testable.
 | Plugin | Responsibility | Depends on |
 |---|---|---|
 | `bingocommerce-core` | Roles & capabilities, tenant context helpers, audit log service, migration framework; Hall public storefront profile (Store Details: per-site `bc_store_details`, Appearance → Store Details screen, read-only `bingocommerce_store_details` filter — ADR-045 narrow clarification of ADR-026); Hall homepage slider (`bc_homepage_slider`, Appearance → Homepage, read-only `bingocommerce_homepage_slider` filter — ADR-045 addition 2026-09-30); Hall Shop by Category cards (`bc_homepage_categories`, independent Appearance → Homepage form, read-only `bingocommerce_homepage_categories` — ADR-045 addition 2026-10-01); BR-084 `StorefrontStyleGuard` (on Hall sites only Super Admins may edit/delete/publish `wp_global_styles`; the unavailable Appearance → Fonts entry is removed for everyone else) | WooCommerce (network) |
-| `bingocommerce-catalog` | Hall-scoped Game Type replica/domain behavior, Bingo Play Product domain metadata/mapping, Bingo Package definitions/components, ADR-044 Package add-on eligibility/configuration, administration and targeted projection reconciliation, BR-032/BR-065 metadata projections, BR-064 network maximum and Hall override settings screens/writers plus the read-only current-value resolver, starter-product domain logic when that deferred copy exists (ADR-026/ADR-031/ADR-035/ADR-044; add-on schema Slice 1, backend Slice 2 and admin UI Slice 3 implemented; ADR-042 MVP runs no starter copy) | core |
+| `bingocommerce-catalog` | Hall-scoped Game Type replica/domain behavior, Bingo Play Product domain metadata/mapping, Bingo Package definitions/components, ADR-044 Package add-on eligibility/configuration, administration and targeted projection reconciliation, BR-032/BR-065 metadata projections, BR-064 network maximum and Hall override settings screens/writers plus the read-only current-value resolver, the ADR-049 starter catalog (main-site selection, Publish, frozen versions) and the Hall's one-time starter product import (approved; not implemented) (ADR-026/ADR-031/ADR-035/ADR-044/ADR-049; add-on schema Slice 1, backend Slice 2 and admin UI Slice 3 implemented) | core (plus one guarded, read-only Hall-access check from portal-integration, ADR-049) |
 | `bingocommerce-sessions` | Portal Session-template replica; Commerce schedules with immutable named timezone and structured time; dated occurrence generation/reconciliation; inclusive hall-local 30-day window; centralized current-definition membership; Available for Sale; Package assignment; and customer occurrence-before-Package selection, including the read-only, signed-out-safe homepage Session calendar (`HomepageSessionCalendar`, `bingocommerce_homepage_session_calendar` filter — ADR-045 / BR-084 addition 2026-10-01) (BR-050–BR-052/BR-063/BR-073/BR-077/BR-078/BR-080; approved ADR-043) | core, catalog |
 | `bingocommerce-digital-tickets` | Implemented: Hall-local paid entitlement snapshots, refund/cancellation markers, stable customer QR/access, and Caller-relayed server redemption with request recovery, tablet binding and whole-ticket limits. Android loading and staff reactivation remain separate | core, catalog, sessions |
 | `bingocommerce-portal-integration` | Portal-facing machine endpoint; request authentication/validation; provisioning-operation persistence/sequencing; Portal Hall mapping coordination; HallCommerceState/managed-marker coordination; Portal snapshot synchronization; safe API responses and integration audit attribution (ADR-035–ADR-042) | core |
-| `bingocommerce-platform` | Actual WordPress Multisite site creation; WooCommerce/site initialization; triggering existing per-site BingoCommerce migrations and role provisioning; returning a structured setup result to the integration orchestrator; billing lifecycle (BR-016); retention/deletion (BR-017); network reporting. Does not own Catalog domain rules. ADR-042 MVP does not trigger starter Product/Play Product copy | core |
+| `bingocommerce-platform` | Actual WordPress Multisite site creation; WooCommerce/site initialization; triggering existing per-site BingoCommerce migrations and role provisioning; returning a structured setup result to the integration orchestrator; billing lifecycle (BR-016); retention/deletion (BR-017); network reporting. Does not own Catalog domain rules. Takes no part in starter products (ADR-049) | core |
 
 Theme: Phase 1 standard storefront in `wp-content/themes/bingocommerce-*`.
 Presentation only — zero business logic (AGENTS.md rule 2). The v1 theme is
@@ -91,9 +91,10 @@ addition: display configuration, not domain authority). Its capability policy al
 style guard (Hall global-styles writes are Platform Admin-only). `bingocommerce-sessions` owns Session,
 never Catalog entities. `bingocommerce-platform` does not own Catalog domain
 rules; under ADR-042 it performs Multisite/WooCommerce/site initialization and
-returns a structured setup result to `bingocommerce-portal-integration`. The
-ADR-042 MVP does not run starter-product copy; that Catalog-owned mechanism
-remains separately deferred. Portal Game Type identity/configuration is
+returns a structured setup result to `bingocommerce-portal-integration`.
+Provisioning never copies starter products; under ADR-049 a Hall Manager
+optionally imports them later through the Catalog plugin (approved; not
+implemented). Portal Game Type identity/configuration is
 external authority; the Catalog plugin retains the hall-scoped local replica
 and its commerce relationships. Portal webhook delivery/reconciliation remains
 deferred and must not be confused with the implemented occurrence reconciler.
@@ -293,6 +294,12 @@ support BOTH situations:
    - reconcile dependencies that may initialize later
 
 A feature that works on existing halls but fails on a newly created hall is incomplete.
+
+Exception (ADR-049, approved; not implemented): the starter product importer's
+per-Hall tables are created or upgraded when its Starter Products page is opened
+and before each import request, not during site creation, and its network
+tables on the Starter Catalog admin page. New and existing Halls use the same
+path, and this optional feature can never affect Enable or readiness.
 
 ## 4. Migration Framework (core owns this)
 

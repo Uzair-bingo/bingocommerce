@@ -1287,9 +1287,10 @@ Owns:
   compatibility validation.
 - BR-064 network maximum and Hall override settings screens/writers, plus the
   read-only effective-limit resolver.
-- Starter WooCommerce Product/Bingo Play Product copy logic owned by Catalog
-  when that deferred mechanism exists; ADR-042 MVP runs no starter copy.
-  Game Types instead synchronize under ADR-035.
+- The ADR-049 starter catalog and the Hall's one-time starter product import
+  (ordinary WooCommerce products only; no Bingo Play Products), owned by
+  Catalog (approved; not implemented). Game Types instead synchronize under
+  ADR-035.
 - Current per-site Catalog migration/version state:
   `bc_catalog_db_version = 6`, recorded only after all five Catalog schemas
   verify. Existing/new Halls use the same `dbDelta()` path, network catch-up and
@@ -1320,9 +1321,9 @@ Owns:
 - Under ADR-042: actual WordPress Multisite site creation, WooCommerce/site
   initialization, triggering existing per-site BingoCommerce migrations and
   role provisioning, and returning a structured setup result to
-  `bingocommerce-portal-integration`. The ADR-042 MVP does not trigger starter
-  Product/Bingo Play Product copy; that Catalog-owned mechanism remains
-  separately deferred. Game Type synchronization follows ADR-035.
+  `bingocommerce-portal-integration`. Provisioning never copies starter
+  products; under ADR-049 (approved; not implemented) a Hall Manager may import
+  them once later through Catalog. Game Type synchronization follows ADR-035.
 
 ### `bingocommerce-portal-integration`
 
@@ -1374,9 +1375,10 @@ artifact. It and the BingoCommerce-side machine provisioning path are
 implemented and tested. The Portal Global Admin Enable/Suspend/Re-enable/Retry
 controls are implemented and tested. A user-performed local-development Open
 Store → Suspend → Re-enable workflow passed against one mapped WordPress
-multisite test site, and re-enable reused the same site. Starter Product / Play Product copy remains
-separately deferred for the ADR-042 MVP empty-store scope (narrowing ADR-027 /
-BR-047).
+multisite test site, and re-enable reused the same site. Starter products are
+not part of provisioning: ADR-049 (approved; not implemented) replaces the
+deferred copy with an optional one-time import that the Hall starts (narrowing
+ADR-027; BR-086 amends BR-047).
 
 - Entitlement/ticket table names, columns, or indexes.
 - QR payload or implementation.

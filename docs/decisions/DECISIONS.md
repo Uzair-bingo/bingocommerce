@@ -6763,6 +6763,30 @@ by construction, never deleted by anything.
   On approval it amends ADR-012 (v1 exception), BR-075, ADR-035, ADR-042 point
   11, ADR-025, BR-033 and BR-035 as stated in its section 14. Until approved,
   every earlier decision stands unchanged.
+- **ADR-049 — [2026-10-19] — Starter product catalog and one-time Hall import
+  (APPROVED 2026-10-19; not implemented):**
+
+  Full record: [`adr-049-starter-product-import.md`](adr-049-starter-product-import.md).
+  Business rules: BR-086. Decisions confirmed by the user in discussion
+  (2026-10-17 to 2026-10-19); the written record was approved by the user on
+  2026-10-19. Summary: Bingo Innovation's master starter
+  catalog lives on the network main site and is published by a Network Super
+  Admin as numbered versions that never change, each with its own frozen image
+  copies; a Hall Manager may optionally import the latest published version
+  once, from Products → Starter Products, as Hall-owned drafts, in small
+  resumable requests on the Hall's own site with Continue and Retry; a Super
+  Admin Resolve (no "create" action) settles the rare cases the importer cannot
+  decide. Simple and variable products are supported; variable products use
+  product-level attributes only, and global attributes are out of v1. No Play
+  Products, Packages, add-ons, Game Types, Sessions, downloads, shipping data,
+  sale prices or product links are imported. All logic is owned by
+  `bingocommerce-catalog`, with six new tables whose schema versions are kept
+  separate from Enable, readiness and the Catalog schema.
+  It amends BR-047 (through BR-086), narrows ADR-027, replaces ADR-026's line
+  that the platform plugin triggers the starter copy during provisioning,
+  records a narrow exception to the multisite provisioning contract in
+  `plugin-architecture.md` section 3, and leaves ADR-042 unchanged, as stated
+  in its section 18.
 
 ---
 
@@ -8615,6 +8639,38 @@ delete_users.
   password; `portal_sso`), the narrow SSO grant in ADR-048 §14, and one narrow exception to
   BR-033 / BR-035 §3: Hall Managers cannot remove or change an SSO account
   ("Managed by Portal"). BR-034 and BR-036 apply unchanged.
+
+- **BR-086 — [2026-10-19] — Optional One-Time Starter Product Import (APPROVED
+  2026-10-19; not implemented; amends and narrows BR-047; design: ADR-049):**
+
+  1. Bingo Innovation keeps one master starter catalog on the network main
+     site. Only Network Super Admins choose the included products and publish
+     them. Each publish creates a numbered version that never changes
+     afterwards.
+  2. Portal Enable still creates an empty store (ADR-042 unchanged).
+     Provisioning never copies starter products.
+  3. A Hall Manager may import the latest published version once, from
+     Products → Starter Products. It is optional and open to new, existing and
+     legacy Halls. There is no repeat import, reset, selective import or later
+     sync.
+  4. Every imported product is a Hall-owned draft. Master changes never alter
+     an imported product. The Hall may edit, publish or delete its copies.
+  5. Only ordinary WooCommerce simple and variable products are imported.
+     Variable products may use product-level attributes only. Bingo Play
+     Products, Packages, add-ons, Game Types, Sessions, downloads, shipping
+     data, sale prices and product links are never imported. Hall Managers
+     create Play Products themselves.
+  6. Imported products are never merged with existing Hall products. An SKU
+     the Hall already uses is left blank on the copy and reported.
+  7. An interrupted import continues where it stopped and never creates a
+     duplicate. A case the importer cannot decide safely is settled by a
+     Super Admin.
+
+  Relationship to prior rules: amends and narrows BR-047. It removes starter
+  Bingo Play Products and Game Types (Game Types were already superseded by
+  ADR-035) and replaces "copy at provisioning" with an optional import the Hall
+  starts. BR-047's Hall-ownership and no-live-sync rules stay. ADR-042 point 7
+  is unchanged.
 
 ## Still Open / TBD Items (Unresolved)
 

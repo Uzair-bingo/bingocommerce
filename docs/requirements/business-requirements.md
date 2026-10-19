@@ -578,19 +578,29 @@ Production deployment is not claimed. Identity/role mapping is defined in
   the Bingo Package's digital entitlement. Refund handling is separate from Android
   redemption-limit enforcement. (BR-046, amends and narrows BR-011)
 
-## Starter Catalog
-- At hall provisioning, Bingo Innovation's starter WooCommerce products, starter
-  Bingo Play Products, and their WooCommerce commerce shells remain a one-time,
-  hall-owned copy. The Game Type portion of that older model is superseded: Portal
-  Game Types are synchronized hall-scoped replicas keyed across systems by Portal
-  `game_types.id`, not independently editable one-time master copies. Existing local
-  Game Type behavior remains transitional until synchronization is proven. (BR-047,
-  BR-072; ADR-027/ADR-035)
-- The unaffected starter-copy rules remain in force: a Hall may edit, delete, and
-  publish its WooCommerce product copies according to the existing approved
-  rules; a Hall may create additional Bingo Play Products; and a Hall may create
-  Packages. The Portal authority change supersedes only the former Game Type
-  starter-copy model. (BR-047, ADR-035)
+## Starter Products (BR-086 / ADR-049; approved, not implemented)
+- Bingo Innovation keeps one master starter catalog on the network main site.
+  Only Network Super Admins choose the included products and publish them; each
+  publish creates a numbered version that never changes afterwards. (BR-086,
+  ADR-049)
+- Portal Enable still creates an empty store, and provisioning never copies
+  starter products. A Hall Manager may import the latest published version once,
+  from Products → Starter Products. The import is optional and open to new,
+  existing and legacy Halls; there is no repeat import, reset, selective import
+  or later sync. (BR-086, ADR-042, ADR-049)
+- Imported products are Hall-owned drafts of ordinary WooCommerce simple or
+  variable products; variable products may use product-level attributes only.
+  Bingo Play Products, Packages, add-ons, Game Types, Sessions, downloads,
+  shipping data, sale prices and product links are never imported; Hall
+  Managers create Play Products themselves. Master changes never alter an
+  imported product, and the Hall may edit, publish or delete its copies.
+  Imported products are never merged with existing Hall products; an SKU the
+  Hall already uses is left blank on the copy and reported. (BR-086, amends and
+  narrows BR-047)
+- Game Types are never part of starter products. Portal Game Types are
+  synchronized hall-scoped replicas keyed across systems by Portal
+  `game_types.id`; existing local Game Type behavior remains transitional until
+  synchronization is proven. (BR-072; ADR-035)
 
 ## Portal Integration (approved increments implemented; not deployed)
 - Within the single authoritative Bingo Innovation Portal environment,
