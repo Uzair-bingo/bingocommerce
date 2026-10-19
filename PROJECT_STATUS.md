@@ -6085,3 +6085,61 @@ Portal request was performed.
   writer-guard notice while deleting their disposable sites; it comes from the
   existing guard, not from this slice.
 - Not committed by Claude; no push or deployment.
+
+
+### 2026-10-19 — ADR-049 stage 3, slice 3.2: starter import engine for simple products
+
+- Added to the Catalog plugin: `StarterCatalogVersions` (reads published
+  versions from the network tables, never switching to the main site),
+  `StarterImportRepository` (the Hall's receipt and item rows) and
+  `StarterImporter` (`start()`, `process_next()`, `state()`), loaded from
+  `bingocommerce-catalog.php`. Still no hook, page or caller: no Hall's
+  behaviour changes until stage 5.
+- `start()` follows ADR-049 section 9: signed-in user with
+  `bc_manage_products` or Super Admin, a Hall site, guarded read-only Hall
+  access check, Hall import lock, importer schema, existing history (a start
+  marker without a receipt needs repair), the imports switch, the latest
+  published version, currency, "prices include tax" and every required tax
+  class. Only then are the start marker and the receipt written. The imports
+  switch is the network option `bc_starter_catalog_allow_imports`, off until it
+  is set to `1` (its admin control comes in stage 4).
+- `process_next()` copies one product at a time within a time budget: claim
+  with a recovery slug, "creation starting", minimal draft whose first slug is
+  the recovery slug, product ID saved at once, fields/categories/tags applied,
+  decisions saved, text and structured fields verified, normal slug set, item
+  completed. ADR-049 retry rules apply; "creation started but no product ID
+  saved" becomes Needs attention and is never guessed. Writes no BingoCommerce
+  data. A test-only `bingocommerce_starter_import_checkpoint` action fires
+  after each durable step; nothing in production listens to it.
+- Slice 3.2 copies simple products without images. A variable product or a
+  product with images stops the import with "not supported yet"; slice 3.3
+  adds both, together with the Start check for estimated image storage.
+- New harness `tests/starter-import-recovery.php` with worker
+  `tests/starter-import-recovery-worker.php`, which crashes at a chosen step.
+  Review fixes before commit: a failed product read is now an error, never
+  "removed" (only a confirmed missing row skips); finishing an unfinished
+  draft clears any sale price and sale dates added meanwhile; the receipt's
+  error fields are cleared on resume and on Needs attention, and a failure
+  always records its item (or none). Each fix has a test, and putting each
+  bug back makes its test fail.
+  Verification PASS against the guarded `bingocommerce_state_recon` fixture:
+  **245 assertions, zero failures**. Covered: every
+  Start refusal leaving no receipt, marker or product; full imports as a Hall
+  Manager and as a Super Admin (drafts, exact prices including blank and
+  `5.50`, tracked/untracked stock, tax class by slug, SKU conflict note,
+  existing category kept with a note, disallowed HTML removed only for the
+  Hall Manager, one level of backslashes removed, no Bingo data, no repeat
+  import, completed products never touched again); a crash at each of 10
+  steps (7 finish with exactly two products, 3 become Needs attention with
+  nothing new created) and right after the start marker (repair needed); the
+  retry rules for a trashed, deleted, published, linked, edited and
+  sale-priced unfinished product; a failed product read followed by a Retry
+  that finishes the same product; receipt error fields across item failure,
+  store-level failure, resume and Needs attention; text failures from a
+  rewriting hook, a failed write and a name that cleans to empty; one audit
+  event per transition; another Hall and the persistent fixture Halls
+  byte-identical.
+- Regression on the same fixture: `tests/starter-import-schema.php` 118
+  passed, `tests/package-addons-schema.php` 196 passed,
+  `tests/customer-cart-increment-1.php` 140 passed, all with zero failures.
+- Not committed by Claude; no push or deployment.
