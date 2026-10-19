@@ -6047,5 +6047,41 @@ Portal request was performed.
   uses. The production main site, the full starter catalog, production storage
   and image timing remain release checks.
 - Documentation only, on branch `starterImport` (created from
-  `ssoImplementation`). No code, tests, migrations or database changes. Not
-  staged or committed; no push or deployment.
+  `ssoImplementation`). No code, tests, migrations or database changes.
+  Committed on `starterImport`; no push or deployment.
+
+
+### 2026-10-19 — ADR-049 stage 3, slice 3.1: starter import storage and locks
+
+- Added `StarterImportMigrations` (Catalog plugin): three network tables
+  (`bingo_starter_catalog_versions`, `_version_products`, `_version_images`)
+  and three Hall tables (`bingo_starter_import`, `_import_products`,
+  `_import_images`), with their own version options
+  (`bc_starter_catalog_network_db_version`, `bc_starter_import_db_version`),
+  separate from Catalog v6 and readiness. Tables are created only when a
+  caller asks (`ensure_network()`, `ensure_current_hall()`); nothing runs
+  during site creation, Enable or `admin_init`. A current schema with a
+  missing or malformed table is reported for repair and never recreated.
+  The main site is refused as a Hall.
+- Added `StarterImportLock`: one GET_LOCK import lock per Hall and one network
+  publish lock, taken with a zero timeout, with installation-specific names
+  separate from the Portal locks.
+- `bingocommerce-catalog.php` loads both classes. No hook, menu, page or
+  background job was added, and no existing code calls the new classes yet,
+  so no Hall's behaviour changes.
+- New harness `tests/starter-import-schema.php` with worker
+  `tests/starter-import-lock-worker.php`. Verification PASS against the
+  guarded `bingocommerce_state_recon` fixture: **118 assertions, zero
+  failures**. Covered: creation, idempotent reruns, failure
+  injection leaving no version option, repair cases (missing table, missing
+  unique key) never recreating tables, one receipt per Hall enforced by the
+  database, Catalog v6 unchanged, readiness unchanged (the suite requires a
+  structured readiness result with checks both before and after, so an
+  identical refusal cannot pass as "unchanged"), Hall B and the persistent
+  fixture Halls byte-identical, main-site refusal, and the locks (second
+  connection refused, other Halls unblocked, publish lock separate, a dead
+  worker frees its lock). Regression: `tests/package-addons-schema.php` PASS,
+  196 assertions, zero failures. Both suites print the existing Hall Staff
+  writer-guard notice while deleting their disposable sites; it comes from the
+  existing guard, not from this slice.
+- Not committed by Claude; no push or deployment.

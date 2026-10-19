@@ -25,6 +25,8 @@ require_once BINGOCOMMERCE_CATALOG_PATH . 'src/CatalogPackagePlan.php';
 require_once BINGOCOMMERCE_CATALOG_PATH . 'src/CatalogPackageAddonPlan.php';
 require_once BINGOCOMMERCE_CATALOG_PATH . 'src/CatalogWriteOutcome.php';
 require_once BINGOCOMMERCE_CATALOG_PATH . 'src/Migrations.php';
+require_once BINGOCOMMERCE_CATALOG_PATH . 'src/StarterImportMigrations.php';
+require_once BINGOCOMMERCE_CATALOG_PATH . 'src/StarterImportLock.php';
 require_once BINGOCOMMERCE_CATALOG_PATH . 'src/CatalogTransactionTransport.php';
 require_once BINGOCOMMERCE_CATALOG_PATH . 'src/GameTypeService.php';
 require_once BINGOCOMMERCE_CATALOG_PATH . 'src/BingoPlayProductService.php';
