@@ -748,6 +748,19 @@ Still to confirm (release checks):
 - that random recovery identifiers on enabled or disabled variations never
   collide (a collision fails safely to Skip).
 
+Answered in stage 6 (2026-10-20, isolated fixture, not production):
+
+- WooCommerce's attribute lookup table indexes global attributes only
+  (`LookupDataStore::get_attribute_taxonomies()` skips product-level ones), so
+  the starter products' product-level attributes, such as Color, are not in it.
+  Only attribute filter widgets are affected; the product pages and variation
+  choices work as usual.
+- Image processing measured locally with GD and nine image sizes: 28 test
+  images shaped like the real samples (2000 x 2000 PNG, 6.1 MB in all) took a
+  median of 0.30 s each (slowest 0.35 s); every request ended within the 5 s
+  budget plus one image. Production's image library and timing remain a
+  release check.
+
 ## 21. Order of work
 
 | Stage | Work | Done when |

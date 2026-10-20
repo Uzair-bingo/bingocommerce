@@ -6728,3 +6728,63 @@ Portal request was performed.
   the same time, larger catalogs and image timing), then the dev-network
   browser pass.
 - Not committed by Claude; no push or deployment.
+
+### 2026-10-20 — ADR-049 stage 6, slice 6.2: legacy Hall, two Halls at once, larger catalogs and image timing
+
+- New harness `tests/starter-import-scale.php` on the guarded
+  `bingocommerce_state_recon` fixture. Tests only; no production code
+  changed.
+- Legacy Hall: before importing, the Hall already has a published product
+  using SKU `S0101BSP9`, a published variable product, a "Bingo Sets"
+  category under another parent, a Bingo Play Product, a Package and media.
+  After the import, every existing post row, metadata row, term (counts
+  aside), relationship, Catalog row (Play Products, Packages, components,
+  Game Types) and upload file is byte-identical; the SKU conflict and the
+  existing category are noted, and the imported product uses that existing
+  category. The Shop (WooCommerce's main product query with `ShopListing`)
+  lists the Hall's own merchandise but not its Play Product or Package,
+  before and after; an imported Draft is not listed; once the Manager
+  publishes it, it is listed, can be bought at its price, and the cart's
+  add-item guard accepts it, while a Package added outside the Session
+  purchase step is still refused.
+- Two Halls importing at the same time in separate processes: both finish,
+  their saved working periods overlap (2 s in the run), and each Hall ends
+  with exactly its own 4 products, 6 variations, 6 images and files in its
+  own uploads, import records that point only to its own products, and
+  exactly its own started and completed audit events.
+- A second request on the same Hall (another process) while the first holds
+  the Hall lock gets "already running" and changes nothing; the import then
+  finishes with no duplicates.
+- Larger catalogs through the page's own request loop: 24 products (6
+  variable, 18 variations, 6 images) and 100 products (10 variable, 20
+  variations, 10 images) import with exact counts, every product slug
+  distinct and no duplicates; every request ends within the 5 s budget plus
+  one unit of work (24 products: longest request 0.9 s; 100 products: 2.9
+  s).
+- Image timing (local, GD, synthetic; a measurement, not a production
+  figure): 28 images shaped like the real samples (2000 x 2000 PNG, 0.14 to
+  1.28 MB, 6.1 MB in all; the real ones are 6.3 MB, largest 1.34 MB), nine
+  image sizes (WordPress's six and WooCommerce's three): median 0.30 s per
+  image (copy, media record and sizes), slowest 0.35 s, 8.4 s in all; three
+  requests, the longest 5.0 to 5.3 s, so each ended within the budget plus
+  one image. Production's image library and timing remain a release check.
+- ADR-049 section 20 open check answered: WooCommerce's attribute lookup
+  table indexes global attributes only (`LookupDataStore::get_attribute_taxonomies()`
+  skips product-level ones); a control product with a global attribute is
+  indexed and the imported Color is not. Only attribute filter widgets are
+  affected. ADR-049 section 20 records both answers.
+- Test-fixture note: WooCommerce's shared lookup objects keep the table name
+  of the site they were first built on, so a disposable test Hall made with
+  `WC_Install::create_tables()` from the main site gets no lookup table of
+  its own; the suite creates it from WooCommerce's own definition before the
+  check. Halls created by the real Enable path do have their own table:
+  `SetupReadiness` checks each Hall's `wc_product_attributes_lookup` directly
+  for this known quirk, and slice 6.1's provisioned Halls passed it.
+- Verification PASS, run twice: **62 assertions, zero failures**. Four
+  mutations (the Shop not leaving out Bingo products, the importer
+  rewriting an existing category, the importer ignoring its time budget,
+  and one shared import lock for all Halls) each make tests fail; the
+  sources were restored byte-identical.
+- Next: slice 6.3, the dev-network browser pass and the full regression
+  sweep.
+- Not committed by Claude; no push or deployment.

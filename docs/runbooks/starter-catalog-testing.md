@@ -136,6 +136,13 @@ BC_TEST_DB=bingocommerce_state_recon php tests/starter-import-notice.php
 BC_TEST_DB=bingocommerce_state_recon php tests/starter-import-resolve.php
 ```
 
+```bash
+BC_TEST_DB=bingocommerce_state_recon php tests/starter-import-scale.php
+```
+
+The scale suite also prints `TIMING` lines (per image and per request) for the
+record; they are measurements, not pass or fail.
+
 The new-Hall and suspension suite runs on the provisioning fixture, because it
 creates Halls through the real Enable Ecommerce path:
 
