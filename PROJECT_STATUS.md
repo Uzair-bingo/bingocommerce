@@ -6682,3 +6682,49 @@ Portal request was performed.
   Resolve) is complete in code. Next: stage 6, integration and browser
   verification on the development network.
 - Not committed by Claude; no push or deployment.
+
+### 2026-10-20 — ADR-049 stage 6, slice 6.1: a new Hall and a real suspension
+
+- New harness `tests/starter-import-integration.php`, run on the
+  `bingocommerce_state_provisioning` fixture because it creates Halls
+  through the real ADR-042 Enable Ecommerce path (the machine REST route
+  with Application Password proof, the orchestrator, the platform filter,
+  the Portal pull with only the snapshot answered by the fixture, readiness
+  and Commerce state). Tests only; no production code changed.
+- Proven on Halls created that way:
+  - Enable creates no starter import tables or schema version, and still
+    gives a ready, allowed store while another Hall's import storage is
+    broken (that Hall's page reports the problem; its readiness is
+    unaffected);
+  - the new Hall's dashboard offers the starter products; its Hall Manager
+    imports them through the page's own admin-ajax handler to completion:
+    two Draft products, three variations and four images, each image file
+    once in the new Hall's uploads, no Play Product or Package rows; the
+    notice then goes; readiness and access are unchanged;
+  - a Portal SSO Hall Manager account (`portal-starter6-4101`), created by
+    the real SSO provisioning service, is a Hall Manager and not a Super
+    Admin, sees the notice and imports to completion the same way;
+  - Disable Ecommerce part-way through an import: the page says "This Hall
+    is not open right now, so importing is paused.", and Start, Continue and
+    Resolve are refused, for the Hall Manager and a Super Admin alike; the
+    notice is hidden; nothing in the store or the import changes. Re-enable
+    reuses the same site, the page offers Continue Import, and Continue
+    finishes with no duplicate product, variation, image or file.
+- Verification PASS, run twice: **54 assertions, zero failures**. The
+  fixture is left exactly as found (its seeded sites, network tables and
+  network settings are compared before and after; only pre-existing
+  WooCommerce sessions remain), proven by `tests/portal-provisioning-endpoint.php`
+  (50361/50361) and `tests/platform-hall-site-provisioning.php` (504/504)
+  passing after it; both refuse to run on a fixture left with extra sites
+  or schema. Three mutations (the importer or the notice ignoring a
+  suspended Hall, and Enable creating starter tables) each make tests fail;
+  the sources were restored byte-identical.
+- Observation outside the starter import (not changed here): on Re-enable,
+  the platform provisioner runs WooCommerce's installer again
+  (`HallSiteProvisioner.php:642`), which adds a second
+  `woocommerce-placeholder` image to the Hall's media. A Hall that was never
+  re-enabled has one. The suite counts only the import's own media.
+- Next: slice 6.2 (a legacy Hall with existing data, two Halls importing at
+  the same time, larger catalogs and image timing), then the dev-network
+  browser pass.
+- Not committed by Claude; no push or deployment.

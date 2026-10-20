@@ -135,3 +135,10 @@ BC_TEST_DB=bingocommerce_state_recon php tests/starter-import-notice.php
 ```bash
 BC_TEST_DB=bingocommerce_state_recon php tests/starter-import-resolve.php
 ```
+
+The new-Hall and suspension suite runs on the provisioning fixture, because it
+creates Halls through the real Enable Ecommerce path:
+
+```bash
+BC_TEST_DB=bingocommerce_state_provisioning php tests/starter-import-integration.php
+```
