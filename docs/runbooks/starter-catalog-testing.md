@@ -1,4 +1,4 @@
-# Starter catalog: manual test checklist (Publish side)
+# Starter catalog: manual test checklist
 
 Date: 2026-10-20. This describes how to check ADR-049 stage 4 (master
 selection and Publish) in a browser on the local development network. It is
@@ -9,9 +9,10 @@ not a deployment or production-readiness claim.
 - Covered here: the "Include in starter catalog" checkbox, Network Admin →
   Starter Catalog, Publish New Version, Resume, Discard, Finish Discard and the
   "New Hall imports" switch.
-- Not yet testable in the browser: importing into a Hall. The Hall's
-  Products → Starter Products page arrives in stage 5. Until then, turning new
-  Hall imports on has no visible effect; leave it **Off**.
+- Hall side (stage 5): Products → Starter Products is covered below. The
+  dashboard notice and Super Admin Resolve arrive in later slices.
+- Importing creates real draft products in the Hall you test with. Use a
+  development Hall you can tidy up afterwards.
 - Published versions are kept in v1 and cannot be deleted. A version you
   publish while testing stays on the development network. Its frozen image
   copies stay in `wp-content/uploads/bingo-starter-catalog/v<version>/` (or the
@@ -55,6 +56,23 @@ If a Discard is interrupted, the page shows "Version N was discarded, but some
 of its rows or image files remain." with **Finish Discard**. Selecting it
 completes the cleanup and can be repeated safely.
 
+## Hall side: Products → Starter Products
+
+Do this after a version is published (step 8 above).
+
+| # | Do this | Expect this |
+|---|---|---|
+| H1 | With new Hall imports **Off**, sign in to a development Hall as its Hall Manager and open **Products → Starter Products**. | "Starter product imports are turned off right now." and "You can still add products by hand." No Import button. |
+| H2 | In Network Admin → Starter Catalog, select **Turn on new Hall imports**, then reload the Hall's page. | "2 starter products are available." and **Import Starter Products**. |
+| H3 | Select **Import Starter Products**. | Progress such as "Importing product 1 of 2 (variation 3 of 15).", then "Import finished on MM/DD/YYYY: 2 products imported, 0 skipped." |
+| H4 | Select **Reload this page**. | The finish line, any notes (at Star Bingo Hall: the 1on Blue variation's SKU `S0101BSP9` was left blank), and **View Products**, which lists the new drafts. No Import button. |
+| H5 | On a second development Hall, open the page, open the browser's developer tools → Network, select **Import Starter Products**, and switch to **Offline** once the second request has finished (the first only records the import; the next ones copy products). | "The request did not complete. Reload the page and try again." and **Continue Import**. |
+| H6 | While still stopped, open the product that was being imported (Products → Drafts; the one whose variations or images are incomplete). If the stop came between products, none is unfinished; repeat H5 with a slightly earlier stop. | "This product is still being imported. Changes may be replaced." Products already finished, and products the import did not make, show no warning. |
+| H7 | Switch back **Online** and select **Continue Import**. | The import finishes; reloading shows the finish line. |
+| H8 | As a Game Operator of that Hall, open Products. | No Starter Products item. |
+| H9 | As a Super Admin on the **main site**, open Products. | No Starter Products item. |
+| H10 | Turn new Hall imports **Off** again when you are done. | |
+
 ## Automated suites
 
 Run each from the repository root. They refuse to run unless the isolated
@@ -70,4 +88,8 @@ BC_TEST_DB=bingocommerce_state_recon php tests/starter-catalog-publish.php
 
 ```bash
 BC_TEST_DB=bingocommerce_state_recon php tests/starter-catalog-admin.php
+```
+
+```bash
+BC_TEST_DB=bingocommerce_state_recon php tests/starter-import-page.php
 ```

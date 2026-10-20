@@ -342,6 +342,153 @@ final class StarterImportRepository {
 	}
 
 	/* ------------------------------------------------------------------ *
+	 * Reads for the Starter Products page
+	 * ------------------------------------------------------------------ */
+
+	/**
+	 * Where the import is: the next unfinished product in selection order and,
+	 * for a variable product, which of its variations comes next.
+	 *
+	 * @return array{position:int,total:int,variation:int,variations:int}|null|\WP_Error Null when no product is left.
+	 */
+	public static function progress( int $import_id, int $version_id ) {
+		global $wpdb;
+
+		$next = self::next_pending_top_level( $import_id, $version_id );
+		if ( is_wp_error( $next ) || null === $next ) {
+			return $next;
+		}
+		$total = StarterCatalogVersions::count_top_level_products( $version_id );
+		if ( is_wp_error( $total ) ) {
+			return $total;
+		}
+
+		$variation  = 0;
+		$variations = 0;
+		if ( 'variable' === $next['product_type'] ) {
+			$variations = $wpdb->get_var(
+				$wpdb->prepare( 'SELECT COUNT(*) FROM %i WHERE version_id = %d AND parent_source_id = %d', StarterImportMigrations::version_products_table(), $version_id, (int) $next['source_product_id'] )
+			);
+			if ( null === $variations || '' !== (string) $wpdb->last_error ) {
+				return self::db_error();
+			}
+			$variations = (int) $variations;
+
+			$done = 0;
+			if ( null !== $next['item_id'] ) {
+				$done = $wpdb->get_var(
+					$wpdb->prepare(
+						'SELECT COUNT(*) FROM %i WHERE import_id = %d AND parent_item_id = %d AND status IN ( %s, %s )',
+						StarterImportMigrations::import_products_table(),
+						$import_id,
+						(int) $next['item_id'],
+						self::ITEM_COMPLETE,
+						self::ITEM_SKIPPED
+					)
+				);
+				if ( null === $done || '' !== (string) $wpdb->last_error ) {
+					return self::db_error();
+				}
+			}
+			$variation = min( (int) $done + 1, $variations );
+		}
+
+		return [
+			'position'   => (int) $next['position'],
+			'total'      => (int) $total,
+			'variation'  => $variation,
+			'variations' => $variations,
+		];
+	}
+
+	/**
+	 * Every item of the import with a readable label ("Dab O Ink", or
+	 * "Dab O Ink, variation Blue"), its saved note and its group (the
+	 * product's item ID, shared by its variations), in selection order with
+	 * each variation after its product.
+	 *
+	 * @return array<int,array{item_id:int,group:int,label:string,note:string}>|\WP_Error
+	 */
+	public static function labelled_items( int $import_id ) {
+		global $wpdb;
+
+		$rows = $wpdb->get_results(
+			$wpdb->prepare(
+				'SELECT i.item_id, i.parent_item_id, i.note, vp.data, vp.position FROM %i i INNER JOIN %i vp ON vp.version_product_id = i.version_product_id WHERE i.import_id = %d ORDER BY vp.position ASC, i.item_id ASC',
+				StarterImportMigrations::import_products_table(),
+				StarterImportMigrations::version_products_table(),
+				$import_id
+			),
+			ARRAY_A
+		);
+		if ( ! is_array( $rows ) || '' !== (string) $wpdb->last_error ) {
+			return self::db_error();
+		}
+
+		$data     = [];
+		$position = [];
+		foreach ( $rows as $row ) {
+			$decoded                           = json_decode( (string) $row['data'], true );
+			$data[ (int) $row['item_id'] ]     = is_array( $decoded ) ? $decoded : [];
+			$position[ (int) $row['item_id'] ] = (int) $row['position'];
+		}
+
+		$items = [];
+		foreach ( $rows as $row ) {
+			$id     = (int) $row['item_id'];
+			$parent = null !== $row['parent_item_id'] ? (int) $row['parent_item_id'] : null;
+			if ( null === $parent ) {
+				$label = (string) ( $data[ $id ]['name'] ?? '' );
+				$order = [ $position[ $id ], 0 ];
+			} else {
+				$values = array_filter( array_map( 'strval', (array) ( $data[ $id ]['attributes'] ?? [] ) ), static fn( string $value ): bool => '' !== $value );
+				/* translators: 1: product name, 2: variation attribute values. */
+				$label = sprintf( __( '%1$s, variation %2$s', 'bingocommerce-catalog' ), (string) ( $data[ $parent ]['name'] ?? '' ), [] !== $values ? implode( ' / ', $values ) : __( 'Any', 'bingocommerce-catalog' ) );
+				$order = [ $position[ $parent ] ?? 0, $position[ $id ] ];
+			}
+			$items[] = [
+				'item_id' => $id,
+				'group'   => $parent ?? $id,
+				'label'   => $label,
+				'note'    => (string) ( $row['note'] ?? '' ),
+				'order'   => $order,
+			];
+		}
+		// Each variation directly after its product.
+		usort( $items, static fn( array $a, array $b ): int => $a['order'] <=> $b['order'] ?: $a['item_id'] <=> $b['item_id'] );
+
+		return array_map(
+			static fn( array $item ): array => [ 'item_id' => $item['item_id'], 'group' => $item['group'], 'label' => $item['label'], 'note' => $item['note'] ],
+			$items
+		);
+	}
+
+	/**
+	 * Is this product one the import has not finished? Used for the "still
+	 * being imported" warning on its edit screen.
+	 *
+	 * @return bool|\WP_Error
+	 */
+	public static function is_unfinished_product( int $wc_product_id ) {
+		global $wpdb;
+
+		$found = $wpdb->get_var(
+			$wpdb->prepare(
+				'SELECT 1 FROM %i WHERE wc_product_id = %d AND status NOT IN ( %s, %s ) LIMIT 1',
+				StarterImportMigrations::import_products_table(),
+				$wc_product_id,
+				self::ITEM_COMPLETE,
+				self::ITEM_SKIPPED
+			)
+		);
+		if ( '' !== (string) $wpdb->last_error ) {
+			return self::db_error();
+		}
+
+		return null !== $found;
+	}
+
+	/* ------------------------------------------------------------------ *
 	 * Internals
 	 * ------------------------------------------------------------------ */
 

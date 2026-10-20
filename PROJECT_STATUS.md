@@ -6448,3 +6448,82 @@ Portal request was performed.
   checklist in the runbook is still to be run. Next is stage 5: the Hall's
   Starter Products page, the dashboard notice and Resolve.
 - Not committed by Claude; no push or deployment.
+
+### 2026-10-20 — ADR-049 stage 5, slice 5.1: the Hall's Starter Products page
+
+- Stage 5 decisions agreed with the user: the dashboard notice (5.2) also
+  reminds about an import that started but did not finish; after a reload a
+  failed import shows a plain message mapped from its saved error code (no
+  schema change); after a successful Resolve (5.3) the page continues the
+  import automatically.
+- New `StarterImportAdmin`: **Products → Starter Products** on Hall sites
+  only, for Hall Managers (`bc_manage_products`) and Super Admins; never on
+  the main site; a Game Operator has no page. Opening it creates or upgrades
+  the Hall's import tables. It shows ADR-049 section 8's states from the
+  saved receipt: unavailable with the exact reason (nothing published, new
+  imports off, import history missing, Hall access blocked or suspended —
+  paused for Super Admins too — or store not ready) and "You can still add
+  products by hand."; not started ("2 starter products are available.",
+  **Import Starter Products**); importing ("Importing product 1 of 2
+  (variation 2 of 3).", counts, **Continue Import**); failed (a plain message
+  for each of the importer's saved error codes and the affected product,
+  **Retry Remaining Products**); needs attention (a support reference
+  `SI-<Hall>-<import>-<item>`; Resolve arrives in 5.3); complete ("Import
+  finished on MM/DD/YYYY: …", every note labelled with its product or
+  variation, **View Products**). Buttons start disabled and are enabled by
+  the script; the page prints the same page-scoped `[hidden]` rule as the
+  Starter Catalog page.
+- One admin-ajax action, `bc_starter_import` (signed-in users only), runs
+  `start` or `continue`. Every request re-checks POST, the user's rights, a
+  Hall site, its own per-Hall nonce, the fields and the step; the importer
+  then checks Hall access and takes the Hall lock. Only status and the
+  server-written text are returned; a failed step also returns the receipt's
+  status so the page offers Retry.
+- New `assets/starter-import-admin.js` (this page only): one request at a
+  time, continues while importing, shows the server's text as text, offers
+  Continue or Retry after a failed request.
+- An unfinished imported product's edit screen shows "This product is still
+  being imported. Changes may be replaced." (one indexed lookup); finished
+  and unrelated products show nothing. The page carries the same warning
+  while an import is unfinished.
+- New `StarterImportRepository` reads: progress (current product and
+  variation), labelled items with notes and their product group, and the
+  unfinished-product check.
+- Review fixes (2026-10-20): a Start that finds an already-failed import
+  (for example from a second tab) now gets the saved failure message and
+  affected product, and the page offers Retry Remaining Products; an error
+  whose receipt is Complete or Needs attention hides every import button and
+  offers Reload; completion notes show one bullet per saved line, and within
+  a product and its variations an identical line is shown once (the importer
+  copies a skipped product's note to its unfinished variations and adds a
+  skipped variation's note to its product), while distinct lines such as a
+  variation SKU conflict, and other products' identical lines, all stay.
+  Display only: saved notes and the importer are unchanged.
+- Runbook `docs/runbooks/starter-catalog-testing.md` gains a Hall-side
+  checklist (H1–H10).
+- New harness `tests/starter-import-page.php`. Verification PASS against the
+  guarded `bingocommerce_state_recon` fixture, run twice: **65 assertions,
+  zero failures** each time. The blocked-Hall case marks the disposable Hall
+  as Portal-managed with no readable Commerce state, the same
+  `HallCommerceAccess::is_blocked()` path a suspended Hall takes (this
+  fixture database has no Portal provisioning tables). The notes cases are
+  produced by the real importer with the crash worker (a deleted variation,
+  a trashed product, SKU conflicts and an existing category under another
+  parent). Putting back twenty protections (fifteen original, five review
+  fixes) makes their tests fail. The page and script were also
+  exercised in the built-in browser with the installed WordPress CSS and the
+  real rendered markup (no development data touched): each state shows only
+  its button; import to completion, a failed Continue offering Retry, a
+  refused Start keeping Import, ending in needs attention, and server text
+  containing HTML shown as text; after review, a Start answered with a saved
+  failure (Retry offered, Import hidden, Reload shown) and errors reporting
+  Complete or Needs attention (no import button, Reload shown).
+- Regression on the same fixture: `tests/starter-catalog-admin.php` 51,
+  `tests/starter-catalog-master.php` 121, `tests/starter-catalog-publish.php`
+  156, `tests/starter-import-media.php` 288,
+  `tests/starter-import-recovery.php` 245, `tests/starter-import-schema.php`
+  118, `tests/package-addons-schema.php` 196,
+  `tests/customer-cart-increment-1.php` 140 and
+  `tests/customer-electronic-limits.php` 679, all with zero failures.
+- Next: slice 5.2, the dashboard notice.
+- Not committed by Claude; no push or deployment.
