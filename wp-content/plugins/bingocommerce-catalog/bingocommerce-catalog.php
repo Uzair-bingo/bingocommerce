@@ -36,6 +36,7 @@ require_once BINGOCOMMERCE_CATALOG_PATH . 'src/StarterCatalogChecks.php';
 require_once BINGOCOMMERCE_CATALOG_PATH . 'src/StarterCatalogPublisher.php';
 require_once BINGOCOMMERCE_CATALOG_PATH . 'src/StarterCatalogAdmin.php';
 require_once BINGOCOMMERCE_CATALOG_PATH . 'src/StarterImportAdmin.php';
+require_once BINGOCOMMERCE_CATALOG_PATH . 'src/StarterImportNotice.php';
 require_once BINGOCOMMERCE_CATALOG_PATH . 'src/CatalogTransactionTransport.php';
 require_once BINGOCOMMERCE_CATALOG_PATH . 'src/GameTypeService.php';
 require_once BINGOCOMMERCE_CATALOG_PATH . 'src/BingoPlayProductService.php';

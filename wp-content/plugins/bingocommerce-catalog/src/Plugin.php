@@ -29,6 +29,7 @@ final class Plugin {
 		StarterCatalogMaster::register();
 		StarterCatalogAdmin::register();
 		StarterImportAdmin::register();
+		StarterImportNotice::register();
 
 		add_action( 'network_admin_menu', [ Migrations::class, 'maybe_migrate_network' ], 6 );
 		add_action( 'admin_init', [ Migrations::class, 'maybe_migrate_current_site' ], 7 );

@@ -9,8 +9,8 @@ not a deployment or production-readiness claim.
 - Covered here: the "Include in starter catalog" checkbox, Network Admin →
   Starter Catalog, Publish New Version, Resume, Discard, Finish Discard and the
   "New Hall imports" switch.
-- Hall side (stage 5): Products → Starter Products is covered below. The
-  dashboard notice and Super Admin Resolve arrive in later slices.
+- Hall side (stage 5): Products → Starter Products and the dashboard notice
+  are covered below. Super Admin Resolve arrives in a later slice.
 - Importing creates real draft products in the Hall you test with. Use a
   development Hall you can tidy up afterwards.
 - Published versions are kept in v1 and cannot be deleted. A version you
@@ -73,6 +73,17 @@ Do this after a version is published (step 8 above).
 | H9 | As a Super Admin on the **main site**, open Products. | No Starter Products item. |
 | H10 | Turn new Hall imports **Off** again when you are done. | |
 
+## Hall side: the dashboard notice
+
+| # | Do this | Expect this |
+|---|---|---|
+| N1 | With new Hall imports **On**, open the dashboard of a development Hall that has not imported, as its Hall Manager. | "Bingo Innovation starter products are available for your store. You can import them once, as draft products." with **Open Starter Products**. |
+| N2 | Select **Dismiss this notice**. | Back on the dashboard without the notice. Another Hall Manager of that Hall, and the same person on another Hall, still see it. |
+| N3 | On a Hall whose import was stopped part-way (H5), open the dashboard. | "Your Bingo Innovation starter product import isn't finished." It also shows with new imports **Off**. |
+| N4 | On a Hall whose import finished, open the dashboard. | No notice. |
+| N5 | As a Game Operator of a Hall, and as a Super Admin on the main site, open the dashboard. | No notice. |
+| N6 | Open any other admin screen (for example Products). | No notice; it appears on the dashboard only. |
+
 ## Automated suites
 
 Run each from the repository root. They refuse to run unless the isolated
@@ -92,4 +103,8 @@ BC_TEST_DB=bingocommerce_state_recon php tests/starter-catalog-admin.php
 
 ```bash
 BC_TEST_DB=bingocommerce_state_recon php tests/starter-import-page.php
+```
+
+```bash
+BC_TEST_DB=bingocommerce_state_recon php tests/starter-import-notice.php
 ```

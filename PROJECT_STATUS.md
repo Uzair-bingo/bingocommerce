@@ -6527,3 +6527,56 @@ Portal request was performed.
   `tests/customer-electronic-limits.php` 679, all with zero failures.
 - Next: slice 5.2, the dashboard notice.
 - Not committed by Claude; no push or deployment.
+
+### 2026-10-20 — ADR-049 stage 5, slice 5.2: the dashboard notice
+
+- New `StarterImportNotice`: an info notice on a Hall's **dashboard only**,
+  for Hall Managers (`bc_manage_products`) and Super Admins, never on the
+  main site or for a Game Operator, and never while the Hall's Commerce
+  access is blocked or suspended. Two cases (ADR-049 section 8, with the
+  agreed stage 5 decision): "Bingo Innovation starter products are available
+  for your store. You can import them once, as draft products." when nothing
+  has been imported, new imports are on and a version is published; "Your
+  Bingo Innovation starter product import isn't finished." when an import is
+  importing, failed or needs attention (also while new imports are off,
+  because a started import can still continue). A finished import, a start
+  marker without a receipt (repair case, explained on the page) or an
+  unreadable receipt shows nothing. Each notice links to **Products → Starter
+  Products**. The dashboard only reads saved settings and the receipt; it
+  never creates tables.
+- **Dismiss this notice** is a small POST form to `admin-post.php`
+  (signed-in users only) with its own per-Hall nonce. It re-checks POST, the
+  user's rights and a Hall site, saves a per-user, per-Hall setting
+  (`update_user_option`, `bc_starter_import_notice_dismissed`), confirms it
+  was saved, and returns to the dashboard with a 303 redirect. A dismissal
+  hides both messages for that user on that Hall only; other Managers and
+  other Halls still see it. The nonce input is printed without an `id`, so
+  it cannot clash with the dashboard's Quick Draft form.
+- Runbook `docs/runbooks/starter-catalog-testing.md` gains a dashboard
+  notice checklist (N1–N6).
+- New harness `tests/starter-import-notice.php`. Verification PASS against
+  the guarded `bingocommerce_state_recon` fixture, run twice: **38
+  assertions, zero failures** each time. The blocked-Hall case uses the same
+  Portal-managed marker as `tests/starter-import-page.php`, so it takes the
+  real `HallCommerceAccess::is_blocked()` path. The unfinished cases use
+  receipts made by the real importer. Eleven mutations (any screen, no
+  capability check, main site allowed, not dismissible, dismissal shared
+  across Halls, no Hall access check, a finished import still shown, the
+  imports switch ignored, the start marker ignored, no nonce check, dismissal
+  by GET) each make tests fail; the source was restored byte-identical. The
+  main-site mutation had left one dismissal saved for the kept
+  `fixture_admin` user in the fixture; cleanup now removes `fixture_admin`'s
+  dismissal on the main site and the disposable Halls, which cleared it.
+  The rendered notice was also checked in the built-in browser with the
+  installed WordPress CSS (no development data touched).
+- Regression on the same fixture: `tests/starter-import-page.php` 65,
+  `tests/starter-catalog-admin.php` 51, `tests/starter-catalog-master.php`
+  121, `tests/starter-catalog-publish.php` 156,
+  `tests/starter-import-media.php` 288, `tests/starter-import-recovery.php`
+  245, `tests/starter-import-schema.php` 118,
+  `tests/package-addons-schema.php` 196,
+  `tests/customer-cart-increment-1.php` 140 and
+  `tests/customer-electronic-limits.php` 679, all with zero failures.
+- Next: slice 5.3, Super Admin Resolve (the page continues the import
+  automatically after a successful Resolve).
+- Not committed by Claude; no push or deployment.
