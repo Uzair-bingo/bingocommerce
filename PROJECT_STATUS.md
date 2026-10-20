@@ -6222,3 +6222,71 @@ Portal request was performed.
   yet, so no Hall's behaviour changes. Next is stage 4: master selection and
   Publish.
 - Not committed by Claude; no push or deployment.
+
+### 2026-10-19 — ADR-049 stage 4, slice 4.1: master selection, Include-flag guard and Starter Catalog page
+
+- Stage 4 plan agreed with the user (three slices): 4.1 selection, guard and
+  page; 4.2 the Publish engine; 4.3 the Publish, Resume and Discard buttons and
+  a manual runbook. Decisions: the Include flag gets a server guard covering
+  every write path, WooCommerce REST included; a product changed during
+  Publish stops it and is marked pending for Resume (no automatic
+  re-capture); cleaning warnings are shown, not stored; the selection is
+  saved with one multi-row INSERT (a Building version with no selection rows
+  can only be Discarded, never resumed or published); image rows keep their
+  IDs on retry; Discard marks the version Discarded before cleaning up and
+  can be repeated; every Publish mutation takes the publish lock and
+  re-checks authorization, nonce and the main-site context.
+- New `StarterCatalogMaster`: the "Include in starter catalog" checkbox in the
+  product's Publish box, shown to Super Admins on the main site only and
+  saved only from its own form with a valid nonce
+  (`bc_starter_catalog_include = yes`). A guard on WordPress's metadata write
+  filters (add, update, delete and the two by-row-ID paths WooCommerce uses)
+  refuses any change to that one key on the main site by anyone who is not a
+  Super Admin, including renaming a row to or from the key; permanently
+  deleting a product may remove its flag, so no orphan row is left. Hall
+  sites are not guarded. `selected_ids()` lists included products in any
+  status except trash, ascending by ID; a failed read is an error.
+  Review fixes: MySQL, not PHP, decides which spellings are the key. The
+  `utf8mb4_unicode_520_ci` meta_key collation treats case, accents, trailing
+  spaces, zero-width characters and full-width letters as equal (checked on
+  the fixture), so the guard asks the database on the refused path, and the
+  selection compares key and value byte for byte. The deletion marker is
+  also cleared on `delete_post` (post meta is already gone; `deleted_post`
+  never fires if the post row fails to delete). WooCommerce's Duplicate no
+  longer copies the flag, so a copy starts excluded. The page says
+  "1 product" for a one-product version.
+- New `StarterCatalogAdmin`: Network Admin → Starter Catalog (Super Admins
+  with `manage_network_options` only). Opening it creates or upgrades the
+  network starter tables; a current schema that fails verification is
+  reported for repair and never recreated. It shows the included product
+  count, a link to the main site's Products list, the latest published
+  version (number, products, MM/DD/YYYY date and publisher) and the "Allow
+  new Hall imports" switch (same-page POST with nonce; blocks new imports
+  only). No Publish button yet (slice 4.3).
+- New harness `tests/starter-catalog-master.php`. Verification PASS against
+  the guarded `bingocommerce_state_recon` fixture, run twice: **121
+  assertions, zero failures** each time. The non-Super-Admin is a real
+  main-site shop manager (the fixture main site has no administrator role).
+  Covered: checkbox visibility and saving (valid, invalid and missing nonce;
+  a shop manager's own nonce refused); every refused write path including a
+  real WooCommerce REST request that saves other metadata in the same
+  request; a Super Admin's writes through the same paths; permanent
+  deletion through WordPress and WooCommerce with no orphan row; Hall scope;
+  selection order, statuses and a failed read; page access, table creation,
+  repair reporting, version display and the imports switch; six spellings
+  MySQL treats as the key (refused through add, update, change, delete,
+  delete-everywhere, rename-into and WooCommerce REST) and two it does not
+  (allowed); variant rows written by any path never selected; a post-row
+  delete failure after `delete_post`; Duplicate; "1 product". Putting back
+  fourteen protections makes their tests fail, including the PHP-only
+  normalization proposed in review (`strtolower( trim( remove_accents() ) )`),
+  which lets the zero-width and full-width spellings through and refuses a
+  leading-space key MySQL treats as different. Mutation runs that leave
+  orphan rows by design were cleaned on the isolated fixture after each run.
+- Regression on the same fixture: `tests/starter-import-media.php` 288,
+  `tests/starter-import-recovery.php` 245, `tests/starter-import-schema.php`
+  118, `tests/package-addons-schema.php` 196,
+  `tests/customer-cart-increment-1.php` 140 and
+  `tests/customer-electronic-limits.php` 679, all with zero failures.
+- Next: slice 4.2, the Publish engine.
+- Not committed by Claude; no push or deployment.
