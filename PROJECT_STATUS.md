@@ -6377,3 +6377,74 @@ Portal request was performed.
 - Next: slice 4.3, the Publish, Resume and Discard buttons and the manual
   runbook.
 - Not committed by Claude; no push or deployment.
+
+### 2026-10-20 — ADR-049 stage 4, slice 4.3: Publish, Resume and Discard controls
+
+- `StarterCatalogAdmin` (Network Admin → Starter Catalog) gains a Publish
+  section: **Publish New Version** when nothing is building; **Resume** and
+  **Discard** (with a confirmation) for a Building version, with its
+  progress; **Discard** only, with the reason, for a Building version whose
+  selection was not saved; **Finish Discard** for each Discarded version whose
+  rows or files remain. Every button starts disabled and is enabled by the
+  script, so without JavaScript nothing half-works (a note says publishing
+  needs JavaScript). The imports switch stays the page's only form.
+- One admin-ajax action, `bc_starter_catalog_publish` (signed-in users only,
+  no visitor hook), runs one step per request: `start`, `continue` or
+  `discard` with a version. Every request re-checks POST, a signed-in Super
+  Admin with `manage_network_options`, the main site, its own nonce, the
+  allowed fields, the step and a well-formed version; refusals return 400,
+  403 or 405 with a plain message, and Publisher refusals 409. Only status,
+  version, totals, problems and warnings are returned.
+- New `assets/starter-catalog-admin.js` (loaded from the page's own `load-`
+  hook only, for Super Admins, with its nonce and the main site's admin-ajax
+  address): sends one request at a time, keeps resuming while Building, and
+  shows progress, problems and cleaning warnings as text (never HTML). After
+  a failed request mid-publication it offers Resume and Discard.
+- Review fixes (2026-10-20): WordPress's button rule
+  (`.wp-core-ui .button { display: inline-block }`, `buttons.css:43`)
+  overrode the `hidden` attribute, so hidden buttons stayed visible; the page
+  now prints a page-scoped rule (`#bc-starter-publish [hidden] { display:
+  none !important; }`) with its script. A finished Finish Discard removes its
+  row (rows carry `data-bc-cleanup`) instead of leaving an enabled button,
+  and discarding the Building version returns to Publish New Version. A
+  failed main Discard hides Resume and the other main buttons and offers the
+  reload link, because the page cannot tell whether the server marked the
+  version Discarded before failing; the reloaded page shows the true state.
+  "1 product" wording is singular in the Building progress and the
+  published message.
+- New runbook `docs/runbooks/starter-catalog-testing.md`: a 17-step browser
+  checklist for the Publish side on the local network (including how to make
+  Resume appear on purpose with the browser's Offline switch) and the
+  automated suites to run. Hall import is not yet testable in the browser
+  (stage 5).
+- New harness `tests/starter-catalog-admin.php`. Verification PASS against
+  the guarded `bingocommerce_state_recon` fixture, run twice: **51
+  assertions, zero failures** each time. Covered: handler and script
+  registration, the script and its settings loading only for Super Admins on
+  this page, every refusal (GET, not signed in, a shop manager, a Hall site,
+  a bad or wrong nonce, unknown fields, steps and versions), blocked,
+  Building, Published, already-building, idle and Discard flows through the
+  handler, the JSON wrapper's success and error responses, and the buttons
+  for each page state, the page-scoped hidden rule and the cleanup-row
+  marker. Putting back twelve protections makes their tests fail.
+- The script was also exercised in the built-in browser against the real
+  rendered markup with a mocked server (no development data touched):
+  publish to completion with warnings, blocked with an `<img onerror>`
+  problem shown as plain text (not run), a mid-publication error offering
+  Resume and Discard, Discard with its confirmation and version, changed
+  during publication, and a non-JSON response. After review, it was run
+  again with the installed WordPress `buttons.css` and `common.css`: without
+  the page rule an idle page showed all three buttons (reproducing the
+  finding); with it, idle, Building, Discard-only, a Finish Discard row and
+  the completed state each showed only the right buttons, Finish Discard
+  removed its row, and Discard success and failure behaved as above.
+- Regression on the same fixture: `tests/starter-catalog-master.php` 121,
+  `tests/starter-catalog-publish.php` 156, `tests/starter-import-media.php`
+  288, `tests/starter-import-recovery.php` 245,
+  `tests/starter-import-schema.php` 118, `tests/package-addons-schema.php` 196,
+  `tests/customer-cart-increment-1.php` 140 and
+  `tests/customer-electronic-limits.php` 679, all with zero failures.
+- Stage 4 (master selection and Publish) is complete in code; the browser
+  checklist in the runbook is still to be run. Next is stage 5: the Hall's
+  Starter Products page, the dashboard notice and Resolve.
+- Not committed by Claude; no push or deployment.
