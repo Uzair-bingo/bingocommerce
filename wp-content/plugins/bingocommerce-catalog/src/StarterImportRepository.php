@@ -489,6 +489,61 @@ final class StarterImportRepository {
 	}
 
 	/* ------------------------------------------------------------------ *
+	 * Reads for Resolve
+	 * ------------------------------------------------------------------ */
+
+	/**
+	 * The import's first product or variation that needs attention, with its
+	 * parent's product ID (`parent_wc_product_id`) and its version data
+	 * (`version_data`).
+	 *
+	 * @return array<string,mixed>|null|\WP_Error
+	 */
+	public static function item_needing_attention( int $import_id ) {
+		global $wpdb;
+
+		$row = $wpdb->get_row(
+			$wpdb->prepare(
+				'SELECT i.*, p.wc_product_id AS parent_wc_product_id, vp.data AS version_data FROM %i i'
+				. ' INNER JOIN %i vp ON vp.version_product_id = i.version_product_id'
+				. ' LEFT JOIN %i p ON p.item_id = i.parent_item_id'
+				. ' WHERE i.import_id = %d AND i.status = %s ORDER BY i.item_id ASC LIMIT 1',
+				StarterImportMigrations::import_products_table(),
+				StarterImportMigrations::version_products_table(),
+				StarterImportMigrations::import_products_table(),
+				$import_id,
+				self::ITEM_NEEDS_ATTENTION
+			),
+			ARRAY_A
+		);
+		if ( '' !== (string) $wpdb->last_error ) {
+			return self::db_error();
+		}
+
+		return is_array( $row ) ? $row : null;
+	}
+
+	/** @return array<string,mixed>|null|\WP_Error The import's first image that needs attention. */
+	public static function image_needing_attention( int $import_id ) {
+		global $wpdb;
+
+		$row = $wpdb->get_row(
+			$wpdb->prepare(
+				'SELECT * FROM %i WHERE import_id = %d AND status = %s ORDER BY import_image_id ASC LIMIT 1',
+				StarterImportMigrations::import_images_table(),
+				$import_id,
+				self::IMAGE_NEEDS_ATTENTION
+			),
+			ARRAY_A
+		);
+		if ( '' !== (string) $wpdb->last_error ) {
+			return self::db_error();
+		}
+
+		return is_array( $row ) ? $row : null;
+	}
+
+	/* ------------------------------------------------------------------ *
 	 * Internals
 	 * ------------------------------------------------------------------ */
 

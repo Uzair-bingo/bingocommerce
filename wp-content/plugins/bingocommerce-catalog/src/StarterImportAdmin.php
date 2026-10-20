@@ -16,13 +16,14 @@ if ( ! defined( 'ABSPATH' ) ) {
  * upgrades the Hall's import tables (section 14). The page shows the saved
  * receipt: unavailable (with the reason), not started, importing, failed
  * (a plain message for the saved error code and the affected product),
- * needs attention (a support reference) or complete (date, counts, notes).
+ * needs attention (a support reference; Super Admins also get Resolve,
+ * section 13) or complete (date, counts, notes).
  *
- * Import, Continue and Retry run through one admin-ajax action, one request
- * at a time (assets/starter-import-admin.js). Every request re-checks the
- * method, the user's rights, that this is a Hall site, the nonce and every
- * field; StarterImporter then checks Hall access and takes the Hall lock.
- * Without JavaScript the buttons stay disabled.
+ * Import, Continue, Retry and Resolve run through one admin-ajax action,
+ * one request at a time (assets/starter-import-admin.js). Every request
+ * re-checks the method, the user's rights, that this is a Hall site, the
+ * nonce and every field; StarterImporter then checks Hall access and takes
+ * the Hall lock. Without JavaScript the buttons stay disabled.
  *
  * An unfinished imported product's edit screen warns that changes may be
  * replaced; nothing is locked (section 8).
@@ -79,6 +80,7 @@ final class StarterImportAdmin {
 				'continue' => __( 'Continue Import', 'bingocommerce-catalog' ),
 				'retry'    => __( 'Retry Remaining Products', 'bingocommerce-catalog' ),
 				'failed'   => __( 'The request did not complete. Reload the page and try again.', 'bingocommerce-catalog' ),
+				'reason'   => __( 'Enter a reason before resolving.', 'bingocommerce-catalog' ),
 			],
 		];
 		wp_add_inline_script( self::SCRIPT, 'window.bcStarterImport = ' . wp_json_encode( $config ) . ';', 'before' );
@@ -94,7 +96,7 @@ final class StarterImportAdmin {
 	 * admin-ajax
 	 * ------------------------------------------------------------------ */
 
-	/** admin-ajax: one Import, Continue or Retry step. */
+	/** admin-ajax: one Import, Continue, Retry or Resolve step. */
 	public static function ajax(): void {
 		$result = self::handle_ajax( wp_unslash( $_POST ) ); // phpcs:ignore WordPress.Security.NonceVerification.Missing -- verified in handle_ajax().
 		if ( is_wp_error( $result ) ) {
@@ -131,18 +133,41 @@ final class StarterImportAdmin {
 		if ( ! is_string( $posted['_ajax_nonce'] ?? null ) || ! wp_verify_nonce( $posted['_ajax_nonce'], self::nonce_action() ) ) {
 			return self::error( 'nonce' );
 		}
+		// Fields each step accepts besides action, _ajax_nonce and step.
+		$fields = [
+			'start'    => [],
+			'continue' => [],
+			'resolve'  => [ 'target', 'choice', 'found', 'reason' ],
+		];
+
+		$step = $posted['step'] ?? null;
+		if ( ! is_string( $step ) || ! isset( $fields[ $step ] ) ) {
+			return self::error( 'request' );
+		}
 		foreach ( array_keys( $posted ) as $key ) {
-			if ( ! in_array( $key, [ 'action', '_ajax_nonce', 'step' ], true ) ) {
+			if ( ! in_array( $key, array_merge( [ 'action', '_ajax_nonce', 'step' ], $fields[ $step ] ), true ) ) {
 				return self::error( 'request' );
 			}
 		}
-		$step = $posted['step'] ?? null;
-		if ( ! in_array( $step, [ 'start', 'continue' ], true ) ) {
-			return self::error( 'request' );
+		foreach ( $fields[ $step ] as $key ) {
+			if ( ! is_string( $posted[ $key ] ?? null ) ) {
+				return self::error( 'request' );
+			}
 		}
 
 		$importer = new StarterImporter();
-		$result   = 'start' === $step ? $importer->start() : $importer->process_next();
+		if ( 'resolve' === $step ) {
+			// Super Admins only (section 15); the importer checks again.
+			if ( ! is_super_admin() ) {
+				return self::error( 'denied' );
+			}
+			if ( 1 !== preg_match( '/^(0|[1-9][0-9]{0,18})$/', $posted['found'] ) ) {
+				return self::error( 'request' );
+			}
+			$result = $importer->resolve( $posted['target'], $posted['choice'], (int) $posted['found'], $posted['reason'] );
+		} else {
+			$result = 'start' === $step ? $importer->start() : $importer->process_next();
+		}
 		if ( is_wp_error( $result ) ) {
 			// Where a receipt exists the importer has already recorded the
 			// failure; its status tells the page whether to offer Retry.
@@ -169,14 +194,15 @@ final class StarterImportAdmin {
 	/**
 	 * What the page shows. Prepares the Hall's import tables first.
 	 *
-	 * @return array{kind:string,text:string,counts:string,notes:array<int,array{label:string,note:string}>}
+	 * @return array{kind:string,text:string,counts:string,notes:array<int,array{label:string,note:string}>,resolve:array<string,mixed>|null}
 	 */
 	public static function page_state(): array {
-		$view = static fn( string $kind, string $text, string $counts = '', array $notes = [] ): array => [
-			'kind'   => $kind,
-			'text'   => $text,
-			'counts' => $counts,
-			'notes'  => $notes,
+		$view = static fn( string $kind, string $text, string $counts = '', array $notes = [], ?array $resolve = null ): array => [
+			'kind'    => $kind,
+			'text'    => $text,
+			'counts'  => $counts,
+			'notes'   => $notes,
+			'resolve' => $resolve,
 		];
 
 		$schema = StarterImportMigrations::ensure_current_hall();
@@ -230,7 +256,7 @@ final class StarterImportAdmin {
 			case StarterImportRepository::RECEIPT_FAILED:
 				return $view( 'failed', self::failure_text( $state ), $counts );
 			case StarterImportRepository::RECEIPT_NEEDS_ATTENTION:
-				return $view( 'needs_attention', self::status_text( $state ), $counts );
+				return $view( 'needs_attention', self::status_text( $state ), $counts, [], is_super_admin() ? self::resolve_view() : null );
 			default:
 				return $view( 'importing', self::status_text( $state ), $counts );
 		}
@@ -263,6 +289,9 @@ final class StarterImportAdmin {
 						<p><?php echo esc_html__( 'You can still add products by hand.', 'bingocommerce-catalog' ); ?></p>
 					<?php endif; ?>
 				</div>
+				<?php if ( is_array( $state['resolve'] ) ) : ?>
+					<?php self::render_resolve( $state['resolve'] ); ?>
+				<?php endif; ?>
 				<p>
 					<button type="button" class="button button-primary" data-bc-import="start" disabled<?php echo 'not_started' === $kind ? '' : ' hidden'; ?>><?php echo esc_html__( 'Import Starter Products', 'bingocommerce-catalog' ); ?></button>
 					<button type="button" class="button button-primary" data-bc-import="continue" disabled<?php echo in_array( $kind, [ 'importing', 'failed' ], true ) ? '' : ' hidden'; ?>><?php echo esc_html( 'failed' === $kind ? __( 'Retry Remaining Products', 'bingocommerce-catalog' ) : __( 'Continue Import', 'bingocommerce-catalog' ) ); ?></button>
@@ -281,6 +310,38 @@ final class StarterImportAdmin {
 					</ul>
 				<?php endif; ?>
 				<p><a class="button" href="<?php echo esc_url( admin_url( 'edit.php?post_type=product&post_status=draft' ) ); ?>"><?php echo esc_html__( 'View Products', 'bingocommerce-catalog' ); ?></a></p>
+			<?php endif; ?>
+		</div>
+		<?php
+	}
+
+	/**
+	 * Resolve, for a Super Admin: what stopped the import, what was found, a
+	 * required reason, Use (only when the match qualifies) and Skip. Both
+	 * buttons send the offer the page shows, so the server refuses a click
+	 * once anything has changed.
+	 *
+	 * @param array<string,mixed> $resolve From resolve_view().
+	 */
+	private static function render_resolve( array $resolve ): void {
+		?>
+		<div data-bc-resolve-box>
+			<h2><?php echo esc_html__( 'Resolve', 'bingocommerce-catalog' ); ?></h2>
+			<?php if ( isset( $resolve['error'] ) ) : ?>
+				<p><?php echo esc_html( $resolve['error'] ); ?></p>
+			<?php else : ?>
+				<p><?php echo esc_html( $resolve['what'] ); ?></p>
+				<p><?php echo esc_html( $resolve['finding'] ); ?></p>
+				<p>
+					<label for="bc-starter-resolve-reason"><?php echo esc_html__( 'Reason (required, saved in the audit log)', 'bingocommerce-catalog' ); ?></label><br>
+					<textarea id="bc-starter-resolve-reason" class="large-text" rows="3" maxlength="<?php echo (int) StarterImporter::MAX_RESOLVE_REASON; ?>" data-bc-resolve-reason></textarea>
+				</p>
+				<p>
+					<?php if ( $resolve['found'] > 0 ) : ?>
+						<button type="button" class="button button-primary" data-bc-resolve="use" data-bc-target="<?php echo esc_attr( $resolve['target'] ); ?>" data-bc-found="<?php echo (int) $resolve['found']; ?>" disabled><?php echo esc_html( $resolve['use'] ); ?></button>
+					<?php endif; ?>
+					<button type="button" class="button" data-bc-resolve="skip" data-bc-target="<?php echo esc_attr( $resolve['target'] ); ?>" data-bc-found="<?php echo (int) $resolve['found']; ?>" disabled><?php echo esc_html( $resolve['skip'] ); ?></button>
+				</p>
 			<?php endif; ?>
 		</div>
 		<?php
@@ -345,6 +406,77 @@ final class StarterImportAdmin {
 				/* translators: 1: product number, 2: products in total. */
 				return sprintf( __( 'Importing product %1$d of %2$d.', 'bingocommerce-catalog' ), $progress['position'], $progress['total'] );
 		}
+	}
+
+	/**
+	 * The Resolve box's texts for the importer's current offer, or the error
+	 * that means nothing is offered.
+	 *
+	 * @return array{error:string}|array{target:string,found:int,what:string,finding:string,use:string,skip:string}
+	 */
+	private static function resolve_view(): array {
+		$offer = ( new StarterImporter() )->resolution();
+		if ( is_wp_error( $offer ) ) {
+			return [ 'error' => $offer->get_error_message() ];
+		}
+		if ( null === $offer ) {
+			return [ 'error' => __( 'Nothing needs to be resolved. Reload this page.', 'bingocommerce-catalog' ) ];
+		}
+
+		$found = (int) $offer['found'];
+		switch ( $offer['kind'] ) {
+			case 'image':
+				/* translators: %s: image file name. */
+				$what  = sprintf( __( 'Image %s: its creation started, but its media ID was not saved.', 'bingocommerce-catalog' ), $offer['label'] );
+				/* translators: %d: attachment ID. */
+				$match = __( 'One matching image was found: #%d.', 'bingocommerce-catalog' );
+				$use   = __( 'Use this image', 'bingocommerce-catalog' );
+				$skip  = __( 'Skip this image', 'bingocommerce-catalog' );
+				break;
+			case 'variation':
+				/* translators: %s: product and variation, for example "Dab O Ink, variation Blue". */
+				$what  = sprintf( __( '%s: its creation started, but its variation ID was not saved.', 'bingocommerce-catalog' ), $offer['label'] );
+				/* translators: %d: variation ID. */
+				$match = __( 'One matching variation was found: #%d.', 'bingocommerce-catalog' );
+				$use   = __( 'Use it', 'bingocommerce-catalog' );
+				$skip  = __( 'Skip this variation', 'bingocommerce-catalog' );
+				break;
+			default:
+				/* translators: %s: product name. */
+				$what  = sprintf( __( '%s: its creation started, but its product ID was not saved.', 'bingocommerce-catalog' ), $offer['label'] );
+				/* translators: %d: product ID. */
+				$match = __( 'One matching draft was found: #%d.', 'bingocommerce-catalog' );
+				$use   = __( 'Use it and continue', 'bingocommerce-catalog' );
+				$skip  = __( 'Skip this item', 'bingocommerce-catalog' );
+		}
+
+		return [
+			'target'  => (string) $offer['target'],
+			'found'   => $found,
+			'what'    => $what,
+			'finding' => $found > 0 ? sprintf( $match, $found ) : self::skip_only_text( (string) $offer['why'] ),
+			'use'     => $use,
+			'skip'    => $skip,
+		];
+	}
+
+	/** Why only Skip is offered. */
+	private static function skip_only_text( string $why ): string {
+		$text = match ( $why ) {
+			'none'         => __( 'No match was found.', 'bingocommerce-catalog' ),
+			'many'         => __( 'More than one match was found.', 'bingocommerce-catalog' ),
+			'trashed'      => __( 'The match is in the Trash.', 'bingocommerce-catalog' ),
+			'name'         => __( 'The match\'s slug is not exactly the one the import saved.', 'bingocommerce-catalog' ),
+			'status'       => __( 'The match\'s status has changed.', 'bingocommerce-catalog' ),
+			'type'         => __( 'The match is no longer the same kind of product.', 'bingocommerce-catalog' ),
+			'catalog'      => __( 'The match is used by a Bingo Play Product or Package.', 'bingocommerce-catalog' ),
+			'parent'       => __( 'The match belongs to a different product.', 'bingocommerce-catalog' ),
+			'parent_state' => __( 'Its product is no longer this import\'s draft.', 'bingocommerce-catalog' ),
+			'file'         => __( 'The match\'s file is not the one this import saved.', 'bingocommerce-catalog' ),
+			default        => __( 'The match cannot be confirmed.', 'bingocommerce-catalog' ),
+		};
+
+		return $text . ' ' . __( 'Only Skip is possible; Skip leaves any match unchanged.', 'bingocommerce-catalog' );
 	}
 
 	/**

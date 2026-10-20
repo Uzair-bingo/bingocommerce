@@ -10,7 +10,10 @@ not a deployment or production-readiness claim.
   Starter Catalog, Publish New Version, Resume, Discard, Finish Discard and the
   "New Hall imports" switch.
 - Hall side (stage 5): Products → Starter Products and the dashboard notice
-  are covered below. Super Admin Resolve arrives in a later slice.
+  are covered below. Super Admin Resolve needs a request that crashed while
+  creating something, which cannot be done safely by hand, so it is covered
+  by `tests/starter-import-resolve.php`; what a Super Admin sees is described
+  below.
 - Importing creates real draft products in the Hall you test with. Use a
   development Hall you can tidy up afterwards.
 - Published versions are kept in v1 and cannot be deleted. A version you
@@ -84,6 +87,26 @@ Do this after a version is published (step 8 above).
 | N5 | As a Game Operator of a Hall, and as a Super Admin on the main site, open the dashboard. | No notice. |
 | N6 | Open any other admin screen (for example Products). | No notice; it appears on the dashboard only. |
 
+## Hall side: Resolve (Super Admins, automated)
+
+When a request stops after WordPress created a product, variation or image
+but before its ID was saved, the import stops at **Needs attention** with a
+support reference. A Hall Manager sees only the reference. A Super Admin also
+sees a Resolve box, for example: "Dab O Ink: its creation started, but its
+product ID was not saved. One matching draft was found: #345.", a required
+reason, **Use it and continue** and **Skip this item**.
+
+- **Use** is offered only when ADR-049 section 13 allows it (for example one
+  Draft of the same type that is not a Play Product or Package). Otherwise
+  the box says why and offers **Skip** only.
+- The server re-checks everything under the Hall lock when the button is
+  clicked and refuses if anything changed since the page loaded. The choice
+  and reason are saved in the audit log (`starter_import.resolved`) before
+  anything changes. A successful Resolve continues the import by itself.
+- Skip never changes the found product, variation or image. The completed
+  page lists a note, for example "Variation Blue skipped: its creation was
+  interrupted and could not be confirmed."
+
 ## Automated suites
 
 Run each from the repository root. They refuse to run unless the isolated
@@ -107,4 +130,8 @@ BC_TEST_DB=bingocommerce_state_recon php tests/starter-import-page.php
 
 ```bash
 BC_TEST_DB=bingocommerce_state_recon php tests/starter-import-notice.php
+```
+
+```bash
+BC_TEST_DB=bingocommerce_state_recon php tests/starter-import-resolve.php
 ```

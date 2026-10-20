@@ -310,7 +310,7 @@ final class StarterImportPageTest {
 			'a bad nonce'                 => [ $manager, $hall, [ 'step' => 'start', '_ajax_nonce' => 'bad' ], 'POST', 'starter_import_nonce', 403 ],
 			'another Hall\'s nonce'       => [ $manager, $hall, [ 'step' => 'start', '_ajax_nonce' => 'other-hall' ], 'POST', 'starter_import_nonce', 403 ],
 			'an unknown field'            => [ $manager, $hall, [ 'step' => 'start', 'blog_id' => '2' ], 'POST', 'starter_import_request', 400 ],
-			'an unknown step'             => [ $manager, $hall, [ 'step' => 'resolve' ], 'POST', 'starter_import_request', 400 ],
+			'an unknown step'             => [ $manager, $hall, [ 'step' => 'publish' ], 'POST', 'starter_import_request', 400 ],
 			'no step'                     => [ $manager, $hall, [], 'POST', 'starter_import_request', 400 ],
 		];
 		foreach ( $cases as $label => [ $user, $site, $fields, $method, $code, $status ] ) {

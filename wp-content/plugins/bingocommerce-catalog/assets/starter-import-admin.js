@@ -1,6 +1,7 @@
 /*
- * Products → Starter Products: Import Starter Products, Continue Import and
- * Retry Remaining Products. One request at a time; the server re-checks
+ * Products → Starter Products: Import Starter Products, Continue Import,
+ * Retry Remaining Products and, for Super Admins, Resolve (which carries on
+ * importing once it succeeds). One request at a time; the server re-checks
  * everything on every request and writes every message, so this script only
  * drives the steps and shows the text (always as text, never as HTML).
  */
@@ -17,7 +18,9 @@
 	const reload = root.querySelector('[data-bc-reload]');
 	const startButton = root.querySelector('[data-bc-import="start"]');
 	const continueButton = root.querySelector('[data-bc-import="continue"]');
-	const buttons = () => root.querySelectorAll('[data-bc-import]');
+	const resolveBox = root.querySelector('[data-bc-resolve-box]');
+	const reason = root.querySelector('[data-bc-resolve-reason]');
+	const buttons = () => root.querySelectorAll('[data-bc-import], [data-bc-resolve]');
 	let busy = false;
 
 	const setBusy = (value) => {
@@ -37,8 +40,8 @@
 		}
 	};
 
-	const send = async (step) => {
-		const body = new URLSearchParams({ action: config.action, _ajax_nonce: config.nonce, step });
+	const send = async (step, extra) => {
+		const body = new URLSearchParams({ action: config.action, _ajax_nonce: config.nonce, step, ...(extra || {}) });
 
 		let json = null;
 		try {
@@ -58,15 +61,17 @@
 		return json.data;
 	};
 
-	const run = async (step) => {
+	const run = async (step, extra) => {
 		setBusy(true);
 		if (intro) intro.hidden = true;
 		status.textContent = '';
 
 		let last = null;
 		try {
-			let result = await send(step);
+			let result = await send(step, extra);
 			last = result;
+			// Resolved: the box has done its job and the import carries on.
+			if (step === 'resolve' && resolveBox) resolveBox.hidden = true;
 			// Each request does at least one piece of work; the cap only guards
 			// against a server that keeps answering without progress.
 			for (let rounds = 0; result.status === 'importing' && rounds < 5000; rounds++) {
@@ -100,6 +105,25 @@
 	};
 
 	root.addEventListener('click', (event) => {
+		const resolveButton = event.target.closest('[data-bc-resolve]');
+		if (resolveButton) {
+			if (busy || resolveButton.disabled) return;
+			const text = reason ? reason.value.trim() : '';
+			if (!text) {
+				status.textContent = strings.reason;
+				if (reason) reason.focus();
+				return;
+			}
+			// The offer the page shows; the server refuses it if anything changed.
+			run('resolve', {
+				target: resolveButton.dataset.bcTarget || '',
+				choice: resolveButton.dataset.bcResolve === 'use' ? 'use' : 'skip',
+				found: resolveButton.dataset.bcFound || '0',
+				reason: text,
+			});
+			return;
+		}
+
 		const button = event.target.closest('[data-bc-import]');
 		if (!button || busy || button.disabled) return;
 		run(button.dataset.bcImport === 'start' ? 'start' : 'continue');

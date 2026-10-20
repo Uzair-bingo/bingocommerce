@@ -16,6 +16,7 @@ if ( ! defined( 'ABSPATH' ) ) {
  * process_next() copies products one at a time, saving progress at each step,
  * until its time budget is used. Both take the Hall import lock, so only one
  * runs per Hall. Neither is called by any page yet (stage 5 adds the screen).
+ * resolve() applies a Super Admin's choice for an item that needs attention.
  *
  * Simple and variable products (product-level attributes only) are copied,
  * with their images. A request stops at a safe point once its time budget is
@@ -39,6 +40,9 @@ final class StarterImporter {
 
 	/** Deepest category level resolve_category() accepts: a category and 20 ancestors. */
 	public const MAX_CATEGORY_DEPTH = 20;
+
+	/** Longest Resolve reason, in characters. */
+	public const MAX_RESOLVE_REASON = 500;
 
 	private const RECOVERY_PREFIX = 'bcsi-';
 
@@ -265,6 +269,438 @@ final class StarterImporter {
 		}
 
 		return $this->state_from( $receipt );
+	}
+
+	/* ------------------------------------------------------------------ *
+	 * Resolve (ADR-049 section 13)
+	 * ------------------------------------------------------------------ */
+
+	/**
+	 * What Resolve offers for the product, variation or image that stopped
+	 * the import at Needs attention. Super Admins only; read-only.
+	 *
+	 * @return array{kind:string,target:string,label:string,found:int,why:string}|null|\WP_Error
+	 *         The offer: `found` is the match Use may take (0: Skip only) and
+	 *         `why` says why Use is not offered. Null when nothing needs
+	 *         attention. A failed read is an error, never "not found".
+	 */
+	public function resolution() {
+		$context = $this->authorize_resolve();
+		if ( is_wp_error( $context ) ) {
+			return $context;
+		}
+		if ( ! StarterImportMigrations::is_hall_current() ) {
+			return null;
+		}
+
+		$receipt = StarterImportRepository::receipt();
+		if ( is_wp_error( $receipt ) ) {
+			return $receipt;
+		}
+		if ( null === $receipt || StarterImportRepository::RECEIPT_NEEDS_ATTENTION !== $receipt['status'] ) {
+			return null;
+		}
+
+		$offer = $this->offer( $receipt );
+		if ( is_wp_error( $offer ) ) {
+			return $offer;
+		}
+		unset( $offer['id'], $offer['row'] );
+
+		return $offer;
+	}
+
+	/**
+	 * Apply a Super Admin's Resolve choice under the Hall lock. The offer is
+	 * worked out again first, and anything different from what the page
+	 * showed is refused. The choice and reason are recorded in the audit log
+	 * before anything changes; the import is then marked as importing, and
+	 * only then is the choice applied, so an interruption at any point leaves
+	 * a state that Resolve or Continue can move on from.
+	 *
+	 * @param string $target "item:<id>" or "image:<id>", as offered.
+	 * @param string $choice "use" or "skip".
+	 * @param int    $found  The match offered for Use, or 0 when none was.
+	 * @param string $reason Why, for the audit log.
+	 * @return array<string,mixed>|\WP_Error Import state.
+	 */
+	public function resolve( string $target, string $choice, int $found, string $reason ) {
+		$context = $this->authorize_resolve();
+		if ( is_wp_error( $context ) ) {
+			return $context;
+		}
+
+		$reason = trim( sanitize_textarea_field( $reason ) );
+		if ( '' === $reason || mb_strlen( $reason ) > self::MAX_RESOLVE_REASON ) {
+			return self::error( 'starter_import_resolve_reason', 'Enter a reason of up to 500 characters.' );
+		}
+		if ( ! in_array( $choice, [ 'use', 'skip' ], true ) || 1 !== preg_match( '/^(item|image):[1-9][0-9]{0,18}$/', $target ) || $found < 0 ) {
+			return self::error( 'starter_import_resolve_invalid', 'Invalid request. Nothing was changed.' );
+		}
+
+		$lock = StarterImportLock::acquire_hall( $context['blog_id'] );
+		if ( is_wp_error( $lock ) ) {
+			return $lock;
+		}
+
+		try {
+			$schema = StarterImportMigrations::ensure_current_hall();
+			if ( is_wp_error( $schema ) ) {
+				return $schema;
+			}
+
+			$receipt = StarterImportRepository::receipt();
+			if ( is_wp_error( $receipt ) ) {
+				return $receipt;
+			}
+			if ( null === $receipt || StarterImportRepository::RECEIPT_NEEDS_ATTENTION !== $receipt['status'] ) {
+				return self::resolve_changed();
+			}
+
+			$offer = $this->offer( $receipt );
+			if ( is_wp_error( $offer ) ) {
+				return $offer;
+			}
+			if ( $target !== $offer['target'] || $found !== $offer['found'] || ( 'use' === $choice && $found < 1 ) ) {
+				return self::resolve_changed();
+			}
+			if ( ! $lock->is_still_held() ) {
+				return self::lock_lost();
+			}
+
+			$recorded = $this->audit(
+				'resolved',
+				$receipt,
+				[
+					'kind'     => $offer['kind'],
+					'target'   => $target,
+					'choice'   => $choice,
+					'found_id' => 'use' === $choice ? $found : null,
+					'reason'   => $reason,
+				]
+			);
+			if ( ! $recorded ) {
+				return self::error( 'starter_import_audit_failed', 'This choice could not be recorded, so nothing was changed. Please try again.' );
+			}
+
+			// The import is marked as continuing before the item changes. If
+			// this write fails, nothing has changed and Resolve is offered
+			// again. If the item write then fails, the item still needs
+			// attention, so Continue stops at it and Resolve is offered again.
+			$resumed = StarterImportRepository::update_receipt(
+				(int) $receipt['import_id'],
+				[
+					'status'             => StarterImportRepository::RECEIPT_IMPORTING,
+					'last_error_code'    => null,
+					'last_error_item_id' => null,
+				]
+			);
+			if ( is_wp_error( $resumed ) ) {
+				return $resumed;
+			}
+
+			$applied = $this->apply_resolve( $offer, $choice );
+			if ( is_wp_error( $applied ) ) {
+				return $applied;
+			}
+
+			$counted = $this->refresh_counts( $receipt );
+			if ( is_wp_error( $counted ) ) {
+				return $counted;
+			}
+
+			$current = StarterImportRepository::receipt();
+
+			return is_array( $current ) ? $this->state_from( $current ) : self::error( 'starter_import_db_error', 'The starter import progress could not be read. Please try again.' );
+		} finally {
+			$lock->release();
+		}
+	}
+
+	/** @return array{blog_id:int,actor:int}|\WP_Error */
+	private function authorize_resolve() {
+		$context = $this->authorize();
+		if ( is_wp_error( $context ) ) {
+			return $context;
+		}
+		if ( ! is_super_admin( $context['actor'] ) ) {
+			return self::error( 'starter_import_not_allowed', 'Only a Super Admin can resolve this import.' );
+		}
+
+		return $context;
+	}
+
+	/**
+	 * The first product or variation waiting for Resolve, otherwise the first
+	 * image, with what may be done with it. `id` and `row` are for
+	 * apply_resolve() only.
+	 *
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	private function offer( array $receipt ) {
+		$import_id = (int) $receipt['import_id'];
+
+		$item = StarterImportRepository::item_needing_attention( $import_id );
+		if ( is_wp_error( $item ) ) {
+			return $item;
+		}
+		if ( is_array( $item ) ) {
+			$labels = StarterImportRepository::labelled_items( $import_id );
+			if ( is_wp_error( $labels ) ) {
+				return $labels;
+			}
+			$label = '';
+			foreach ( $labels as $labelled ) {
+				if ( (int) $item['item_id'] === $labelled['item_id'] ) {
+					$label = $labelled['label'];
+					break;
+				}
+			}
+
+			$variation = 'variation' === (string) $item['product_type'];
+			$match     = $variation ? $this->variation_match( $item ) : $this->product_match( $item );
+			if ( is_wp_error( $match ) ) {
+				return $match;
+			}
+
+			return [
+				'kind'   => $variation ? 'variation' : 'product',
+				'target' => 'item:' . (int) $item['item_id'],
+				'label'  => $label,
+				'id'     => (int) $item['item_id'],
+				'row'    => $item,
+			] + $match;
+		}
+
+		$image = StarterImportRepository::image_needing_attention( $import_id );
+		if ( is_wp_error( $image ) ) {
+			return $image;
+		}
+		if ( is_array( $image ) ) {
+			$match = $this->image_match( $image );
+			if ( is_wp_error( $match ) ) {
+				return $match;
+			}
+
+			return [
+				'kind'   => 'image',
+				'target' => 'image:' . (int) $image['import_image_id'],
+				'id'     => (int) $image['import_image_id'],
+				'row'    => $image,
+			] + $match;
+		}
+
+		return self::error( 'starter_import_resolve_missing', 'What needs attention could not be found. Please contact Bingo Innovation support.' );
+	}
+
+	/**
+	 * Use only for exactly one Draft named with the recovery identifier, of
+	 * the item's saved type, with no Play Product or Package row (archived
+	 * included; classification metadata is ignored).
+	 *
+	 * @return array{found:int,why:string}|\WP_Error
+	 */
+	private function product_match( array $item ) {
+		$slug    = (string) $item['recovery_slug'];
+		$matches = $this->posts_named( 'product', $slug, true );
+		if ( is_wp_error( $matches ) ) {
+			return $matches;
+		}
+		$why = self::match_problem( $matches, $slug, [ 'draft' ] );
+		if ( '' !== $why ) {
+			return [ 'found' => 0, 'why' => $why ];
+		}
+
+		$product_id = (int) $matches[0]['ID'];
+		// The type is read fresh: a persistent object cache may hold an old one.
+		clean_post_cache( $product_id );
+		\WC_Cache_Helper::invalidate_cache_group( 'product_' . $product_id );
+		if ( (string) $item['product_type'] !== (string) \WC_Product_Factory::get_product_type( $product_id ) ) {
+			return [ 'found' => 0, 'why' => 'type' ];
+		}
+
+		$linked = $this->catalog_membership( $product_id );
+		if ( is_wp_error( $linked ) ) {
+			return $linked;
+		}
+		if ( $linked ) {
+			return [ 'found' => 0, 'why' => 'catalog' ];
+		}
+
+		return [ 'found' => $product_id, 'why' => '' ];
+	}
+
+	/**
+	 * Use only for exactly one variation named with the recovery identifier,
+	 * enabled or disabled, under the saved parent product, which is still
+	 * this import's Draft.
+	 *
+	 * @return array{found:int,why:string}|\WP_Error
+	 */
+	private function variation_match( array $item ) {
+		$slug    = (string) $item['recovery_slug'];
+		$matches = $this->posts_named( 'product_variation', $slug, false );
+		if ( is_wp_error( $matches ) ) {
+			return $matches;
+		}
+		$why = self::match_problem( $matches, $slug, [ 'publish', 'private' ] );
+		if ( '' !== $why ) {
+			return [ 'found' => 0, 'why' => $why ];
+		}
+
+		$parent_id = (int) ( $item['parent_wc_product_id'] ?? 0 );
+		if ( $parent_id < 1 || (int) $matches[0]['post_parent'] !== $parent_id ) {
+			return [ 'found' => 0, 'why' => 'parent' ];
+		}
+		$parent = $this->read_post_state( $parent_id );
+		if ( is_wp_error( $parent ) ) {
+			return $parent;
+		}
+		if ( null === $parent || 'product' !== $parent['post_type'] || 'draft' !== $parent['post_status'] ) {
+			return [ 'found' => 0, 'why' => 'parent_state' ];
+		}
+
+		return [ 'found' => (int) $matches[0]['ID'], 'why' => '' ];
+	}
+
+	/**
+	 * Use only for exactly one "inherit" attachment named with the recovery
+	 * identifier whose original file is the saved planned path (a "-scaled"
+	 * copy included) and still has the version image's checksum.
+	 *
+	 * @return array{label:string,found:int,why:string}|\WP_Error
+	 */
+	private function image_match( array $row ) {
+		$version_image = StarterCatalogVersions::image( (int) $row['version_image_id'] );
+		if ( is_wp_error( $version_image ) ) {
+			return $version_image;
+		}
+		$label = is_array( $version_image ) ? wp_basename( (string) $version_image['file_path'] ) : (string) (int) $row['version_image_id'];
+
+		$slug    = (string) $row['recovery_slug'];
+		$matches = $this->posts_named( 'attachment', $slug, true );
+		if ( is_wp_error( $matches ) ) {
+			return $matches;
+		}
+		$why = self::match_problem( $matches, $slug, [ 'inherit' ] );
+		if ( '' !== $why ) {
+			return [ 'label' => $label, 'found' => 0, 'why' => $why ];
+		}
+
+		$uploads = wp_upload_dir( null, false );
+		if ( ! empty( $uploads['error'] ) ) {
+			return self::error( 'starter_import_image_failed', 'The store upload folder is not available.' );
+		}
+		$planned       = wp_normalize_path( untrailingslashit( $uploads['basedir'] ) . '/' . (string) $row['planned_path'] );
+		$attachment_id = (int) $matches[0]['ID'];
+		clean_post_cache( $attachment_id );
+		$original = wp_get_original_image_path( $attachment_id );
+		if ( ! is_array( $version_image ) || '' === (string) $row['planned_path'] || ! is_string( $original ) || wp_normalize_path( $original ) !== $planned
+			|| ! is_file( $planned ) || ! hash_equals( (string) $version_image['checksum'], (string) hash_file( 'sha256', $planned ) ) ) {
+			return [ 'label' => $label, 'found' => 0, 'why' => 'file' ];
+		}
+
+		return [ 'label' => $label, 'found' => $attachment_id, 'why' => '' ];
+	}
+
+	/**
+	 * Posts of one type, in every status, named with the recovery identifier
+	 * (or, with $trashed, that identifier plus "__trashed"). At most two rows:
+	 * enough to tell one match from more than one.
+	 *
+	 * @return array<int,array<string,string>>|\WP_Error
+	 */
+	private function posts_named( string $post_type, string $slug, bool $trashed ) {
+		global $wpdb;
+
+		$rows = $wpdb->get_results(
+			$wpdb->prepare(
+				'SELECT ID, post_name, post_status, post_parent FROM %i WHERE post_type = %s AND post_name IN ( %s, %s ) ORDER BY ID ASC LIMIT 2',
+				$wpdb->posts,
+				$post_type,
+				$slug,
+				$trashed ? $slug . '__trashed' : $slug
+			),
+			ARRAY_A
+		);
+		if ( ! is_array( $rows ) || '' !== (string) $wpdb->last_error ) {
+			return self::error( 'starter_import_db_error', 'The starter import could not search this store. Please try again.' );
+		}
+
+		return $rows;
+	}
+
+	/**
+	 * Why a search does not give exactly one usable match, or '' when it
+	 * does. The database decides what matched; the slug is then compared
+	 * exactly.
+	 *
+	 * @param array<int,array<string,string>> $matches
+	 * @param array<int,string>               $statuses Allowed statuses.
+	 */
+	private static function match_problem( array $matches, string $slug, array $statuses ): string {
+		if ( [] === $matches ) {
+			return 'none';
+		}
+		if ( count( $matches ) > 1 ) {
+			return 'many';
+		}
+		$post = $matches[0];
+		if ( 'trash' === $post['post_status'] || $slug . '__trashed' === $post['post_name'] ) {
+			return 'trashed';
+		}
+		if ( $slug !== $post['post_name'] ) {
+			return 'name';
+		}
+
+		return in_array( $post['post_status'], $statuses, true ) ? '' : 'status';
+	}
+
+	/**
+	 * Use saves the match's ID, so the normal "ID saved" steps finish it;
+	 * Skip leaves the match untouched and saves a note.
+	 *
+	 * @return true|\WP_Error
+	 */
+	private function apply_resolve( array $offer, string $choice ) {
+		$use = 'use' === $choice;
+
+		if ( 'image' === $offer['kind'] ) {
+			$fields = $use
+				? [ 'status' => StarterImportRepository::IMAGE_CREATED, 'attachment_id' => (int) $offer['found'] ]
+				: [
+					'status' => StarterImportRepository::IMAGE_OMITTED,
+					/* translators: %s: image file name. */
+					'note'   => sprintf( __( 'Image %s could not be confirmed after an interrupted import, so it was left out.', 'bingocommerce-catalog' ), $offer['label'] ),
+				];
+
+			return StarterImportRepository::update_image( (int) $offer['id'], $fields );
+		}
+
+		if ( $use ) {
+			return StarterImportRepository::update_item(
+				(int) $offer['id'],
+				[
+					'status'        => StarterImportRepository::ITEM_CREATED,
+					'wc_product_id' => (int) $offer['found'],
+				]
+			);
+		}
+
+		if ( 'variation' === $offer['kind'] ) {
+			$data = json_decode( (string) ( $offer['row']['version_data'] ?? '' ), true );
+			/* translators: %s: variation attributes, for example "Blue". */
+			$note = sprintf( __( 'Variation %s skipped: its creation was interrupted and could not be confirmed.', 'bingocommerce-catalog' ), self::variation_label( is_array( $data ) ? $data : [] ) );
+		} else {
+			$note = __( 'Its creation was interrupted and could not be confirmed, so it was skipped. Check your products and add it by hand if it is missing.', 'bingocommerce-catalog' );
+		}
+		$skipped = $this->skip( $offer['row'], $note );
+
+		return is_wp_error( $skipped ) ? $skipped : true;
+	}
+
+	private static function resolve_changed(): \WP_Error {
+		return self::error( 'starter_import_resolve_changed', 'The import changed after this page was loaded, so nothing was changed. Reload this page.' );
 	}
 
 	/* ------------------------------------------------------------------ *
@@ -758,7 +1194,7 @@ final class StarterImporter {
 				return $image;
 			}
 			if ( StarterImportRepository::IMAGE_OMITTED === $image ) {
-				$notes[] = $this->image_note( (int) $data['image_id'] );
+				$notes[] = $this->image_note( (int) $receipt['import_id'], (int) $data['image_id'] );
 			} else {
 				$image_id = (int) $image;
 			}
@@ -879,7 +1315,7 @@ final class StarterImporter {
 				return $image;
 			}
 			if ( StarterImportRepository::IMAGE_OMITTED === $image ) {
-				$notes[] = $this->image_note( $version_image_id );
+				$notes[] = $this->image_note( (int) $receipt['import_id'], $version_image_id );
 				continue;
 			}
 			$resolved[ $version_image_id ] = (int) $image;
@@ -934,7 +1370,7 @@ final class StarterImporter {
 			if ( null !== $state && 'attachment' === $state['post_type'] && 'trash' !== $state['post_status'] ) {
 				return $attachment_id;
 			}
-			$omitted = StarterImportRepository::update_image( (int) $row['import_image_id'], [ 'status' => StarterImportRepository::IMAGE_OMITTED, 'note' => $this->image_note( $version_image_id ) ] );
+			$omitted = StarterImportRepository::update_image( (int) $row['import_image_id'], [ 'status' => StarterImportRepository::IMAGE_OMITTED, 'note' => $this->image_note( $import_id, $version_image_id ) ] );
 
 			return is_wp_error( $omitted ) ? $omitted : StarterImportRepository::IMAGE_OMITTED;
 		}
@@ -1872,7 +2308,13 @@ final class StarterImporter {
 		return sprintf( __( 'SKU %s is already used in this store, so this product was added without a SKU.', 'bingocommerce-catalog' ), $sku );
 	}
 
-	private function image_note( int $version_image_id ): string {
+	private function image_note( int $import_id, int $version_image_id ): string {
+		// A note saved with the image (a Resolve Skip) says why it was left out.
+		$row = StarterImportRepository::image( $import_id, $version_image_id );
+		if ( is_array( $row ) && '' !== (string) ( $row['note'] ?? '' ) ) {
+			return (string) $row['note'];
+		}
+
 		$version_image = StarterCatalogVersions::image( $version_image_id );
 		$name          = is_array( $version_image ) ? wp_basename( (string) $version_image['file_path'] ) : (string) $version_image_id;
 
@@ -1889,20 +2331,22 @@ final class StarterImporter {
 	 * import and the transition, so a repeated transition collides with the
 	 * audit table's unique key instead of duplicating. An audit failure never
 	 * repeats import work.
+	 *
+	 * @return bool Whether the event is recorded (Resolve requires it).
 	 */
-	private function audit( string $event, array $receipt, array $context ): void {
+	private function audit( string $event, array $receipt, array $context ): bool {
 		if ( ! class_exists( AuditLog::class ) ) {
-			return;
+			return false;
 		}
 
 		$operation_id = self::operation_id( (string) $receipt['import_uuid'], $event . '|' . wp_json_encode( $context ) );
 		// Already recorded (for example the same failure again): skip rather
 		// than let the unique key reject a duplicate insert.
 		if ( is_array( AuditLog::find_operation_witness( $operation_id ) ) ) {
-			return;
+			return true;
 		}
 
-		AuditLog::record(
+		$recorded = AuditLog::record(
 			[
 				'blog_id'        => (int) get_current_blog_id(),
 				'actor_user_id'  => get_current_user_id() > 0 ? (int) get_current_user_id() : null,
@@ -1915,6 +2359,8 @@ final class StarterImporter {
 				'operation_id'   => $operation_id,
 			]
 		);
+
+		return ! is_wp_error( $recorded );
 	}
 
 	/** A deterministic UUID in version 4 layout for one import transition. */

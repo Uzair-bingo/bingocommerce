@@ -6580,3 +6580,105 @@ Portal request was performed.
 - Next: slice 5.3, Super Admin Resolve (the page continues the import
   automatically after a successful Resolve).
 - Not committed by Claude; no push or deployment.
+
+### 2026-10-20 — ADR-049 stage 5, slice 5.3: Super Admin Resolve
+
+- When a request stops after WordPress created a product, variation or image
+  but before its ID was saved, the import stops at Needs attention (slice
+  3). Resolve (ADR-049 section 13) is now on the Hall's Starter Products page
+  for **Super Admins only**; Hall Managers still see only the support
+  reference. Example: "Dab O Ink: its creation started, but its product ID
+  was not saved. One matching draft was found: #345." with a required reason,
+  **Use it and continue** and **Skip this item**.
+- `StarterImporter::resolution()` (read-only) and `resolve()` live in the
+  importer, so they use the importer's own access check (Super Admin, Hall
+  site, Hall not blocked or suspended, Catalog schema current) and its own
+  Play Product / Package check, with no code moved. Use is offered only for
+  exactly one match by recovery identifier, searched in every status
+  (products and images also as `…__trashed`): a product that is a Draft of
+  the item's saved type (read fresh from WooCommerce) with no
+  `bingo_play_products` or `bingo_packages` row, archived included
+  (classification metadata ignored); a variation that is enabled or
+  disabled, under the saved parent, which is still the import's Draft; an
+  `inherit` image whose original (`wp_get_original_image_path()`, so a
+  "-scaled" copy counts) is the planned path with the version checksum. The
+  database decides what matched and the slug is then compared exactly.
+  Anything else offers Skip only, with the reason shown. A database error
+  stops with nothing offered, never "not found".
+- On click, under the Hall import lock, the offer is worked out again and
+  must equal what the page showed (target and match), or nothing changes
+  ("The import changed after this page was loaded…"). The choice and reason
+  (required, up to 500 characters) are recorded as
+  `starter_import.resolved` **before** anything changes; if that record
+  cannot be saved, nothing changes. Use saves the match's ID, so the normal
+  "ID saved" steps finish that same product, variation or image (image sizes
+  resume). Skip leaves the match untouched and saves a note: "Its creation
+  was interrupted and could not be confirmed, so it was skipped. Check your
+  products and add it by hand if it is missing.", "Variation Blue skipped:
+  …" or "Image photo-x.png could not be confirmed after an interrupted
+  import, so it was left out." The import is marked as importing before the
+  choice is applied, and the page carries on automatically (the agreed
+  stage 5 decision). New
+  imports switched off do not block Resolve; a blocked or suspended Hall
+  does.
+- Importer changes outside Resolve: an image left out shows the note saved
+  with it, when there is one, so a Resolve Skip is not reported as "deleted
+  in this store" (existing notes are unchanged); the importer's audit helper
+  now reports whether the event was saved (existing callers ignore it).
+- Review fix (2026-10-20): an interrupted Resolve could leave the import
+  stuck. The item was changed first and the import status second, so if the
+  second write failed the import still said Needs attention while nothing
+  needed attention ("What needs attention could not be found"), and
+  Continue could not move on. The order is now: record the choice, mark the
+  import as importing, then apply the choice, checking each write. A failed
+  status write changes nothing and offers the same Resolve again; a failed
+  item write leaves the item waiting, so Continue stops at it and Resolve is
+  offered again.
+- `StarterImportRepository` gains two indexed reads: the import's first
+  product or variation needing attention (with its parent's product ID and
+  version data) and its first image needing attention.
+- Page: one admin-ajax action as before, with a `resolve` step that accepts
+  only `target`, `choice`, `found` and `reason` (each a string, `found` a
+  plain number), Super Admins only; Start and Continue still accept no
+  extra fields. The script sends the offer shown, requires a reason before
+  sending, shows server text as text, hides the box after a successful
+  Resolve and continues the import. The 5.1 page test's "unknown step" case
+  now uses `publish`, because `resolve` is a real step.
+- Runbook `docs/runbooks/starter-catalog-testing.md`: what a Super Admin
+  sees, and the new suite's command; Resolve needs a crashed request, so it
+  is verified by the automated suite.
+- New harness `tests/starter-import-resolve.php`. Verification PASS against
+  the guarded `bingocommerce_state_recon` fixture, run twice: **237
+  assertions, zero failures** each time. Stuck imports are made by the
+  existing crash worker (crashes inside the product, variation and
+  attachment inserts, and after a product save). It covers every Resolve row
+  of ADR-049 section 19, including Use completing the same product,
+  variation or image (sizes resumed, also after a "-scaled" copy), Skip
+  leaving the match byte-identical, pending/private/published/scheduled and
+  type changes, Play Product and archived Package rows, metadata ignored,
+  two and trashed matches, a collation-only slug match, injected database
+  errors, a Catalog schema that is not current, a change after the page view,
+  a Hall Manager, a blocked Hall, imports switched off, the reason rules, the
+  Hall lock, an audit failure changing nothing, the page box, the
+  admin-ajax step, and interrupted writes (a failed import status write and
+  a failed item write, for Use and Skip on a product, a variation and an
+  image). Thirty-two mutations (each protection removed in turn, the old
+  write order included: 52 failures)
+  all make tests fail; the sources were restored byte-identical. The
+  rendered Resolve box and the script were also exercised in the built-in
+  browser with the installed WordPress CSS and a mocked server (no
+  development data touched): Use continuing to completion, an empty reason
+  sending nothing, an out-of-date offer refused with Reload, a Skip-only box,
+  server text containing HTML shown as text, and the error box.
+- Regression on the same fixture: `tests/starter-import-page.php` 65,
+  `tests/starter-import-notice.php` 38, `tests/starter-catalog-admin.php` 51,
+  `tests/starter-catalog-master.php` 121,
+  `tests/starter-catalog-publish.php` 156, `tests/starter-import-media.php`
+  288, `tests/starter-import-recovery.php` 245,
+  `tests/starter-import-schema.php` 118, `tests/package-addons-schema.php`
+  196, `tests/customer-cart-increment-1.php` 140 and
+  `tests/customer-electronic-limits.php` 679, all with zero failures.
+- Stage 5 (the Hall's Starter Products page, the dashboard notice and
+  Resolve) is complete in code. Next: stage 6, integration and browser
+  verification on the development network.
+- Not committed by Claude; no push or deployment.
