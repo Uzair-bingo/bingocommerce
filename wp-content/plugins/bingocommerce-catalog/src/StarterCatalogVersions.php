@@ -9,7 +9,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 /**
  * ADR-049 read side of the published starter catalog versions.
  *
- * Halls only ever read versions; writing them is the Publish step (stage 4).
+ * Halls only ever read versions; StarterCatalogPublisher writes them.
  * A Hall request reads these network tables directly, so it never switches to
  * the main site.
  *
@@ -31,6 +31,8 @@ if ( ! defined( 'ABSPATH' ) ) {
  *   manage_stock, enabled (bool), tax_class (slug, '' or 'parent'),
  *   description, image_id.
  * Attribute keys are sanitize_title() of the attribute name.
+ * Publish also stores `_terms` (the product's category and tag entries) and
+ * builds the version's `terms` column from them; the importer ignores it.
  * The version's `terms` column holds the category tree and tag list:
  *   { "product_cat": [ {slug, name, parent} ], "product_tag": [ {slug, name} ] }
  * where `parent` is a category slug or ''.

@@ -6290,3 +6290,90 @@ Portal request was performed.
   `tests/customer-electronic-limits.php` 679, all with zero failures.
 - Next: slice 4.2, the Publish engine.
 - Not committed by Claude; no push or deployment.
+
+### 2026-10-19 — ADR-049 stage 4, slice 4.2: the Publish engine
+
+- New `StarterCatalogChecks`: cleans and checks one main-site product for
+  Publish; the Start pre-check and every capture use it. Cleaning uses
+  WordPress's own rule per field whoever publishes (the title kses filter for
+  the name, `wp_kses_post()` for descriptions); removed content is a warning,
+  never a block. Every ADR-049 section 6 blocking rule is checked and named
+  with the product (and variation): not Draft/Pending/Private, not simple or
+  variable, downloadable, empty cleaned name, invalid price, missing,
+  unsupported, over-5 MB or over-4,000 px image, embedded image, main-site
+  link or registered shortcode in a description, global attribute (simple and
+  variable), no variations, and each variation's status, download, price and
+  image. Images are checked from their original file (not "-scaled").
+- New `StarterCatalogPublisher` (Super Admins only; every mutation takes the
+  publish lock): `start()` checks every included product and creates nothing
+  when one blocks; otherwise it creates the Building version (currency and
+  "prices include tax" saved) and saves the whole selection with ONE
+  multi-row INSERT. `continue_build()` captures at least one product per
+  request: checks it again, freezes its images (one row and file per source
+  image per version, copied through a temporary file and checksum-verified;
+  a retry reuses the row and its fixed path `v<version>/<image>/<name>.<ext>`),
+  replaces its variation rows and writes the data the importer reads. The
+  final check marks any changed product pending and stops with "<product>
+  changed during publication. Select Resume to capture it again." (product,
+  added/removed/edited variation, or frozen image); a changed currency or tax
+  setting stops for Discard; unreferenced image rows and temporary files are
+  removed; the version becomes Published with its counts and category/tag
+  list, and `starter_catalog.version_published` is audited (blog_id null).
+  `discard()` marks the version Discarded first, then removes its rows and
+  folder, and can be repeated; `state()` reports the Building version's
+  progress and Discarded versions still to clean. No buttons yet (slice 4.3).
+- ADR-049 section 6 now records these recovery rules; section 17 records the
+  accepted limit that a request stopping between publication and its audit
+  record leaves that audit event unrecorded.
+- Review fixes (2026-10-19): every database read in the final check,
+  `current_posts()` and `state()` is checked straight after its own query (a
+  failed `get_results()` returns an empty array and the next query clears the
+  error; before this fix a failed product read followed by a successful image
+  read would have removed every image and published an empty version). The
+  frozen slug follows the full ADR rule (source slug, else from the cleaned
+  name, else `starter-product-<source ID>`). Category chains are checked the
+  way the importer resolves them, through the new shared
+  `StarterImporter::MAX_CATEGORY_DEPTH` (20; behaviour unchanged): deeper
+  chains, parent loops and unreadable parents are problems, shared ancestors
+  are fine. The variation-row DELETE only touches variation rows, so a
+  conflict fails instead of changing the saved selection. The per-call image
+  cache is cleared at the start of every `continue_build()`.
+- New harness `tests/starter-catalog-publish.php` and its crash worker. The
+  main site's uploads and the frozen folder are temporary folders, never the
+  real uploads. Verification PASS against the guarded
+  `bingocommerce_state_recon` fixture, run twice: **156 assertions, zero
+  failures** each time. Covered: every blocking rule and the warnings, with
+  no version created by a blocked Start; a round trip in which products
+  shaped like the two real samples (15 and 13 colour variations, 28 shared
+  images) and a simple product with attributes, a category tree and tags are
+  published one product per request and then imported into a Hall by the
+  slice 3 importer, every field matching the main site; a crash right after
+  the version row (Discard only); crashes after an image copy, an image row,
+  the variation rows, a product and the final check, each resuming without
+  duplicate rows or files and with stable image row IDs; changes during
+  publication (edited product, added and removed variation with the parent
+  row unchanged, a product that became Published, a tampered frozen image);
+  a currency change; an interrupted and repeated Discard; a published
+  version that cannot be discarded; the saved selection; "already running"
+  from a second connection; a shop manager refused; review fixes: each
+  final-check and `state()` read failing on its own (version stays Building,
+  rows and files unchanged, Resume publishes), `???` / ordinary-name / source
+  slugs published and imported, a shared category ancestor and the deepest
+  accepted 21-level chain imported, one level deeper, a loop and an
+  unreadable parent refused, a top-level row sharing a variation's source ID
+  left in place, and one Publisher object reused across calls repairing a
+  tampered image. Putting back 25 protections (16 original, 9 review fixes)
+  makes their tests fail. One mutation run aborted inside its cleanup (a
+  deliberately looped category hierarchy exhausted memory while terms were
+  deleted) and left its own test rows on the fixture; they were removed by
+  owner token and creation time, and the test now breaks loops in `finally`
+  and resets parents before deleting terms. The fixture main site keeps its
+  two WooCommerce placeholder images and nothing else.
+- Regression on the same fixture: `tests/starter-catalog-master.php` 121,
+  `tests/starter-import-media.php` 288, `tests/starter-import-recovery.php`
+  245, `tests/starter-import-schema.php` 118, `tests/package-addons-schema.php`
+  196, `tests/customer-cart-increment-1.php` 140 and
+  `tests/customer-electronic-limits.php` 679, all with zero failures.
+- Next: slice 4.3, the Publish, Resume and Discard buttons and the manual
+  runbook.
+- Not committed by Claude; no push or deployment.

@@ -126,6 +126,27 @@ Publish runs in small steps:
   last-modified check on each product and variation detects ordinary changes
   during capture; it is not a guarantee against every concurrent edit.
 
+**Recovery rules** (agreed for stage 4 on 2026-10-19):
+
+- The whole selection is saved with one multi-row INSERT after the Building
+  version row. A Building version with no selection rows can only come from an
+  interrupted Start; it is never resumed or published, only discarded.
+- Each source image has one image row and one file per version. A retry reuses
+  the same row (its ID never changes) and overwrites its fixed path.
+- A product, a variation (added, removed or edited) or a frozen image that
+  changed since capture stops the final check with "<product> changed during
+  publication. Select Resume to capture it again." The product is marked
+  pending; Resume checks and captures it again, and shows its problem if it
+  has become invalid. There is no automatic re-capture loop.
+- A changed currency or "prices include tax" setting stops the final check;
+  the version must be discarded.
+- Discard marks the version Discarded before removing its rows and files, and
+  can be repeated until cleanup is complete. A Discarded version is never
+  resumed or published.
+- Start, Continue, publication and Discard take the publish lock and re-check
+  Super Admin authorization; the admin requests also check the nonce and the
+  main site.
+
 **Publish blocks when:**
 
 - no products are selected;
@@ -588,6 +609,8 @@ storage or S3 compatibility (ADR-009) must be confirmed before release.
   same moment can share an SKU.
 - A rare interrupted category save can leave an unused term record.
 - Published versions are kept in v1.
+- A request that stops between a version's publication and its audit record
+  leaves that one audit event unrecorded.
 
 ## 18. Changes to existing decisions (in effect since approval on 2026-10-19)
 

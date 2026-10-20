@@ -37,6 +37,9 @@ final class StarterImporter {
 
 	public const DEFAULT_BUDGET_SECONDS = 5.0;
 
+	/** Deepest category level resolve_category() accepts: a category and 20 ancestors. */
+	public const MAX_CATEGORY_DEPTH = 20;
+
 	private const RECOVERY_PREFIX = 'bcsi-';
 
 	/** Outcome meaning "stopped at a safe point; continue in the next request". */
@@ -1283,7 +1286,7 @@ final class StarterImporter {
 	 * @return int|\WP_Error
 	 */
 	private function resolve_category( string $slug, array $tree, array &$notes, int $depth ) {
-		if ( '' === $slug || $depth > 20 ) {
+		if ( '' === $slug || $depth > self::MAX_CATEGORY_DEPTH ) {
 			return self::error( 'starter_import_version_invalid', 'A starter product category could not be read.' );
 		}
 
