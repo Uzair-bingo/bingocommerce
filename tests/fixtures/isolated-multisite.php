@@ -468,6 +468,9 @@ final class BC_Fixture {
 				'db_version'              => $db_version,
 				'initial_db_version'      => $db_version,
 				'WPLANG'                  => '',
+				// Allow .webp like a real network, so WooCommerce's .webp
+				// placeholder is not re-created on every Re-enable.
+				'upload_filetypes'        => 'jpg jpeg png gif webp',
 			] as $key => $value
 		) {
 			$stmt = $db->prepare( "SELECT COUNT(*) FROM `{$p}sitemeta` WHERE site_id = 1 AND meta_key = ?" );
