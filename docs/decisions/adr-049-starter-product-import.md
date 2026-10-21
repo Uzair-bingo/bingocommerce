@@ -758,8 +758,10 @@ Answered in stage 6 (2026-10-20, isolated fixture, not production):
 - Image processing measured locally with GD and nine image sizes: 28 test
   images shaped like the real samples (2000 x 2000 PNG, 6.1 MB in all) took a
   median of 0.30 s each (slowest 0.35 s); every request ended within the 5 s
-  budget plus one image. Production's image library and timing remain a
-  release check.
+  budget plus one image. On the development network the two real sample
+  products (28 real images, 6.3 MB) imported into Star Bingo Hall in three
+  requests of 0.15 s, 5.1 s and 4.6 s. Production's image library and timing
+  remain a release check.
 
 ## 21. Order of work
 

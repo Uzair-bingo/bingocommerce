@@ -152,6 +152,10 @@
 			} else if (last && last.version_id) {
 				// A version is already building on the server: offer Resume and Discard.
 				showMode('building', last.version_id);
+			} else {
+				// Refused before this page saw a version, for example one being
+				// published from another tab: a reload shows its Resume and Discard.
+				reload.hidden = false;
 			}
 		} finally {
 			setBusy(false);

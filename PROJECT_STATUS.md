@@ -6788,3 +6788,89 @@ Portal request was performed.
 - Next: slice 6.3, the dev-network browser pass and the full regression
   sweep.
 - Not committed by Claude; no push or deployment.
+
+### 2026-10-20 — ADR-049 stage 6, slice 6.3: dev-network browser pass and full regression sweep
+
+- No code changed. Stage 6 is complete: new and legacy Hall scenarios pass
+  (slices 6.1–6.3) and image timing is measured.
+- Full regression sweep, every suite on its documented fixture:
+  - `bingocommerce_state_recon`: all 36 suites pass, including every
+    starter suite (master 121, publish 156, admin 51, schema 118, recovery
+    245, media 288, page 65, notice 38, resolve 237, scale 62) and the
+    storefront, checkout, cart, electronic limits, order recording, ticket
+    wait, entitlement, Hall Staff, homepage, Package add-on, Portal SSO, QR,
+    Session and Store Details suites;
+  - `bingocommerce_state_provisioning`: platform Hall site provisioning
+    504/504, Portal provisioning endpoint 50361/50361, starter integration
+    54/54;
+  - the pure QR adapter (51) and domain (168) contracts pass;
+  - not run by rule: `tests/portal-http-client.php` and
+    `tests/portal-snapshot-validator.php` boot the development installation
+    (`wp-load.php`); the `-request` and `-control` files are workers their
+    parent suites start;
+  - fixture problems, not code failures (nothing in the starter import
+    touches these areas): on `bingocommerce_state_test`, hall-commerce-access
+    and hall-commerce-handlers refuse to start because a Hall mapping and
+    Hall tables from earlier runs are present, and hall-commerce-state's one
+    failure says the database `bingocommerce_state_test_scratch` must be
+    removed by hand (portal-provisioning-foundation passes 551/551); on
+    `bingocommerce_state_test_suites`, site 2's tables are missing
+    (`bc_2_options`), so its suites cannot boot (portal-integration-foundation
+    passes 77); `tests/catalog-transport-errors.php` refuses to run directly
+    ("scratch is reserved for ownership controls"). Repairing these fixtures
+    is left for a separate task.
+- Browser pass on the development network (`bingocommerce.test`), as a
+  Network Super Admin in the desktop app's browser; interruptions were made
+  by failing the page's next request from the browser, the same effect as
+  going offline. Decisions agreed beforehand: Star Bingo Hall only, Versions
+  1 and 2, other-user steps skipped.
+  - Network Admin checklist: steps 1, 2, 4–15 pass. Highlights: the refused
+    Publish lists "1on Bingo Paper … is Published; it must be Draft,
+    Pending or Private." and creates nothing; "Version 1 is published with 2
+    products." in six requests (1.1 s, then 0.07–0.24 s each); `v1/` holds
+    28 folders with one image each (6.3 MB), no `.part` files; an
+    interrupted Publish offers Resume and Discard, Resume gives "Version 2
+    is published with 2 products.", Discard shows the exact confirmation and
+    "The version was discarded." with no folder left; the second tab gets
+    "A version is already being published. Resume or Discard it first.";
+    the imports switch turns on and off.
+  - Finding, fixed the same day: after that second-tab refusal the page
+    offered no Resume, Discard or Reload link, because
+    `starter-catalog-admin.js` shows Resume and Discard only for a version the
+    page itself saw. When a request fails before the page has seen a version,
+    it now shows **Reload this page**, and the reload brings up Resume and
+    Discard. Checked on the development network with the refusal mocked
+    (nothing was published); `tests/starter-catalog-admin.php` still passes
+    51. Runbook step 14 updated.
+  - Star Bingo Hall: H1–H7, H9, H10 and N1, N2 (dismiss), N3, N5 (Super
+    Admin part), N6 pass. Imports off: "Starter product imports are turned
+    off right now." and no notice; on: "2 starter products are available."
+    and the "available" notice. The import was interrupted after its second
+    request (0.15 s, then 5.1 s, which finished "1on Bingo Paper" with 15
+    variations and images and created "Dab O Ink"): "The request did not
+    complete…" with Continue Import; the page showed "Importing product 2 of
+    2 (variation 1 of 13)."; the unfinished Dab O Ink edit screen warned
+    "This product is still being imported. Changes may be replaced." while
+    the finished import and the Hall's own "1on" did not; the dashboard said
+    "… import isn't finished." with new imports off; Dismiss returned to
+    the dashboard without it; Continue Import (imports still off) finished in
+    one 4.6 s request: "Import finished on 10/20/2026: 2 products imported,
+    0 skipped.", with the note "1on Bingo Paper By The Case 9,000 Sheets,
+    variation Blue: SKU S0101BSP9 is already used in this store, so this
+    product was added without a SKU." The drafts show $36.15 (out of stock)
+    and $1.06–$13.12 (in stock); the Hall's own product keeps SKU S0101BSP9.
+  - Skipped as agreed (covered by the automated suites): 3, 16, 17, H8, N2's
+    second Manager and N5's Game Operator; N4 was not observable after the
+    dismissal (the dismissal also hides the "finished" case for that user).
+- Development data changed by the pass: on the main site, "Dab O Ink 3
+  Ounce By the Bottle" (#58) and "1on Bingo Paper By The Case 9,000 Sheets"
+  (#38) are included in the starter catalog and #38 is now Private (it was
+  Published); the duplicate "Dab O Ink … (Copy)" (#85) is in the Trash.
+  Versions 1 and 2 are published (kept in v1; `uploads/bingo-starter-catalog/v1/`
+  and `v2/`); the two interrupted builds were discarded. Star Bingo Hall's
+  import is complete for good, with new drafts #91 and #122, their
+  variations and 28 images, and the notice is dismissed for the admin
+  account there. New Hall imports are Off.
+- Next: stage 7, release (production settings, storage and image library,
+  then a test-environment import before new imports are turned on).
+- Not committed by Claude; no push or deployment.
