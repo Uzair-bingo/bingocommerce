@@ -6874,3 +6874,29 @@ Portal request was performed.
 - Next: stage 7, release (production settings, storage and image library,
   then a test-environment import before new imports are turned on).
 - Not committed by Claude; no push or deployment.
+
+### 2026-10-21 — ADR-049 stage 7, slice 7.1: release checklist
+
+- New runbook `docs/runbooks/starter-catalog-release.md`: (A) server and
+  network checks with how to check and what passes (storage, frozen folder,
+  image library, PHP limits, upload quota, `MEDIA_TRASH` and
+  `DISALLOW_UNFILTERED_HTML`, no admin page caching, per-Hall object cache,
+  main-site currency and tax, who can publish, plugins and schema); (B) a
+  test-environment run (publish, import into a test Hall with one
+  interruption, timing, result check); (C) production go-live (publish, turn
+  on new Hall imports, first Hall, record); (D) the off switch and recovery.
+- Open blocker: production storage. The frozen starter images and each
+  Hall's imported images are written to the server's own disk. One server,
+  or several sharing an uploads disk, works as built; several web servers
+  with S3-only uploads would need new work and an ADR-049 change (stage
+  7.2). As of 2026-10-21 neither a test environment nor the hosting and S3
+  providers are chosen, so new Hall imports must stay off in production.
+- ADR-049 section 20: the recovery-identifier open check is answered by
+  design (64 random bits, a unique key in the Hall's import tables, and
+  Resolve offers only Skip when two posts match); the remaining release
+  checks point to the new runbook. The attribute lookup check was answered
+  in slice 6.2.
+- Docs only; no code changed. Next: decide production storage and a test
+  environment, then run the release runbook (stage 7.3), with 7.2 only if
+  storage needs it.
+- Not committed by Claude; no push or deployment.

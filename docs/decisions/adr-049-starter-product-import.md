@@ -763,6 +763,21 @@ Answered in stage 6 (2026-10-20, isolated fixture, not production):
   requests of 0.15 s, 5.1 s and 4.6 s. Production's image library and timing
   remain a release check.
 
+Answered in stage 7 (2026-10-21, by design):
+
+- Recovery identifiers cannot silently collide. Each is `bcsi-` plus 16
+  random hexadecimal characters (64 random bits), and the Hall's import item
+  and image tables each have a unique key on it, so a repeated identifier
+  fails its insert and the import stops with an error instead of reusing it
+  (Retry then draws a new one).
+  The identifier is only searched by Resolve, where two matching posts mean
+  Skip only; it can never select the wrong product, variation or image.
+- The remaining release checks (production settings, administrators,
+  storage, image library and timing) are in
+  `docs/runbooks/starter-catalog-release.md`. Production storage is the open
+  blocker: the frozen images live on the server's own disk, which is not
+  enough for several web servers with S3-only uploads.
+
 ## 21. Order of work
 
 | Stage | Work | Done when |
