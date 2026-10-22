@@ -578,7 +578,7 @@ Production deployment is not claimed. Identity/role mapping is defined in
   the Bingo Package's digital entitlement. Refund handling is separate from Android
   redemption-limit enforcement. (BR-046, amends and narrows BR-011)
 
-## Starter Products (BR-086 / ADR-049; approved, not implemented)
+## Starter Products (BR-086 / ADR-049; approved; implemented and verified in local development; production release pending)
 - Bingo Innovation keeps one master starter catalog on the network main site.
   Only Network Super Admins choose the included products and publish them; each
   publish creates a numbered version that never changes afterwards. (BR-086,

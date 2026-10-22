@@ -47,8 +47,10 @@ Request -> hallname.parent-domain.com
            ordinary merchandise get none (BR-043/BR-044)
         -> authorized customer order view renders the QR; paid-order email
            provides a link to that view, not an embedded QR
-        -> Game Operator scanning, Android redemption, device binding and
-           accumulated per-tablet usage remain future work (BR-041/BR-045/BR-055)
+        -> Caller-relayed server redemption, tablet binding and accumulated
+           per-tablet usage are implemented in the backend (ADR-047;
+           BR-041/BR-045/BR-055); Android loading, Game Operator scanning and
+           staff reactivation remain separate work
 ```
 Platform administration uses WordPress Network Admin as the trusted entry
 context, with BingoCommerce custom network-level modules/services implementing
@@ -138,10 +140,10 @@ automatic Enable/Disable. See
   `bingo_tickets` stores one opaque token and issue time per entitlement. A
   Paper-only Package has no entitlement or ticket; an eligible paid Digital or
   Hybrid Package gets one QR reference for its digital entitlement only
-  (BR-043/BR-044). Android device binding, redemption records and staff
-  reactivation history remain future storage/design work; do not treat proposed
-  `blog_id`, device, redemption or reactivation fields as existing ticket-table
-  columns (BR-010/BR-045/ADR-029/ADR-030).
+  (BR-043/BR-044). Tablet binding and the redemption ledger exist in the
+  Digital Tickets tables (ADR-047); staff reactivation history and Android
+  loading remain future work. Do not treat proposed `blog_id` or reactivation
+  fields as columns of the ticket table itself (BR-010/BR-045/ADR-029/ADR-030).
 - Catalog/Session persistence (ADR-031, narrowed by ADR-035 and extended in the
   current repository by approved ADR-043): WooCommerce
   products are commerce shells. The current implementation has eleven per-site
@@ -273,12 +275,14 @@ automatic Enable/Disable. See
   no embedded QR or separate QR email sender exists. Zero-total orders and
   unknown/invalid historical totals do not create entitlements. Do not hardcode
   a WooCommerce order-status name as the payment-confirmation rule.
-- Redemption accumulation (BR-045, BR-055, BR-073, ADR-030/ADR-035) remains
-  future work: Android caller/device binding, Game Operator scanning and
-  redemption are not implemented. The approved future scope is Hall + exact
-  dated occurrence + device + Game Type, with each Package/receipt accepted or
-  rejected as a whole against the effective electronic limit. A Session
-  starting does not automatically expire a valid QR (BR-056).
+- Redemption accumulation (BR-045, BR-055, BR-073, ADR-030/ADR-035/ADR-047)
+  is implemented in the backend: Caller-relayed server redemption with tablet
+  binding, per Hall + exact dated occurrence + device + Game Type, each
+  Package/receipt accepted or rejected as a whole against the effective
+  electronic limit. The Android app's loading and Game Operator scanning, and
+  staff reactivation, remain separate work; production deployment is not
+  claimed. A Session starting does not automatically expire a valid QR
+  (BR-056).
 - Reporting facts (BR-054): purchase/payment date and Session attribution are
   separate. Do not move a Monday payment for Tuesday's Session onto Tuesday's
   payment/accounting date.

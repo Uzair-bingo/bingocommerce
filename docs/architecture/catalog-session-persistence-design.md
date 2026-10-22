@@ -1289,7 +1289,7 @@ Owns:
   read-only effective-limit resolver.
 - The ADR-049 starter catalog and the Hall's one-time starter product import
   (ordinary WooCommerce products only; no Bingo Play Products), owned by
-  Catalog (approved; not implemented). Game Types instead synchronize under
+  Catalog (implemented and verified in local development; production release pending). Game Types instead synchronize under
   ADR-035.
 - Current per-site Catalog migration/version state:
   `bc_catalog_db_version = 6`, recorded only after all five Catalog schemas
@@ -1322,7 +1322,7 @@ Owns:
   initialization, triggering existing per-site BingoCommerce migrations and
   role provisioning, and returning a structured setup result to
   `bingocommerce-portal-integration`. Provisioning never copies starter
-  products; under ADR-049 (approved; not implemented) a Hall Manager may import
+  products; under ADR-049 (implemented and verified in local development; production release pending) a Hall Manager may import
   them once later through Catalog. Game Type synchronization follows ADR-035.
 
 ### `bingocommerce-portal-integration`
@@ -1376,7 +1376,7 @@ implemented and tested. The Portal Global Admin Enable/Suspend/Re-enable/Retry
 controls are implemented and tested. A user-performed local-development Open
 Store → Suspend → Re-enable workflow passed against one mapped WordPress
 multisite test site, and re-enable reused the same site. Starter products are
-not part of provisioning: ADR-049 (approved; not implemented) replaces the
+not part of provisioning: ADR-049 (implemented and verified in local development; production release pending) replaces the
 deferred copy with an optional one-time import that the Hall starts (narrowing
 ADR-027; BR-086 amends BR-047).
 

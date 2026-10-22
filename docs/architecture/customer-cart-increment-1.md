@@ -888,8 +888,9 @@ at 320, 375 and 1440px through real php-cgi requests when
 `BC_CHECKOUT_RECOVERY_BROWSER=1`.
 
 **Pending (not implemented):** invalid-selection price fallback; the fixed "1"
-Package quantity display; missing-ticket feedback and offline-payment QR
-issuance; the old-order payment policy and suspension access; coupons (last).
+Package quantity display; missing-ticket feedback for offline-payment orders
+(online card orders have the ticket waiting area, ADR-046) and offline-payment
+QR issuance; the old-order payment policy and suspension access; coupons (last).
 
 ## Verification and next boundary
 

@@ -3254,7 +3254,9 @@ Everything below is tracked work that is NOT a blocker to that demo.
    one-time Hall import of ordinary WooCommerce simple and variable products
    (product-level attributes only) from a published main-site catalog; Game
    Types still follow ADR-035 synchronization and Enable still creates an empty
-   store. Not implemented; next is stage 3, the storage and recovery proof.
+   store. Implemented and verified in local development (stages 3-6, see
+   the 2026-10-19 to 2026-10-21 entries); production release pending (stage
+   7).
 8. Package hard delete, including BR-065's mandatory linked-product
    disposition. No hard delete exists in any Catalog entity today.
 9. Checkout review follow-ups still pending after the 2026-10-03 recovery
@@ -6793,7 +6795,9 @@ Portal request was performed.
 
 - No code changed. Stage 6 is complete: new and legacy Hall scenarios pass
   (slices 6.1–6.3) and image timing is measured.
-- Full regression sweep, every suite on its documented fixture:
+- Regression sweep of the suites whose fixtures could run (not every project
+  suite completed; the fixture problems that stopped some are listed below and
+  do not show a catalog defect):
   - `bingocommerce_state_recon`: all 36 suites pass, including every
     starter suite (master 121, publish 156, admin 51, schema 118, recovery
     245, media 288, page 65, notice 38, resolve 237, scale 62) and the
@@ -6900,3 +6904,43 @@ Portal request was performed.
   environment, then run the release runbook (stage 7.3), with 7.2 only if
   storage needs it.
 - Not committed by Claude; no push or deployment.
+
+### 2026-10-21 — BingoThemev1 single-product and product-grid UI refinement (ADR-045 / BR-084)
+
+- Updated `wp-content/themes/bingocommerce-bingothemev1/assets/css/main.css`
+  only (native WooCommerce output preserved; no template overrides or PHP
+  changes):
+  - **Single-product gallery & thumbnails:** framed the main gallery viewport
+    (`.flex-viewport` / `.woocommerce-product-gallery__wrapper`) with crisp
+    borders, padding, and `object-fit: contain` so tall product photos (such
+    as bottles) are never cropped; converted `ol.flex-control-thumbs` from
+    WooCommerce's gapless 25% float grid into a responsive CSS Grid with
+    bordered square thumbnails and active state highlighting.
+  - **Product summary card & variable product form:** styled `.summary` as a
+    clean card (`border-radius: var(--radius-lg)`, subtle border and shadow)
+    with a bottom divider under the price; fixed `form.variations_form.cart`
+    so `.variations` and `.single_variation_wrap` stack full-width while
+    `.woocommerce-variation-add-to-cart` lays out `.quantity` and
+    `.single_add_to_cart_button` side-by-side (`12px` gap, `48px` height);
+    styled `table.variations select` (`46px` min-height, custom chevron,
+    rounded border) and the `.reset_variations` pill button; styled the
+    selected variation summary box (`.single_variation`) and in-stock /
+    out-of-stock pill badges (`p.stock`); replaced WooCommerce's default
+    purple (`#7f54b3`) on `.button.alt.disabled` with a clean muted disabled
+    state; structured `.product_meta` (SKU, Category, Tag) with pill badges.
+  - **Tabs, attributes table, and review form:** replaced WooCommerce's
+    default purple-gray tab strip (`ul.tabs`) with a modern underline tab bar
+    and white `.panel` card; styled `table.shop_attributes` and `#reviews` /
+    `#commentform` (2-column Name/Email grid on desktop, 1-column on mobile,
+    gold star rating links, and full-width inputs).
+  - **Product grids (`ul.products` in Related, Upsells, and Shop):** converted
+    `ul.products` (including `columns-1` through `columns-6`) into a
+    responsive CSS Grid (`1–6` columns desktop, collapsing to `2` on tablet
+    and `1` on mobile) and `li.product` into an equal-height flex column with
+    `object-fit: contain` image framing, card-level `:focus-visible` ring, and
+    bottom-aligned prices and CTA buttons.
+- Verified in browser (`star-bingo-hall.bingocommerce.test`) across simple,
+  variable, and priceless/related products plus Shop at `1920px`, `375px`, and
+  `320px` (`scrollWidth == innerWidth`), and ran
+  `BC_TEST_DB=bingocommerce_state_recon php tests/bingothemev1-storefront.php`
+  (`106 passed, 0 failed`).

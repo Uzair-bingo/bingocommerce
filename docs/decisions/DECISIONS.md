@@ -6764,7 +6764,7 @@ by construction, never deleted by anything.
   11, ADR-025, BR-033 and BR-035 as stated in its section 14. Until approved,
   every earlier decision stands unchanged.
 - **ADR-049 — [2026-10-19] — Starter product catalog and one-time Hall import
-  (APPROVED 2026-10-19; not implemented):**
+  (APPROVED 2026-10-19; implemented and verified in local development; production release pending):**
 
   Full record: [`adr-049-starter-product-import.md`](adr-049-starter-product-import.md).
   Business rules: BR-086. Decisions confirmed by the user in discussion
@@ -8641,7 +8641,7 @@ delete_users.
   ("Managed by Portal"). BR-034 and BR-036 apply unchanged.
 
 - **BR-086 — [2026-10-19] — Optional One-Time Starter Product Import (APPROVED
-  2026-10-19; not implemented; amends and narrows BR-047; design: ADR-049):**
+  2026-10-19; implemented and verified in local development; production release pending; amends and narrows BR-047; design: ADR-049):**
 
   1. Bingo Innovation keeps one master starter catalog on the network main
      site. Only Network Super Admins choose the included products and publish

@@ -1,15 +1,16 @@
 # ADR-049 — Starter product catalog and one-time Hall import
 
 - Date: 2026-10-19
-- Status: **Approved** by the user on 2026-10-19. **Not implemented.** The
-  decisions below were confirmed by the user in discussion between 2026-10-17
-  and 2026-10-19, and the written record was reviewed and approved on
-  2026-10-19.
+- Status: **Approved** by the user on 2026-10-19. **Implemented and verified
+  in local development (stages 3-6, 2026-10-19 to 2026-10-21); production
+  release pending (stage 7).** The decisions below were confirmed by the user
+  in discussion between 2026-10-17 and 2026-10-19, and the written record was
+  reviewed and approved on 2026-10-19.
 - Scope: BingoCommerce only (`bingocommerce-catalog`). No Portal, provisioning,
   theme or core change.
 - Business rule: BR-086 (DECISIONS.md) records the business rules in short form.
-- Table, option, class, action and setting names in this record are proposals.
-  They may be renamed during implementation without changing the rules.
+- Table, option, class, action and setting names in this record were
+  proposals; the implemented names are in the code and in PROJECT_STATUS.md.
 
 ## 1. Decisions confirmed by the user
 
@@ -797,5 +798,7 @@ The documentation stage also updates: `business-requirements.md` (starter
 section), `plugin-architecture.md` (ownership, dependency and the schema
 exception), `catalog-session-persistence-design.md` and
 `portal-integration-architecture.md` (the "deferred starter copy" lines),
-AGENTS.md (Platform Admin and Hall Manager summaries), and `PROJECT_STATUS.md`,
-without claiming implementation or production deployment.
+AGENTS.md (Platform Admin and Hall Manager summaries), and `PROJECT_STATUS.md`.
+That stage claimed neither implementation nor production deployment; the
+summaries now say implemented and verified in local development, with the
+production release pending.
