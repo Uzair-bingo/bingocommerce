@@ -887,10 +887,15 @@ truncated or rewritten. `tests/checkout-recovery.php` checks both order pages
 at 320, 375 and 1440px through real php-cgi requests when
 `BC_CHECKOUT_RECOVERY_BROWSER=1`.
 
-**Pending (not implemented):** invalid-selection price fallback; the fixed "1"
-Package quantity display; missing-ticket feedback for offline-payment orders
-(online card orders have the ticket waiting area, ADR-046) and offline-payment
-QR issuance; the old-order payment policy and suspension access; coupons (last).
+**Pending (not implemented):** invalid-selection price fallback; missing-ticket
+feedback for offline-payment orders (online card orders have the ticket waiting
+area, ADR-046) and offline-payment QR issuance; the old-order payment policy
+and suspension access; coupons (last).
+
+**Package quantity (2026-10-23).** Attempts to change a Bingo Package's
+quantity already return to 1. The trash icon removes the Package. The existing
+cart and checkout UI and behavior are accepted. No UI or quantity-enforcement
+change is required.
 
 ## Verification and next boundary
 

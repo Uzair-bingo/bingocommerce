@@ -3260,9 +3260,13 @@ Everything below is tracked work that is NOT a blocker to that demo.
 8. Package hard delete, including BR-065's mandatory linked-product
    disposition. No hard delete exists in any Catalog entity today.
 9. Checkout review follow-ups still pending after the 2026-10-03 recovery
-   increment (not implemented): the invalid-selection price fallback, the
-   fixed "1" Package quantity display, offline-payment QR issuance, the
-   old-order payment policy and suspension access, and coupons (last).
+   increment (not implemented): the invalid-selection price fallback,
+   offline-payment QR issuance, the old-order payment policy and suspension
+   access, and coupons (last).
+   Package quantity display is accepted (2026-10-23): attempts to change a
+   Bingo Package's quantity already return to 1, and the trash icon removes
+   it. The existing UI and behavior are accepted. No UI or
+   quantity-enforcement change is required.
    Missing-ticket feedback now exists for online card orders only (the
    2026-10-04 ticket waiting area, uncommitted); offline payments show nothing,
    as before. The header capture, repeated time text and the
@@ -6944,3 +6948,13 @@ Portal request was performed.
   `320px` (`scrollWidth == innerWidth`), and ran
   `BC_TEST_DB=bingocommerce_state_recon php tests/bingothemev1-storefront.php`
   (`106 passed, 0 failed`).
+
+### 2026-10-23 — Package quantity display accepted
+
+- Documentation only. Attempts to change a Bingo Package's quantity already
+  return to 1, and the trash icon removes it. The existing cart and checkout
+  UI and behavior are accepted. No UI or quantity-enforcement change is
+  required. The fixed "1" Package quantity display is removed from the pending
+  checkout follow-ups in this file and in
+  `docs/architecture/customer-cart-increment-1.md`.
+- No application code, database records, or tests were changed.
