@@ -670,7 +670,8 @@ final class HomepageSessionCalendarTest {
 			foreach ( $xpath->query( '//section[not(ancestor::section)]' ) as $section ) {
 				$order[] = $section->getAttribute( 'id' ) ?: $section->getAttribute( 'class' );
 			}
-			$this->same( [ 'hero', 'bc-home-categories', 'calendar', 'visit-section' ], $order, 'calendar below Shop by Category and before Visit Us' );
+			// The default trust row (2026-10-23) follows the calendar; no testimonials are saved here.
+			$this->same( [ 'hero', 'bc-home-categories', 'calendar', 'bc-home-trust', 'visit-section' ], $order, 'calendar below Shop by Category and before the trust row and Visit Us' );
 			$links = array_map( static fn( DOMElement $a ): string => $a->getAttribute( 'data-calendar-date' ), iterator_to_array( $xpath->query( '//section[@id="calendar"]//a[@data-calendar-date]' ) ) );
 			$this->same( array_keys( $m['dates'] ), $links, 'highlighted dates are exactly the eligible result' );
 			foreach ( $m['dates'] as $date => $entry ) {

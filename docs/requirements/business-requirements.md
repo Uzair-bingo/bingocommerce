@@ -31,7 +31,7 @@ Three roles — do not conflate or merge:
 
 | Role | Scope | Can do | Cannot do |
 |---|---|---|---|
-| **Hall Manager** | One or more owned halls | Products, Packages, add-ons, pricing, inventory, orders, staff, refunds, payment gateway setup; storefront logo, menu links and their order, Store Details, page content, and homepage text, images and map location (homepage controls not yet built); switch between owned halls from one login | Install/activate plugins or themes, alter network config; in v1, rearrange the fixed storefront header/footer, move or reorder homepage sections, or change theme colours/fonts |
+| **Hall Manager** | One or more owned halls | Products, Packages, add-ons, pricing, inventory, orders, staff, refunds, payment gateway setup; storefront logo, menu links and their order, Store Details, page content, and homepage text, images and map location (through Appearance → Homepage and Appearance → Store Details); switch between owned halls from one login | Install/activate plugins or themes, alter network config; in v1, rearrange the fixed storefront header/footer, move or reorder homepage sections, or change theme colours/fonts |
 | **Game Operator** | One hall, floor/session only | Scan/redeem digital tickets, look up redemptions, staff-gated ticket reactivation | Pricing, products, billing — zero access |
 | **Platform Admin** | Network-wide | Provision halls, edit/create products in any hall's store, set billing status, manage retention/export, manage required plugins centrally | Not assigned to any single hall |
 
@@ -55,8 +55,9 @@ Three roles — do not conflate or merge:
   Invalid submissions preserve saved data. The original banner remains when no
   usable slides exist. Multiple slides provide accessible six-second autoplay,
   Pause/Resume, arrows and dots, with reduced-motion support. The homepage
-  Session calendar is described below; other homepage sections and controls
-  remain future work.
+  Session calendar and the other approved homepage sections are described
+  below. All approved homepage sections and their Hall Manager editing
+  controls are complete.
   (BR-084)
 - Shop by Category (2026-10-01): implemented immediately below the slider/banner,
   before Visit Us/map. Appearance → Homepage uses native WordPress navigation
@@ -174,6 +175,16 @@ Three roles — do not conflate or merge:
   selection exceeds this Hall’s digital bingo face limit. Reduce the digital
   add-ons or choose a different Package." (ADR-045 / BR-084 addition
   2026-10-02; BR-032, BR-080–BR-082)
+- Trust row and Testimonials (2026-10-23): two fixed sections after the
+  Session calendar and before Visit Us, each with its own Appearance →
+  Homepage tab and save. The trust row shows the four reference items until
+  the Hall saves its own; Hall Managers may edit, add or remove items, at most
+  four (an icon from four fixed choices, a title of 40 characters, optional text
+  of 80), and an empty saved list hides the row. Testimonials start empty; Hall
+  Managers add or remove up to six (a one-paragraph quote of 420 characters, a
+  name of 60, an optional role of 60), and with none saved the section is not
+  shown at all. Plain text only; dots, not autoplay, switch between quotes.
+  (ADR-045 / BR-084 addition 2026-10-23)
 - One Store Details form holds the Hall's public address, phone, email and
   Facebook, Instagram, YouTube and TikTok links. All fields are optional. The
   public address is separate from WooCommerce's business/tax address, and

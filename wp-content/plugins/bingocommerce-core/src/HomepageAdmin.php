@@ -11,6 +11,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 /** Appearance → Homepage. Same current-Hall boundary as Store Details. */
 final class HomepageAdmin {
 	public const PAGE = 'bingocommerce-homepage';
+	private const TABS = [ 'slider', 'categories', 'trust', 'testimonials' ];
 	private static string $screen = '';
 
 	public static function register(): void {
@@ -34,7 +35,7 @@ final class HomepageAdmin {
 	}
 
 	public static function tab_url( string $tab ): string {
-		return add_query_arg( [ 'page' => self::PAGE, 'tab' => 'categories' === $tab ? 'categories' : 'slider' ], admin_url( 'themes.php' ) );
+		return add_query_arg( [ 'page' => self::PAGE, 'tab' => in_array( $tab, self::TABS, true ) ? $tab : 'slider' ], admin_url( 'themes.php' ) );
 	}
 
 	public static function assets( string $hook ): void {
@@ -46,6 +47,8 @@ final class HomepageAdmin {
 		$base = plugins_url( 'assets/', BINGOCOMMERCE_CORE_PATH . 'bingocommerce-core.php' );
 		wp_enqueue_script( 'bingocommerce-homepage-admin', $base . 'js/homepage-admin.js', [ 'media-views', 'wp-a11y' ], (string) filemtime( BINGOCOMMERCE_CORE_PATH . 'assets/js/homepage-admin.js' ), true );
 		wp_enqueue_style( 'bingocommerce-homepage-admin', $base . 'css/homepage-admin.css', [], (string) filemtime( BINGOCOMMERCE_CORE_PATH . 'assets/css/homepage-admin.css' ) );
+		// Trust row and Testimonials: add/remove only; no media.
+		wp_enqueue_script( 'bingocommerce-homepage-list-admin', $base . 'js/homepage-list-admin.js', [ 'wp-a11y' ], (string) filemtime( BINGOCOMMERCE_CORE_PATH . 'assets/js/homepage-list-admin.js' ), true );
 		wp_localize_script( 'bingocommerce-homepage-admin', 'bcHomepageAdmin', [
 			'slide' => __( 'Slide %d', 'bingocommerce-core' ),
 			'select' => __( 'Select slide image', 'bingocommerce-core' ),
@@ -84,11 +87,22 @@ final class HomepageAdmin {
 			wp_die( esc_html__( 'You are not authorized to manage this Hall’s homepage.', 'bingocommerce-core' ), '', [ 'response' => 403 ] );
 		}
 		$posted = 'POST' === ( $_SERVER['REQUEST_METHOD'] ?? '' ) ? wp_unslash( $_POST ) : null;
-		$category_request = null !== $posted && HomepageCategoriesAdmin::is_request( $posted );
-		$outcome = null !== $posted && ! $category_request ? self::handle_request( $posted ) : null;
-		$category_outcome = $category_request ? HomepageCategoriesAdmin::handle_request( $posted ) : null;
 		// POST identity owns the active editor, including errors; GET tabs never select a save handler.
-		$tab = null !== $posted ? ( $category_request ? 'categories' : 'slider' ) : ( 'categories' === ( $_GET['tab'] ?? null ) ? 'categories' : 'slider' );
+		// Any POST that no other form claims stays a slider request, as before.
+		$section = null === $posted ? null : match ( true ) {
+			HomepageCategoriesAdmin::is_request( $posted ) => 'categories',
+			HomepageTrustAdmin::is_request( $posted ) => 'trust',
+			HomepageTestimonialsAdmin::is_request( $posted ) => 'testimonials',
+			default => 'slider',
+		};
+		$outcome = 'slider' === $section ? self::handle_request( $posted ) : null;
+		$section_outcome = match ( $section ) {
+			'categories' => HomepageCategoriesAdmin::handle_request( $posted ),
+			'trust' => HomepageTrustAdmin::handle_request( $posted ),
+			'testimonials' => HomepageTestimonialsAdmin::handle_request( $posted ),
+			default => null,
+		};
+		$tab = $section ?? ( in_array( $_GET['tab'] ?? null, self::TABS, true ) ? $_GET['tab'] : 'slider' );
 		$stored = HomepageSlider::stored();
 		$values = null !== $outcome && is_wp_error( $outcome['result'] ) && [] !== $outcome['values'] ? $outcome['values'] : ( is_wp_error( $stored ) ? HomepageSlider::blank() : $stored );
 		$errors = $outcome['errors'] ?? [];
@@ -96,7 +110,7 @@ final class HomepageAdmin {
 		<div class="wrap bc-homepage">
 			<h1><?php esc_html_e( 'Homepage', 'bingocommerce-core' ); ?></h1>
 			<nav class="nav-tab-wrapper" aria-label="<?php esc_attr_e( 'Homepage settings', 'bingocommerce-core' ); ?>">
-				<?php foreach ( [ 'slider' => __( 'Homepage slider', 'bingocommerce-core' ), 'categories' => __( 'Shop by Category', 'bingocommerce-core' ) ] as $key => $label ) : ?>
+				<?php foreach ( [ 'slider' => __( 'Homepage slider', 'bingocommerce-core' ), 'categories' => __( 'Shop by Category', 'bingocommerce-core' ), 'trust' => __( 'Trust row', 'bingocommerce-core' ), 'testimonials' => __( 'Testimonials', 'bingocommerce-core' ) ] as $key => $label ) : ?>
 					<a class="nav-tab<?php echo $tab === $key ? ' nav-tab-active' : ''; ?>" href="<?php echo esc_url( self::tab_url( $key ) ); ?>"<?php if ( $tab === $key ) : ?> aria-current="page"<?php endif; ?>><?php echo esc_html( $label ); ?></a>
 				<?php endforeach; ?>
 			</nav>
@@ -127,7 +141,9 @@ final class HomepageAdmin {
 				<?php submit_button( __( 'Save slider', 'bingocommerce-core' ) ); ?>
 			</form>
 			<template id="bc-slide-template"><?php self::slide( '__INDEX__', [ 'image_id' => 0, 'image_position' => 'right-low', 'heading' => '', 'text' => '', 'buttons' => [] ], [] ); ?></template>
-			<?php else : HomepageCategoriesAdmin::render( $category_outcome ); endif; ?>
+			<?php elseif ( 'categories' === $tab ) : HomepageCategoriesAdmin::render( $section_outcome ); ?>
+			<?php elseif ( 'trust' === $tab ) : HomepageTrustAdmin::render( $section_outcome ); ?>
+			<?php else : HomepageTestimonialsAdmin::render( $section_outcome ); endif; ?>
 		</div>
 		<?php
 	}

@@ -5,7 +5,7 @@ independently activatable and testable.
 
 | Plugin | Responsibility | Depends on |
 |---|---|---|
-| `bingocommerce-core` | Roles & capabilities, tenant context helpers, audit log service, migration framework; Hall public storefront profile (Store Details: per-site `bc_store_details`, Appearance → Store Details screen, read-only `bingocommerce_store_details` filter — ADR-045 narrow clarification of ADR-026); Hall homepage slider (`bc_homepage_slider`, Appearance → Homepage, read-only `bingocommerce_homepage_slider` filter — ADR-045 addition 2026-09-30); Hall Shop by Category cards (`bc_homepage_categories`, independent Appearance → Homepage form, read-only `bingocommerce_homepage_categories` — ADR-045 addition 2026-10-01); BR-084 `StorefrontStyleGuard` (on Hall sites only Super Admins may edit/delete/publish `wp_global_styles`; the unavailable Appearance → Fonts entry is removed for everyone else) | WooCommerce (network) |
+| `bingocommerce-core` | Roles & capabilities, tenant context helpers, audit log service, migration framework; Hall public storefront profile (Store Details: per-site `bc_store_details`, Appearance → Store Details screen, read-only `bingocommerce_store_details` filter — ADR-045 narrow clarification of ADR-026); Hall homepage slider (`bc_homepage_slider`, Appearance → Homepage, read-only `bingocommerce_homepage_slider` filter — ADR-045 addition 2026-09-30); Hall Shop by Category cards (`bc_homepage_categories`, independent Appearance → Homepage form, read-only `bingocommerce_homepage_categories` — ADR-045 addition 2026-10-01); Hall trust row and testimonials (`bc_homepage_trust`, `bc_homepage_testimonials`, independent Appearance → Homepage forms, read-only `bingocommerce_homepage_trust` / `bingocommerce_homepage_testimonials` — ADR-045 addition 2026-10-23); BR-084 `StorefrontStyleGuard` (on Hall sites only Super Admins may edit/delete/publish `wp_global_styles`; the unavailable Appearance → Fonts entry is removed for everyone else) | WooCommerce (network) |
 | `bingocommerce-catalog` | Hall-scoped Game Type replica/domain behavior, Bingo Play Product domain metadata/mapping, Bingo Package definitions/components, ADR-044 Package add-on eligibility/configuration, administration and targeted projection reconciliation, BR-032/BR-065 metadata projections, BR-064 network maximum and Hall override settings screens/writers plus the read-only current-value resolver, the ADR-049 starter catalog (main-site selection, Publish, frozen versions) and the Hall's one-time starter product import (implemented and verified in local development; production release pending) (ADR-026/ADR-031/ADR-035/ADR-044/ADR-049; add-on schema Slice 1, backend Slice 2 and admin UI Slice 3 implemented) | core (plus one guarded, read-only Hall-access check from portal-integration, ADR-049) |
 | `bingocommerce-sessions` | Portal Session-template replica; Commerce schedules with immutable named timezone and structured time; dated occurrence generation/reconciliation; inclusive hall-local 30-day window; centralized current-definition membership; Available for Sale; Package assignment; and customer occurrence-before-Package selection, including the read-only, signed-out-safe homepage Session calendar (`HomepageSessionCalendar`, `bingocommerce_homepage_session_calendar` filter — ADR-045 / BR-084 addition 2026-10-01) (BR-050–BR-052/BR-063/BR-073/BR-077/BR-078/BR-080; approved ADR-043) | core, catalog |
 | `bingocommerce-digital-tickets` | Implemented: Hall-local paid entitlement snapshots, refund/cancellation markers, stable customer QR/access, and Caller-relayed server redemption with request recovery, tablet binding and whole-ticket limits. Android loading and staff reactivation remain separate | core, catalog, sessions |
@@ -48,7 +48,14 @@ WooCommerce product. The theme validates the response shape, lays out month
 grids, renders informational Package cards, and adds optional JavaScript that
 only switches already-rendered panels; a missing or unusable provider renders
 "Sessions can't be shown right now." There is no route, rewrite rule, REST/AJAX
-endpoint or Manager control. Other homepage sections remain pending.
+endpoint or Manager control. The trust row and testimonials (ADR-045 / BR-084
+addition 2026-10-23) follow the calendar: Core's `bingocommerce_homepage_trust`
+and `bingocommerce_homepage_testimonials` filters supply plain-text items from
+the non-autoloaded `bc_homepage_trust` and `bc_homepage_testimonials` options,
+each edited in its own Appearance → Homepage tab with a Hall nonce and strict
+count/completion validation, and the theme renders and escapes them. All
+approved homepage sections and their Hall Manager editing controls are
+complete.
 
 The purchase step (ADR-045 / BR-084 addition 2026-10-02) adds no route either.
 Catalog's anonymous `CustomerCartCatalog::addons()` lists a Package's eligible

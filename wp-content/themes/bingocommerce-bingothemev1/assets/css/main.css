@@ -582,6 +582,39 @@ a.calendar-day.is-selected:focus-visible .calendar-day__num { box-shadow: var(--
 	.bc-purchase__result .bc-purchase__success-summary { font-size: 14px; }
 }
 
+/* Trust row: up to four reference-sized items per row, with fewer centered. */
+.bc-home-trust { padding: 56px 0; border-top: 1px solid var(--color-border); border-bottom: 1px solid var(--color-border); }
+.bc-home-trust__list { display: flex; flex-wrap: wrap; justify-content: center; gap: 24px; margin: 0; padding: 0; list-style: none; }
+.bc-home-trust__item { flex: 0 0 calc((100% - 72px) / 4); min-width: 0; display: flex; align-items: center; gap: 14px; }
+.bc-home-trust__icon { display: flex; flex-shrink: 0; color: var(--color-blue); }
+.bc-home-trust__icon svg { width: 24px; height: 24px; }
+.bc-home-trust__body { min-width: 0; }
+.bc-home-trust__body strong { display: block; margin-bottom: 2px; font-size: 15px; color: var(--color-navy); overflow-wrap: anywhere; }
+.bc-home-trust__body p { margin: 0; font-size: 13px; color: var(--color-text-muted); overflow-wrap: anywhere; }
+@media (max-width: 1024px) {
+	.bc-home-trust__list { gap: 32px; }
+	.bc-home-trust__item { flex-basis: calc((100% - 32px) / 2); }
+}
+
+/* Testimonials: one quote at a time; every quote shares one grid cell, so the height never jumps. */
+.bc-home-testimonials { padding: 96px 0; background: var(--color-bg-alt); scroll-margin-top: var(--header-h); }
+.bc-home-testimonials [hidden] { display: none !important; }
+.bc-home-testimonials .bc-home-testimonials__heading { margin-bottom: 48px; }
+.bc-home-testimonials__heading p { margin: 0; color: var(--color-text-muted); font-size: 17px; }
+.bc-home-testimonials__slides { display: grid; max-width: 680px; margin: 0 auto; text-align: center; }
+.bc-testimonial { grid-area: 1 / 1; min-width: 0; margin: 0; padding: 0 16px; }
+.bc-home-testimonials.is-enhanced .bc-testimonial:not(.is-active) { visibility: hidden; }
+.bc-testimonial__quote { margin: 0 0 24px; }
+.bc-testimonial__quote p { margin: 0; font-family: var(--font-display); font-size: clamp(19px, 2.4vw, 24px); font-weight: 600; line-height: 1.4; color: var(--color-navy); overflow-wrap: anywhere; }
+.bc-testimonial__author { display: flex; flex-direction: column; gap: 2px; }
+.bc-testimonial__author strong { font-size: 14px; color: var(--color-navy); overflow-wrap: anywhere; }
+.bc-testimonial__author span { font-size: 13px; color: var(--color-text-muted); overflow-wrap: anywhere; }
+/* 32px tap targets around the reference's 8px dots. */
+.bc-home-testimonials__dots { display: flex; justify-content: center; margin-top: 20px; }
+.bc-home-testimonials__dots button { display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; background: transparent; cursor: pointer; }
+.bc-home-testimonials__dots button::before { content: ""; width: 8px; height: 8px; border-radius: 999px; background: var(--color-border); transition: width .25s var(--ease), background-color .25s var(--ease); }
+.bc-home-testimonials__dots button[aria-current]::before { width: 24px; background: var(--color-blue); }
+
 .section-heading { text-align: center; max-width: 720px; margin: 0 auto; }
 .section-heading h2 { font-size: clamp(28px, 3.5vw, 40px); margin-bottom: 10px; }
 .visit-section { padding: 88px 0; }

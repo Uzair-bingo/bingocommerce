@@ -66,6 +66,8 @@ final class Theme {
 			// Optional purchase step: without it the Package cards stay informational.
 			wp_enqueue_script( 'bingothemev1-homepage-purchase', get_theme_file_uri( 'assets/js/homepage-purchase.js' ), [], self::asset_version( 'assets/js/homepage-purchase.js' ), [ 'in_footer' => true, 'strategy' => 'defer' ] );
 			wp_localize_script( 'bingothemev1-homepage-purchase', 'bingothemev1Purchase', SessionCalendar::purchase_strings() );
+			// Optional: without it the first testimonial stays readable and the dots stay hidden.
+			wp_enqueue_script( 'bingothemev1-homepage-testimonials', get_theme_file_uri( 'assets/js/homepage-testimonials.js' ), [], self::asset_version( 'assets/js/homepage-testimonials.js' ), [ 'in_footer' => true, 'strategy' => 'defer' ] );
 		}
 		wp_enqueue_script(
 			'bingothemev1',

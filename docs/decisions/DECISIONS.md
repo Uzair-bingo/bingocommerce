@@ -6596,6 +6596,48 @@ by construction, never deleted by anything.
   (`miami-bingo-arena.bingocommerce.test`): BingoThemev1 rendered with no PHP
   error and no activation step. No production deployment is claimed.
 
+- **ADR-045 / BR-084 addition — [2026-10-23] — Homepage Trust Row and Testimonials (user-approved, implemented):**
+
+  Core's display-configuration exception now also includes two Hall-local,
+  non-autoloaded current-site options, each version 1, with read-only filters:
+  `bc_homepage_trust` / `bingocommerce_homepage_trust` and
+  `bc_homepage_testimonials` / `bingocommerce_homepage_testimonials`.
+  Appearance → Homepage gains independent "Trust row" and "Testimonials" tabs,
+  each with its own form, Hall-scoped nonce, explicit count and completion
+  markers, notices and save. Slider and Shop by Category forms, settings and
+  routing are unchanged; any POST no other form claims is still a slider
+  request. Authorization is the existing Hall settings boundary; submitted
+  tenant selectors are refused; invalid or truncated submissions save nothing.
+  Reads never repair storage. Display configuration only: it makes no payment,
+  security, quality or catalog decision.
+
+  **Trust row (user decision).** The four reference items (Secure Checkout,
+  Trusted by Bingo Halls, Easy Reordering, Quality Guaranteed, with their
+  reference text and lock/star/refresh/shield icons) are shown while the Hall
+  has never saved the row; nothing is written until a save. A Hall Manager may
+  edit, add and remove items, never more than four: each has one of the four
+  theme-drawn icons, a required plain-text title (40 characters) and optional
+  text (80). Saving an empty list hides the row; it does not restore the
+  defaults. Damaged storage hides the row and warns the administrator.
+
+  **Testimonials (user decision).** None are seeded. A Hall Manager adds or
+  removes up to six; there is no inactive or hidden state. Each has a required
+  one-paragraph plain-text quote (420 characters; the theme adds the quotation
+  marks), a required name (60) and an optional role (60). With none saved, no
+  section, heading or anchor is rendered. The editor asks Managers to publish
+  only real customer words they have permission to use.
+
+  **Presentation.** BingoThemev1 renders the trust row and then the
+  testimonials after the Session calendar and before Visit Us, preserving the
+  reference layout, colours and fonts: four items per row (two at 1024px and
+  below, fewer centered), and a centered single-quote band with the fixed
+  reference heading "Loved by Bingo Communities" / "Don't take our word for
+  it." and `id="about"`. Two or more testimonials get dot buttons (32px targets
+  around the reference 8px dots); there is no autoplay. All quotes share one
+  grid cell, so switching never changes the section height. Without
+  JavaScript the first testimonial is shown and the dots stay hidden. No
+  images, links or HTML are accepted in either section.
+
 - **ADR-046 — [2026-10-05] — Read-Only Digital Ticket Status Route and AGENTS.md Rule 5 Exception (user-approved, implemented):**
 
   **Context.** With Stripe Checkout Sessions, WooCommerce confirms an online card

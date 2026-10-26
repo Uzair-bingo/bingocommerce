@@ -6958,3 +6958,46 @@ Portal request was performed.
   checkout follow-ups in this file and in
   `docs/architecture/customer-cart-increment-1.md`.
 - No application code, database records, or tests were changed.
+
+### 2026-10-23 — Homepage trust row and testimonials (ADR-045 / BR-084 addition), branch `starterImport`, uncommitted
+
+- Core: new `HomepageTrust` / `HomepageTrustAdmin` and `HomepageTestimonials`
+  / `HomepageTestimonialsAdmin`, with Hall-local, non-autoloaded
+  `bc_homepage_trust` and `bc_homepage_testimonials` (version 1) and read
+  filters. Appearance → Homepage has two new tabs, "Trust row" and
+  "Testimonials", each with its own form, Hall nonce, count/completion markers
+  and notices. `HomepageAdmin` now routes category, trust and testimonials
+  POSTs by their own fields; anything else is still a slider request, so the
+  slider and Shop by Category behave as before. One shared admin script,
+  `assets/js/homepage-list-admin.js`, adds and removes items (no media).
+- Trust row: the four reference items show until a Hall saves; Managers may
+  edit, add and remove, at most four. Saving an empty list hides the row.
+  Testimonials: nothing seeded; Managers add or remove up to six; with none
+  saved no section is rendered. Quote limit raised from 280 to 420 characters
+  the same day (user request); name and role stay at 60.
+- BingoThemev1: `template-parts/homepage-trust.php` and
+  `template-parts/homepage-testimonials.php` after the calendar and before Visit
+  Us; four trust icons added to `Template::icon()`; scoped CSS in `main.css`;
+  optional `assets/js/homepage-testimonials.js` (dots only, no autoplay).
+- Tests: new `tests/homepage-trust-testimonials.php` **329 passed / 0 failed**
+  (defaults, saves, limits, refusals, nonce/role/network-admin denial,
+  routing beside slider and categories, rendering and order, Hall A → B → A
+  isolation, main site). `tests/homepage-session-calendar.php` expected
+  section order now includes the default trust row. Re-run: homepage slider
+  222/0, Shop by Category 316/0, Session calendar 357/0, BingoThemev1
+  storefront 106/0, Session purchase 567/0 (all `bingocommerce_state_recon`).
+- Browser (built-in, read-only): `miami-bingo-arena.bingocommerce.test` shows
+  the default trust row after the calendar, 4 per row at 1440px and 2 per row
+  at 375px and 320px, no sideways scroll, and no testimonials section.
+  Testimonials markup exported by the suite was checked on that page with the
+  real script: dots switch quotes, height stays fixed, no overflow at 375px.
+  The exported admin editors were checked with the real admin script: remove
+  renumbers rows, Add stops at the maximum, removing all posts an explicit
+  empty list. A signed-in save through the real WordPress admin was not done
+  here (no credentials used); the PHP suite covers that POST path. No
+  development Hall settings were changed.
+- Review follow-up (2026-10-26): the admin script now finds error-summary
+  links anywhere in Appearance → Homepage, because WordPress moves notices
+  above the tabs; after a removal they point to the renumbered field (checked
+  in the browser). The suite adds direct checks that the trust and testimonial
+  writers themselves refuse a fifth item and a seventh testimonial.

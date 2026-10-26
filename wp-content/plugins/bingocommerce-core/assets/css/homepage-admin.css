@@ -7,3 +7,10 @@
 .bc-homepage .bc-slide__button { border-top: 1px solid #dcdcde; margin-top: 20px; }
 .bc-homepage .bc-slide__error { display: block; color: #b32d2e; margin-top: 6px; }
 .bc-homepage [hidden] { display: none !important; }
+/* Trust row and Testimonials editors. */
+.bc-list-editor { margin-top: 20px; }
+.bc-list-editor fieldset { margin: 24px 0; padding: 20px; border: 1px solid #c3c4c7; background: #fff; }
+.bc-list-editor legend { font-size: 18px; font-weight: 600; padding: 0 6px; }
+.bc-list-editor label { display: block; font-weight: 600; margin-bottom: 6px; }
+.bc-list-error { display: block; color: #b32d2e; margin-top: 6px; }
+.bc-list-editor [hidden] { display: none !important; }

@@ -1,9 +1,9 @@
 <?php
 /**
- * Front page — Core-owned slider and category display configuration (BR-084),
- * with the original Hall-name/Shop fallback, the Sessions-owned Session calendar
- * and public contact/map. Other homepage sections belong to later slices. No
- * purchase or persistence logic here.
+ * Front page — Core-owned slider, category, trust row and testimonial display
+ * configuration (BR-084), with the original Hall-name/Shop fallback, the
+ * Sessions-owned Session calendar and public contact/map. Other homepage
+ * sections belong to later slices. No purchase or persistence logic here.
  */
 
 use BingoCommerce\BingoThemeV1\Template;
@@ -83,6 +83,10 @@ $bingothemev1_slides = is_array( $bingothemev1_slides ) ? $bingothemev1_slides :
 <?php get_template_part( 'template-parts/homepage-categories' ); ?>
 
 <?php get_template_part( 'template-parts/homepage-session-calendar' ); ?>
+
+<?php get_template_part( 'template-parts/homepage-trust' ); ?>
+
+<?php get_template_part( 'template-parts/homepage-testimonials' ); ?>
 
 <?php $bingothemev1_map_url = Template::map_url(); ?>
 <?php if ( Template::has_contact() || '' !== $bingothemev1_map_url ) : ?>

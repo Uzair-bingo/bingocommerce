@@ -235,6 +235,11 @@ final class Template {
 			'search'    => '<circle cx="8.5" cy="8.5" r="5.75" stroke="currentColor" stroke-width="1.6"/><path d="M12.75 12.75l4.5 4.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>',
 			'image'     => '<rect x="2.5" y="3.5" width="15" height="13" rx="2.5" stroke="currentColor" stroke-width="1.6"/><circle cx="7.25" cy="8" r="1.5" stroke="currentColor" stroke-width="1.6"/><path d="M3 14.5l4-4 3.25 3.25L12.5 11.5l4.5 4.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>',
 			'mail'      => '<rect x="2" y="4" width="16" height="12" rx="2.5" stroke="currentColor" stroke-width="1.6"/><path d="M3 5.5l7 5.5 7-5.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>',
+			// Trust row icons, as drawn in the reference homepage.
+			'lock'      => '<rect x="4" y="9" width="12" height="8" rx="2" stroke="currentColor" stroke-width="1.6"/><path d="M6.5 9V6.5a3.5 3.5 0 017 0V9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>',
+			'star'      => '<path d="M10 2.5l2.2 4.6 5 .7-3.6 3.5.9 5-4.5-2.4-4.5 2.4.9-5-3.6-3.5 5-.7L10 2.5z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>',
+			'refresh'   => '<path d="M4 9a6 6 0 0110-4.5M16 4v3.5H12.5M16 11a6 6 0 01-10 4.5M4 16v-3.5h3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>',
+			'shield'    => '<path d="M10 2.5l6 2.2v4.8c0 4-2.6 6.7-6 7.8-3.4-1.1-6-3.8-6-7.8V4.7l6-2.2z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M7.3 10l1.9 1.9L12.7 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>',
 			'facebook'  => '<circle cx="12" cy="12" r="9.5" stroke="currentColor" stroke-width="1.8"/><path d="M13.8 8.6h1.6V6.2h-1.9c-1.7 0-2.7 1-2.7 2.7v1.4H9.2v2.4h1.6V18h2.4v-5.3h1.8l.3-2.4h-2.1V9.2c0-.4.2-.6.6-.6z" fill="currentColor"/>',
 			'instagram' => '<rect x="3" y="3" width="18" height="18" rx="5" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12" r="4.2" stroke="currentColor" stroke-width="1.8"/><circle cx="17.2" cy="6.8" r="1.1" fill="currentColor"/>',
 			'youtube'   => '<rect x="2.5" y="5.5" width="19" height="13" rx="4" stroke="currentColor" stroke-width="1.8"/><path d="M10.2 9.3v5.4l4.6-2.7-4.6-2.7z" fill="currentColor"/>',
