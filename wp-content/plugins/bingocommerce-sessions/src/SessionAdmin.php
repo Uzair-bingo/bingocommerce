@@ -204,9 +204,12 @@ final class SessionAdmin {
 									 * assignability, and it does not bypass the sales window.
 									 * "Schedule-managed" is stated once per row, in the Session
 									 * column next to the name — not repeated here too.
+									 * A PAST date offers neither action: no customer can buy it
+									 * either way, so ON/OFF stays as the record of what the
+									 * Manager last set, and its reason text says why.
 									 */
 									?>
-									<?php if ( $is_active ) : ?>
+									<?php if ( $is_active && ! self::has_passed( $session ) ) : ?>
 										<form method="post" style="display:inline">
 											<?php wp_nonce_field( self::NONCE_ACTION ); ?>
 											<input type="hidden" name="session_id" value="<?php echo esc_attr( (string) $session['session_id'] ); ?>">
@@ -733,6 +736,19 @@ final class SessionAdmin {
 			return __( 'Session date is invalid; sales eligibility is unavailable. Contact Platform Admin.', 'bingocommerce-sessions' );
 		}
 
+		// The reasons Enable Sales is not offered come first, so a row without
+		// the button always says why.
+		if ( false === ( $session['belongs_to_current_definition'] ?? true ) ) {
+			return __( 'This date was removed from its schedule, so it cannot be sold.', 'bingocommerce-sessions' );
+		}
+		if ( self::has_passed( $session ) ) {
+			return sprintf(
+				/* translators: %s: Session date */
+				__( 'Sales closed on %s.', 'bingocommerce-sessions' ),
+				self::display_date( (string) $session['session_date'] )
+			);
+		}
+
 		if ( empty( $session['available_for_sale'] ) ) {
 			return __( 'Available for Sale is OFF.', 'bingocommerce-sessions' );
 		}
@@ -744,6 +760,21 @@ final class SessionAdmin {
 			self::display_date( (string) $session['session_date'] ),
 			self::display_date( SessionService::hall_local_today() )
 		);
+	}
+
+	/**
+	 * True once the row's own "today" is after its Session date: its sales
+	 * window has closed for good, so turning sales on or off changes nothing
+	 * a customer can see.
+	 * Stored Y-m-d strings compare correctly as text. An unknown "today" is
+	 * not treated as passed.
+	 *
+	 * @param array<string,mixed> $session
+	 */
+	private static function has_passed( array $session ): bool {
+		$today = SessionService::local_today_for_row( $session );
+
+		return '' !== $today && (string) $session['session_date'] < $today;
 	}
 
 	private static function is_known_status( string $status ): bool {

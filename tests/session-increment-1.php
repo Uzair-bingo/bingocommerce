@@ -754,6 +754,10 @@ final class SessionIncrementOneTest {
 		$window_explained = (string) $explain->invoke( null, [ 'status' => 'active', 'available_for_sale' => true, 'session_date' => '2030-09-10' ] );
 		$this->ok( false !== strpos( $window_explained, 'Sales window 08/11/2030 to 09/10/2030' ), 'sales-window start and Session date render as MM/DD/YYYY' );
 		$this->ok( 1 === preg_match( '/hall-local today is [0-9]{2}\/[0-9]{2}\/[0-9]{4}\./', $window_explained ), 'sales-window hall-local today renders as MM/DD/YYYY' );
+		$past_explained = (string) $explain->invoke( null, [ 'status' => 'active', 'available_for_sale' => false, 'session_date' => '2020-01-15' ] );
+		$this->ok( false !== strpos( $past_explained, 'Sales closed on 01/15/2020' ), 'a past Session says when its sales closed, not only that sales are OFF' );
+		$removed_explained = (string) $explain->invoke( null, [ 'status' => 'active', 'available_for_sale' => false, 'session_date' => '2030-09-10', 'belongs_to_current_definition' => false ] );
+		$this->ok( false !== strpos( $removed_explained, 'removed from its schedule' ), 'a date removed from its schedule says so' );
 
 		$admin_source = (string) file_get_contents( dirname( __DIR__ ) . '/wp-content/plugins/bingocommerce-sessions/src/SessionAdmin.php' );
 		$this->ok( false === strpos( $admin_source, 'DateTimeImmutable' ), 'SessionAdmin never constructs a date from an authoritative stored value' );

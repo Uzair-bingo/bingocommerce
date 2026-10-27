@@ -7001,3 +7001,33 @@ Portal request was performed.
   above the tabs; after a removal they point to the renumbered field (checked
   in the browser). The suite adds direct checks that the trust and testimonial
   writers themselves refuse a fifth item and a seventh testimonial.
+
+### 2026-10-27 — Bingo Sessions screen fixes (ADR-043 / BR-078 presentation only), branch `starterImport`, uncommitted
+
+- Manage Session Dates: the date example and empty-box placeholder are now
+  tomorrow in the hall's time zone, not the fixed `10/12/2026`, which had
+  passed and was a date the screen itself refuses.
+- Sessions list: a schedule-managed Session whose date has passed no longer
+  offers Enable Sales and says "Sales closed on MM/DD/YYYY." A Session whose
+  date was removed from its schedule says so instead of only "Available for
+  Sale is OFF." "Today" comes from the same per-row helper as the Yes/No
+  column (`SessionService::local_today_for_row()`, now public). No service
+  rule, refusal or Disable Sales behaviour changed.
+- Follow-up the same day (user request): a past schedule-managed Session
+  offers no sales button at all, so Disable Sales is gone from past rows left
+  ON too. On a past date ON/OFF changes nothing a customer or ticket sees; the
+  value stays as the record of what the Manager last set. A Session dated
+  today keeps its buttons. Presentation only; legacy Sessions are unchanged.
+- Tests: `tests/session-increment-1.php` **354/0**,
+  `tests/session-availability-increment-1.php` **581/0** (new past-row,
+  past-ON-row, today-row and removed-row checks; the past-row checks were
+  confirmed to fail against the old button rule),
+  `tests/session-schedule-admin-increment-1.php` **447/0**,
+  all on `bingocommerce_state_recon`; `bingocommerce_state_test_suites` would
+  not boot ("Error establishing a database connection"). Browser date-control
+  checks not run (no `BC_TEST_CHROME`).
+- Star Bingo Hall's real list was rendered read-only from the command line (the
+  browser pane was not signed in): #4/#5 show "Sales closed" with no button,
+  #6 shows the removed-from-schedule reason, every past row has no button and
+  #20 (tomorrow, ON) keeps Disable Sales. No development data changed.
+- No commit, push or deployment.

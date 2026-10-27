@@ -1300,9 +1300,12 @@ final class SessionService {
 	 * `evaluate_available_today()` treats as not-today — fail-closed, and without
 	 * substituting a plausible-looking date.
 	 *
+	 * Public so the administration list decides "this date has passed" with
+	 * the same "today" that decided its Yes/No, not a second copy of this rule.
+	 *
 	 * @param array<string,mixed> $row
 	 */
-	private static function local_today_for_row( array $row ): string {
+	public static function local_today_for_row( array $row ): string {
 		if ( null === ( $row['schedule_id'] ?? null ) ) {
 			return self::hall_local_today();
 		}

@@ -2055,6 +2055,62 @@ final class SessionAvailabilityIncrementOneTest {
 		$this->ok( false !== strpos( $on_row, 'value="disable_sales"' ), '  it offers Disable Sales' );
 		$this->ok( false === strpos( $on_row, 'value="enable_sales"' ), '  and NOT Enable Sales' );
 
+		/* --- A past date: its sales window has closed, so Enable Sales is not offered and the row says why. --- */
+		$past_date = $this->local_date( '-3 days' );
+		$past      = $this->plant_occurrence( $hall, $schedule_id, $past_date, 'Past Date', true, $package_id );
+
+		$_GET = [ 'page' => 'bingocommerce-sessions', 'status' => 'all' ];
+		$_SERVER['REQUEST_METHOD'] = 'GET';
+
+		ob_start();
+		\BingoCommerce\Sessions\SessionAdmin::render();
+		$past_html = (string) ob_get_clean();
+
+		$_GET = $saved_get;
+		if ( null === $saved_method ) {
+			unset( $_SERVER['REQUEST_METHOD'] );
+		} else {
+			$_SERVER['REQUEST_METHOD'] = $saved_method;
+		}
+
+		$past_row = $this->extract_row_html( $past_html, $past );
+		$this->ok( '' !== $past_row, 'the OFF past-dated generated row was found in the rendered list' );
+		$this->ok( false === strpos( $past_row, 'value="enable_sales"' ), '  it does NOT offer Enable Sales: its sales window has closed' );
+		$this->ok(
+			false !== strpos( $past_row, 'Sales closed on ' . substr( $past_date, 5, 2 ) . '/' . substr( $past_date, 8, 2 ) . '/' . substr( $past_date, 0, 4 ) ),
+			'  and says when sales closed, not only that Available for Sale is OFF'
+		);
+
+		/* --- A past date left ON offers no Disable Sales either; a date of TODAY still does. --- */
+		$this->ok( $service->setAvailableForSale( $past, true ) instanceof SessionResult, 'fixture: the past-dated row is ON (a value left from before its date passed)' );
+		$today = $this->plant_occurrence( $hall, $schedule_id, $this->local_date( 'today' ), 'Today Date', true, $package_id );
+		$this->ok( $service->setAvailableForSale( $today, true ) instanceof SessionResult, 'fixture: a row dated today is ON' );
+
+		$_GET = [ 'page' => 'bingocommerce-sessions', 'status' => 'all' ];
+		$_SERVER['REQUEST_METHOD'] = 'GET';
+
+		ob_start();
+		\BingoCommerce\Sessions\SessionAdmin::render();
+		$past_on_html = (string) ob_get_clean();
+
+		$_GET = $saved_get;
+		if ( null === $saved_method ) {
+			unset( $_SERVER['REQUEST_METHOD'] );
+		} else {
+			$_SERVER['REQUEST_METHOD'] = $saved_method;
+		}
+
+		$past_on_row = $this->extract_row_html( $past_on_html, $past );
+		$this->ok( '' !== $past_on_row, 'the ON past-dated generated row was found in the rendered list' );
+		$this->ok( false === strpos( $past_on_row, 'value="disable_sales"' ), '  it does NOT offer Disable Sales: no customer can buy a past date either way' );
+		$this->ok( false === strpos( $past_on_row, 'value="enable_sales"' ), '  nor Enable Sales' );
+		$this->ok( false === strpos( $past_on_row, '<form' ), '  so the row renders no sales form at all' );
+		$this->ok( false !== strpos( $past_on_row, 'Sales closed on' ), '  and still says sales closed' );
+
+		$today_row = $this->extract_row_html( $past_on_html, $today );
+		$this->ok( '' !== $today_row, 'the ON row dated today was found in the rendered list' );
+		$this->ok( false !== strpos( $today_row, 'value="disable_sales"' ), '  it still offers Disable Sales: today is the last day of its sales window, not past' );
+
 		/* --- Edit/Archive/Restore/name/date/Package remain blocked either way. --- */
 		foreach ( [ $off_row, $on_row ] as $html ) {
 			$this->ok( false === strpos( $html, 'edit=' . $in_window ), 'still no Edit link for a generated row, regardless of its sales state' );
@@ -2734,6 +2790,7 @@ final class SessionAvailabilityIncrementOneTest {
 			$_SERVER['REQUEST_METHOD'] = $saved_method;
 			$row_html = $this->extract_row_html( $html, $session_id );
 			$this->ok( '' !== $row_html && false === strpos( $row_html, 'Enable Sales' ), "$case: retained row renders without Enable Sales" );
+			$this->ok( false !== strpos( $row_html, 'removed from its schedule' ), "$case: and says why, instead of only that sales are OFF" );
 			$this->same( 'outside_current_definition', $this->error_code( $sessions->setAvailableForSale( $session_id, true ) ), "$case: forced service ON is refused" );
 			$forced = $handler->invoke( null, [ 'bc_session_action' => 'enable_sales', 'session_id' => (string) $session_id ], $sessions );
 			$this->same( 'outside_current_definition', $this->error_code( $forced ), "$case: forced admin handler ON is refused" );

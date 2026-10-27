@@ -1552,7 +1552,7 @@ JS;
 		 * ---------------------------------------------------------------- */
 		$us_form = $this->render_screen( [ SessionScheduleAdmin::class, 'render' ], $create_args );
 		$this->ok( false !== strpos( $us_form, 'MM/DD/YYYY' ), 'the form states the MM/DD/YYYY format' );
-		$this->ok( false !== strpos( $us_form, '10/12/2026' ), '  with a US-format example' );
+		$this->ok( false !== strpos( $us_form, 'placeholder="' . $this->us_date( '+1 day' ) . '"' ), '  with a US-format example that is tomorrow, a date the form accepts' );
 
 		$us_date  = $this->us_date( '+7 days' );
 		$iso_date = $this->local_date( '+7 days' );

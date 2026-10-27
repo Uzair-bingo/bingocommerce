@@ -852,8 +852,17 @@ final class SessionScheduleAdmin {
 	 * that form. This boundary is the ONLY place the two meet.
 	 * ------------------------------------------------------------------ */
 
-	/** The format shown in every label, placeholder and example on this screen. */
-	private const US_DATE_EXAMPLE = '10/12/2026';
+	/**
+	 * The example shown in every label and placeholder on this screen.
+	 *
+	 * Tomorrow, so the example is always a date the screen accepts. A fixed
+	 * date would silently become a past one this screen refuses.
+	 */
+	private static function date_example(): string {
+		$tomorrow = self::tomorrow_display();
+
+		return '' === $tomorrow ? 'MM/DD/YYYY' : $tomorrow;
+	}
 
 	/**
 	 * Basic client-side hinting only — the SAME m/d/Y or n/j/Y shapes
@@ -1400,7 +1409,7 @@ final class SessionScheduleAdmin {
 								value="<?php echo esc_attr( (string) $value ); ?>"
 								pattern="<?php echo esc_attr( self::US_DATE_PATTERN ); ?>"
 								data-min="<?php echo esc_attr( $tomorrow ); ?>"
-								placeholder="<?php echo esc_attr( self::US_DATE_EXAMPLE ); ?>"
+								placeholder="<?php echo esc_attr( self::date_example() ); ?>"
 								<?php disabled( true, ! $dates_mode ); ?>
 							/>
 							<button type="button" class="button bc-remove-date" <?php disabled( true, ! $dates_mode ); ?>><?php echo esc_html__( 'Remove date', 'bingocommerce-sessions' ); ?></button>
@@ -1415,7 +1424,7 @@ final class SessionScheduleAdmin {
 					printf(
 						/* translators: %s: an example date in MM/DD/YYYY form. */
 						esc_html__( 'Dates are MM/DD/YYYY — for example %s. Each new date must be tomorrow or later.', 'bingocommerce-sessions' ),
-						esc_html( self::US_DATE_EXAMPLE )
+						esc_html( self::date_example() )
 					);
 					?>
 				</p>
@@ -1460,7 +1469,7 @@ final class SessionScheduleAdmin {
 					value="<?php echo esc_attr( $recurrence_start ); ?>"
 					pattern="<?php echo esc_attr( self::US_DATE_PATTERN ); ?>"
 					data-min="<?php echo esc_attr( $tomorrow ); ?>"
-					placeholder="<?php echo esc_attr( self::US_DATE_EXAMPLE ); ?>"
+					placeholder="<?php echo esc_attr( self::date_example() ); ?>"
 					<?php disabled( true, ! $weekly ); ?>
 				/>
 				<p class="description">
@@ -1468,7 +1477,7 @@ final class SessionScheduleAdmin {
 					printf(
 						/* translators: %s: an example date in MM/DD/YYYY form. */
 						esc_html__( 'MM/DD/YYYY — for example %s.', 'bingocommerce-sessions' ),
-						esc_html( self::US_DATE_EXAMPLE )
+						esc_html( self::date_example() )
 					);
 					?>
 				</p>
@@ -1487,7 +1496,7 @@ final class SessionScheduleAdmin {
 					value="<?php echo esc_attr( $recurrence_end ); ?>"
 					pattern="<?php echo esc_attr( self::US_DATE_PATTERN ); ?>"
 					data-min="<?php echo esc_attr( '' !== $recurrence_start ? $recurrence_start : $tomorrow ); ?>"
-					placeholder="<?php echo esc_attr( self::US_DATE_EXAMPLE ); ?>"
+					placeholder="<?php echo esc_attr( self::date_example() ); ?>"
 					<?php disabled( true, ! $weekly ); ?>
 				/>
 				<p class="description">
@@ -1945,7 +1954,7 @@ final class SessionScheduleAdmin {
 				return __( 'A database operation failed. Check the current state before saving again.', 'bingocommerce-sessions' );
 			case 'invalid_date':
 				/* translators: %s: an example date in MM/DD/YYYY form. */
-				return sprintf( __( 'Enter the date as MM/DD/YYYY — for example %s.', 'bingocommerce-sessions' ), self::US_DATE_EXAMPLE );
+				return sprintf( __( 'Enter the date as MM/DD/YYYY — for example %s.', 'bingocommerce-sessions' ), self::date_example() );
 			case 'invalid_mode':
 				return __( 'Choose either Specific dates or Repeating weekly.', 'bingocommerce-sessions' );
 			case 'no_weekdays':
