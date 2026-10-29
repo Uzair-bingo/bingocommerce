@@ -1308,7 +1308,17 @@ final class PortalProvisioningEndpointTest {
 		$payload = $this->payload( [ 'site_slug' => $slug, 'hall_name' => 'Enable Hall' ] );
 		$before  = $this->count_sites_above( 3 );
 
-		$response = $this->dispatch( $hall, $payload );
+		$previous_https = $_SERVER['HTTPS'] ?? null;
+		$_SERVER['HTTPS'] = 'on';
+		try {
+			$response = $this->dispatch( $hall, $payload );
+		} finally {
+			if ( null === $previous_https ) {
+				unset( $_SERVER['HTTPS'] );
+			} else {
+				$_SERVER['HTTPS'] = $previous_https;
+			}
+		}
 
 		$this->assert_same( 200, $response['status'], 'a first Enable through real REST dispatch is HTTP 200' );
 		$body = $response['body'];
@@ -1331,6 +1341,10 @@ final class PortalProvisioningEndpointTest {
 
 		$blog_id = (int) $body['blog_id'];
 		$this->disposable_sites[ $blog_id ] = true;
+		$expected_url = 'https://' . $slug . '.' . BC_FIXTURE_DOMAIN;
+		$this->assert_same( $expected_url, $body['site_url'], 'HTTPS provisioning returns the HTTPS Hall address to the Portal' );
+		$this->assert_same( $expected_url, get_blog_option( $blog_id, 'siteurl' ), 'the returned HTTPS address is persisted in siteurl' );
+		$this->assert_same( $expected_url, get_blog_option( $blog_id, 'home' ), 'the new Hall homepage also uses HTTPS' );
 
 		$this->assert_same( $before + 1, $this->count_sites_above( 3 ), 'exactly one site was created' );
 		$this->assert_same( 1, $response['filter_calls'], 'the platform filter was invoked exactly once' );
@@ -1437,7 +1451,7 @@ final class PortalProvisioningEndpointTest {
 		$this->assert_same( 'already_applied', $response['body']['outcome'] ?? '', 'an exact confirmed retry is already_applied' );
 		$this->assert_same( 'operational', $response['body']['commerce_state'] ?? '', 'the retry reports the enforced state' );
 		$this->assert_same( $blog_id, $response['body']['blog_id'] ?? 0, 'the retry returns the same verified blog id' );
-		$this->assert_same( get_site_url( $blog_id ), $response['body']['site_url'] ?? '', 'the retry returns the authoritative URL' );
+		$this->assert_same( get_blog_option( $blog_id, 'siteurl' ), $response['body']['site_url'] ?? '', 'the retry returns the stored authoritative URL even on a non-TLS request' );
 
 		$this->assert_same( 0, $response['filter_calls'], 'an already_applied retry invokes NO platform filter' );
 		$this->assert_same( [], $response['http'], 'an already_applied retry makes NO Portal request' );
@@ -4141,7 +4155,7 @@ final class PortalProvisioningEndpointTest {
 			$this->assert_same( 'suspended', $response['body']['commerce_state'] ?? '', 'its state is suspended' );
 			$this->assert_same( 'portal_blocked', $response['body']['effective_access'] ?? '', 'its access is portal_blocked' );
 			$this->assert_same( $stranded, $response['body']['blog_id'] ?? 0, 'it returns the VERIFIED blog id' );
-			$this->assert_same( get_site_url( $stranded ), $response['body']['site_url'] ?? '', 'and the independently read authoritative URL' );
+			$this->assert_same( get_blog_option( $stranded, 'siteurl' ), $response['body']['site_url'] ?? '', 'and the independently read authoritative URL' );
 			$this->assert_same( 0, $response['filter_calls'], 'a marker-matched partial suspend invokes NO platform filter' );
 			$this->assert_same( [], $response['http'], 'and makes no Portal request' );
 
@@ -4463,7 +4477,7 @@ final class PortalProvisioningEndpointTest {
 		$row       = Repo::load( $hall );
 		$ownership = $row['site_ownership_id'];
 		$mapping   = ( new HallMappingRepository() )->findByPortalHallId( $hall );
-		$site_url  = get_site_url( $blog_id );
+		$site_url  = get_blog_option( $blog_id, 'siteurl' );
 
 		/* Give the store something to preserve. */
 		$product_id = $this->seed_product( $blog_id );

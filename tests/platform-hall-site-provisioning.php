@@ -7,6 +7,8 @@
  *
  * Run from the repository root:
  *   BC_TEST_DB=bingocommerce_state_provisioning php tests/platform-hall-site-provisioning.php
+ * Optional first argument: production (default), staging, local, development,
+ * or local-https. Each process exercises real site creation with that setup.
  *
  * WordPress boots against the isolated fixture — see
  * tests/fixtures/isolated-multisite.php. The development database is never
@@ -24,6 +26,24 @@
  * the connected database, the fixture allowlist, the sentinel and the target
  * name before it runs.
  */
+
+$bc_platform_url_cases = [
+	'production'  => [ 'production', false, 'https' ],
+	'staging'     => [ 'staging', false, 'https' ],
+	'local'       => [ 'local', false, 'http' ],
+	'development' => [ 'development', false, 'http' ],
+	'local-https' => [ 'local', true, 'https' ],
+];
+$bc_platform_url_case = $bc_platform_url_cases[ $argv[1] ?? 'production' ] ?? null;
+if ( null === $bc_platform_url_case ) {
+	fwrite( STDERR, "Unknown provisioning URL test case.\n" );
+	exit( 1 );
+}
+define( 'WP_ENVIRONMENT_TYPE', $bc_platform_url_case[0] );
+define( 'BC_PLATFORM_EXPECT_URL_SCHEME', $bc_platform_url_case[2] );
+$_SERVER['HTTPS'] = $bc_platform_url_case[1] ? 'on' : 'off';
+$_SERVER['SERVER_PORT'] = $bc_platform_url_case[1] ? '443' : '80';
+unset( $bc_platform_url_cases, $bc_platform_url_case );
 
 putenv( 'BC_FIXTURE_NETWORK_ACTIVE=1' );
 putenv( 'BC_FIXTURE_WOOCOMMERCE=1' );
@@ -664,6 +684,10 @@ final class PlatformHallSiteProvisioningTest {
 			'template'   => get_blog_option( $main_site, 'template' ),
 			'stylesheet' => get_blog_option( $main_site, 'stylesheet' ),
 		];
+		$main_urls = [
+			'home'    => get_blog_option( $main_site, 'home' ),
+			'siteurl' => get_blog_option( $main_site, 'siteurl' ),
+		];
 		$command  = $this->command( self::SLUG_CREATE );
 		$before   = $this->site_count();
 		$result   = HallSiteProvisioner::provision( null, $command );
@@ -710,6 +734,12 @@ final class PlatformHallSiteProvisioningTest {
 
 		$address = HallSiteAddress::forSlug( self::SLUG_CREATE );
 		$this->assert_true( $address instanceof HallSiteAddress && $address->matchesSite( $site ), 'the site sits at the reserved address' );
+		$expected_url = untrailingslashit( BC_PLATFORM_EXPECT_URL_SCHEME . '://' . $address->domain . $address->path );
+		foreach ( $main_urls as $option => $value ) {
+			$this->assert_same( $expected_url, get_blog_option( $blog_id, $option ), "new Hall {$option} uses the deployment's expected URL scheme" );
+			$this->assert_same( $value, get_blog_option( $main_site, $option ), "creation preserves the main site's {$option}" );
+		}
+		$this->assert_same( $expected_url, $result['site_url'], 'the platform returns the saved URL with the expected scheme' );
 
 		$this->assert_same(
 			$command['site_ownership_id'],
@@ -767,7 +797,7 @@ final class PlatformHallSiteProvisioningTest {
 
 		$this->assert_same(
 			$result['site_url'],
-			get_site_url( $blog_id ),
+			get_blog_option( $blog_id, 'siteurl' ),
 			'the advisory site_url agrees with the site\'s own authoritative siteurl'
 		);
 	}
@@ -809,6 +839,10 @@ final class PlatformHallSiteProvisioningTest {
 		$before_sites  = $this->site_count();
 		$before_tables = $this->site_table_names( $blog_id );
 		$before_marker = $this->marker( $blog_id );
+		$before_urls = [
+			'home'    => get_blog_option( $blog_id, 'home' ),
+			'siteurl' => get_blog_option( $blog_id, 'siteurl' ),
+		];
 
 		$command            = $this->command( self::SLUG_CREATE, $this->ownership( self::SLUG_CREATE ) );
 		$command['blog_id'] = $blog_id;
@@ -825,6 +859,9 @@ final class PlatformHallSiteProvisioningTest {
 		$this->assert_same( $before_sites, $this->site_count(), 'a resume creates NO second site' );
 		$this->assert_same( $before_tables, $this->site_table_names( $blog_id ), 'a resume changes no table in the site' );
 		$this->assert_same( $before_marker, $this->marker( $blog_id ), 'a resume never rewrites the ownership marker' );
+		foreach ( $before_urls as $option => $value ) {
+			$this->assert_same( $value, get_blog_option( $blog_id, $option ), "a bound resume preserves the Hall's {$option}" );
+		}
 		$this->assert_same( '1', (string) get_site( $blog_id )->archived, 'a resume does not clear archived — that is the orchestrator\'s step' );
 	}
 
@@ -843,6 +880,11 @@ final class PlatformHallSiteProvisioningTest {
 		}
 		$blog_id = (int) $first['blog_id'];
 		$this->disposable_sites[ $blog_id ] = true;
+		// Simulate a partial site from the previous release. Recovery must not
+		// silently rewrite an existing site's addresses as part of this fix.
+		$existing_url = 'http://' . get_site( $blog_id )->domain;
+		update_blog_option( $blog_id, 'home', $existing_url );
+		update_blog_option( $blog_id, 'siteurl', $existing_url );
 
 		/*
 		 * THE RETRY ARRIVES WITH blog_id STILL NULL — exactly the shape of an
@@ -859,6 +901,8 @@ final class PlatformHallSiteProvisioningTest {
 			$this->assert_true( true === $retry['managed_marker_present'], 'recovery proves the marker' );
 		}
 		$this->assert_same( $before, $this->site_count(), 'recovery creates no second site' );
+		$this->assert_same( $existing_url, get_blog_option( $blog_id, 'home' ), 'partial-create recovery preserves the existing home URL' );
+		$this->assert_same( $existing_url, get_blog_option( $blog_id, 'siteurl' ), 'partial-create recovery preserves the existing site URL' );
 		$this->assert_same( $ownership, $this->marker( $blog_id ), 'recovery leaves the marker untouched' );
 		$this->assert_same( '1', (string) get_site( $blog_id )->archived, 'the recovered site stays archived' );
 		$this->assert_same( 'bingocommerce-bingothemev1', get_blog_option( $blog_id, 'template' ), 'same-site recovery retains the assigned template' );

@@ -7031,3 +7031,35 @@ Portal request was performed.
   #6 shows the removed-from-schedule reason, every past row has no button and
   #20 (tomorrow, ON) keeps Disable Sales. No development data changed.
 - No commit, push or deployment.
+
+### 2026-10-29 — HTTPS addresses for newly provisioned Halls
+
+- Staging deployment exposed WordPress's subdomain-site creation default:
+  `home` and `siteurl` were persisted with HTTP even though wildcard HTTPS
+  worked. ADR-042 correctly returned the stored URL, so the Portal saved HTTP
+  and used it for its store/SSO link.
+- `bingocommerce-platform/src/HallSiteProvisioner.php` now supplies both URL
+  options during fresh `wpmu_create_blog()` initialization, using the verified
+  network-derived Hall domain/path. Staging and production use HTTPS.
+  Local/development requests retain HTTP without TLS and use HTTPS with TLS.
+  The existing authoritative stored-URL read-back remains unchanged. Existing
+  sites, marker-matched recovery and bound re-enable retain their URLs; no
+  migration, WordPress core edit, Portal edit or bulk URL rewrite is included.
+- Regression: the new staging expectations failed against the old code for
+  `home`, `siteurl` and the returned URL (**510/513**). After the fix,
+  `tests/platform-hall-site-provisioning.php` passed **513/513** in each of
+  five configurations: production, staging, local HTTP, development HTTP and
+  local HTTPS. The suite also verifies main-site URLs and existing-site URLs
+  are preserved. Its previous baseline was **504/504**.
+- `tests/portal-provisioning-endpoint.php` passed **50,364/50,364**, including
+  stored HTTPS addresses in the first Enable response and the existing retry,
+  suspend/re-enable, ownership and isolation coverage. URL assertions now read
+  the stored `siteurl`, since `get_site_url()` substitutes the request scheme.
+- Checks ran on PHP **8.4.24** against the isolated
+  `bingocommerce_state_provisioning` fixture. PHP syntax and `git diff --check`
+  passed. Existing fixture teardown/missing-table warnings were also present
+  in the pre-change platform baseline; intentional fault-injection diagnostics
+  remain in the endpoint suite. No functional assertion failed after the fix.
+- Prepared a one-file staging replacement package outside the repository.
+  Windows PHP 8.5 syntax validation and a new-Hall browser check remain for
+  deployment. No server deployment, commit or push is claimed.

@@ -236,11 +236,20 @@ final class HallSiteProvisioner {
 		 *     and ADR-042 states plainly that `public` is not an access-control
 		 *     barrier; HallCommerceGate is.
 		 */
+		// WordPress defaults new subdomain sites to HTTP, even on an HTTPS
+		// network. Set both URLs during initial option creation so the Portal
+		// receives the stored HTTPS address. Only local/development requests
+		// without TLS retain HTTP; recovery and re-enable keep existing URLs.
+		$local    = in_array( wp_get_environment_type(), [ 'local', 'development' ], true );
+		$scheme   = $local && ! is_ssl() ? 'http' : 'https';
+		$site_url = untrailingslashit( $scheme . '://' . $address->domain . $address->path );
 		$options = [
 			'archived'          => 1,
 			self::MARKER_OPTION => $command->site_ownership_id,
 			'template'          => self::THEME_SLUG,
 			'stylesheet'        => self::THEME_SLUG,
+			'home'              => $site_url,
+			'siteurl'           => $site_url,
 		];
 
 		$installing = wp_installing();
