@@ -1426,7 +1426,10 @@ final class StarterImporter {
 					'post_status'    => 'inherit',
 					'post_name'      => (string) $row['recovery_slug'],
 				],
-				$absolute,
+				// WordPress compares against the unnormalized upload root when
+				// relativizing this value. Pass the saved relative path so a
+				// Windows backslash root cannot leave a C:/... value in metadata.
+				(string) $row['planned_path'],
 				0,
 				true
 			);
@@ -1567,6 +1570,19 @@ final class StarterImporter {
 			$marked = StarterImportRepository::update_image( (int) $row['import_image_id'], [ 'status' => StarterImportRepository::IMAGE_NEEDS_ATTENTION ] );
 
 			return is_wp_error( $marked ) ? $marked : StarterImportRepository::ITEM_NEEDS_ATTENTION;
+		}
+
+		// Older Windows imports saved the normalized absolute original here.
+		// Repair only this recorded, unfinished image and only when its file
+		// still matches the frozen version. Never reset a "-scaled" path.
+		if ( $absolute === (string) get_post_meta( $attachment_id, '_wp_attached_file', true ) ) {
+			if ( ! is_file( $absolute ) || ! hash_equals( (string) $version_image['checksum'], (string) hash_file( 'sha256', $absolute ) ) ) {
+				return self::error( 'starter_import_image_failed', 'A starter image could not be verified. Please try again.' );
+			}
+			update_attached_file( $attachment_id, (string) $row['planned_path'] );
+			if ( (string) $row['planned_path'] !== (string) get_post_meta( $attachment_id, '_wp_attached_file', true ) ) {
+				return self::error( 'starter_import_image_failed', 'A starter image could not be saved in this store. Please try again.' );
+			}
 		}
 
 		$alt = (string) ( $version_image['alt_text'] ?? '' );

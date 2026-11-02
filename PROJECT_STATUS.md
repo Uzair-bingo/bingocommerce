@@ -7063,3 +7063,33 @@ Portal request was performed.
 - Prepared a one-file staging replacement package outside the repository.
   Windows PHP 8.5 syntax validation and a new-Hall browser check remain for
   deployment. No server deployment, commit or push is claimed.
+
+### 2026-11-02 — Windows starter-import attachment paths (ADR-049 / BR-086)
+
+- Hall 7's staging import response showed a doubled uploads path. The importer
+  passed a normalized `C:/...` absolute filename to `wp_insert_attachment()`;
+  WordPress compares that against the unnormalized, backslash-containing upload
+  root and could persist the full drive path in `_wp_attached_file`. Later reads
+  treated it as relative and prepended the Hall upload root again.
+- The importer now passes its saved Hall-relative planned path at attachment
+  creation. Retry also repairs an unfinished image's exact saved absolute
+  original path when the recorded file exists and its frozen checksum matches.
+  The same attachment ID is retained; completed images and `-scaled` paths are
+  unchanged. No import reset, bulk metadata rewrite or core change is needed.
+- Regression: the media suite failed against the old importer (**302 passed,
+  3 failed**), reproducing Windows path persistence and failed retry repair.
+  With the fix, `tests/starter-import-media.php` passed **308/308** on PHP
+  **8.4.24**, using the guarded `bingocommerce_state_recon` fixture. Tests use
+  real WordPress attachment insertion with a simulated Windows upload root,
+  verify repair and altered-file refusal, and retain the existing image-size,
+  scaled-image, crash recovery and tenant-preservation checks.
+- PHP syntax checks and `git diff --check` passed. The existing Hall Staff
+  teardown diagnostics remain; fixture Halls 2–4 were byte-identical after
+  testing. No commit or push is claimed.
+- Staging follow-up: the user manually replaced `StarterImporter.php` on the
+  Windows server and retried Hall 7 (Sunrise Bingo Hall,
+  `sun.staging.mybingostore.com`). Their browser screenshot confirms
+  "Import finished on 11/02/2026: 14 products imported." This confirms that
+  Hall's retry completed after the replacement; individual product fields,
+  variations and images have not yet been reviewed. Native Windows lint output
+  was not supplied for this replacement. No production deployment is claimed.

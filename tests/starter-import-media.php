@@ -120,6 +120,8 @@ final class StarterImportMediaTest {
 			$this->quota();
 			$this->simple_attributes();
 			$this->image_sizes();
+			$this->windows_attachment_path();
+			$this->unfinished_absolute_attachment_path();
 		} catch ( Throwable $error ) {
 			$this->same( 'no exception', $error->getMessage() . ' @' . $error->getFile() . ':' . $error->getLine(), 'suite completed' );
 		} finally {
@@ -707,6 +709,92 @@ final class StarterImportMediaTest {
 				$this->same( [], wp_get_missing_image_subsizes( $attachment ), 'every size that fits the image exists after Retry (no editor case)' );
 			}
 		);
+	}
+
+	/** Windows upload roots must not become absolute attachment metadata. */
+	private function windows_attachment_path(): void {
+		$this->seed(
+			[ $this->simple( [ 'name' => 'Windows photo', 'slug' => 'windows-photo', 'image' => 'w' ] ) ],
+			[ 'w' => [ 'name' => 'windows-photo', 'size' => 400 ] ],
+			[]
+		);
+		$hall = $this->create_hall();
+		$this->in_hall( $hall, $this->admin, fn() => ( new StarterImporter() )->start() );
+		$this->same( 9, $this->worker( $hall, $this->admin, 'process', 'image_file_written', 600.0 ), 'Windows fixture: stopped with its original file written' );
+		$this->in_hall(
+			$hall,
+			$this->admin,
+			function () use ( $hall ) {
+				global $wpdb;
+				// Only attachment insertion sees the Windows root. Files were written
+				// above on the host OS; Retry below uses that real Hall upload root.
+				$windows = static function ( array $uploads ) use ( $hall ): array {
+					$uploads['basedir'] = 'C:\\Sites\\BingoCommerceStaging\\wp-content\\uploads\\sites\\' . $hall;
+
+					return $uploads;
+				};
+				$stop = static function ( string $step ): void {
+					if ( 'image_id_saved' === $step ) {
+						throw new RuntimeException( 'stop_windows_attachment_test' );
+					}
+				};
+				add_filter( 'upload_dir', $windows );
+				add_action( StarterImporter::CHECKPOINT_ACTION, $stop );
+				try {
+					( new StarterImporter() )->process_next( 600.0 );
+				} catch ( RuntimeException $error ) {
+					$this->same( 'stop_windows_attachment_test', $error->getMessage(), 'stopped before image processing on the host OS' );
+				} finally {
+					remove_filter( 'upload_dir', $windows );
+					remove_action( StarterImporter::CHECKPOINT_ACTION, $stop );
+				}
+				$row        = $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM %i', StarterSchema::import_images_table() ), ARRAY_A );
+				$attachment = (int) $row['attachment_id'];
+				$stored     = (string) get_post_meta( $attachment, '_wp_attached_file', true );
+				$this->same( (string) $row['planned_path'], $stored, 'Windows insertion saves an upload-relative path through real WordPress APIs' );
+				if ( (string) $row['planned_path'] !== $stored ) {
+					return;
+				}
+				$this->same( 'complete', $this->status( ( new StarterImporter() )->process_next( 600.0 ) ), 'the Windows-created attachment resumes image processing' );
+				$this->same( [ 1, 1 ], [ $this->count_posts( 'attachment' ), $this->count_original_files() ], 'Windows insertion and Retry create no duplicate image or file' );
+				$this->same( $attachment, (int) $wpdb->get_var( $wpdb->prepare( 'SELECT attachment_id FROM %i', StarterSchema::import_images_table() ) ), 'Retry preserves the Windows-created attachment identity' );
+			}
+		);
+	}
+
+	/** Repair only the import's own checksum-proven unfinished original. */
+	private function unfinished_absolute_attachment_path(): void {
+		$this->seed(
+			[ $this->simple( [ 'name' => 'Retry photo', 'slug' => 'retry-photo', 'image' => 'r' ] ) ],
+			[ 'r' => [ 'name' => 'retry-photo', 'size' => 400 ] ],
+			[]
+		);
+		foreach ( [ false, true ] as $changed ) {
+			$hall = $this->create_hall();
+			$this->in_hall( $hall, $this->admin, fn() => ( new StarterImporter() )->start() );
+			$this->same( 9, $this->worker( $hall, $this->admin, 'process', 'image_id_saved', 600.0 ), 'repair fixture: stopped after its attachment ID was saved' );
+			$this->in_hall(
+				$hall,
+				$this->admin,
+				function () use ( $changed ) {
+					global $wpdb;
+					$row        = $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM %i', StarterSchema::import_images_table() ), ARRAY_A );
+					$attachment = (int) $row['attachment_id'];
+					$absolute   = wp_normalize_path( wp_upload_dir()['basedir'] . '/' . $row['planned_path'] );
+					update_post_meta( $attachment, '_wp_attached_file', wp_slash( $absolute ) );
+					if ( $changed ) {
+						file_put_contents( $absolute, 'changed', FILE_APPEND );
+						$this->code( 'starter_import_image_failed', ( new StarterImporter() )->process_next( 600.0 ), 'an altered original refuses automatic path repair' );
+						$this->same( $absolute, get_post_meta( $attachment, '_wp_attached_file', true ), 'an altered original leaves attachment metadata untouched' );
+						return;
+					}
+					$this->same( 'complete', $this->status( ( new StarterImporter() )->process_next( 600.0 ) ), 'Retry repairs the absolute path and completes the existing import' );
+					$this->same( (string) $row['planned_path'], get_post_meta( $attachment, '_wp_attached_file', true ), 'the repaired attachment path is upload-relative' );
+					$this->same( [ 1, 1 ], [ $this->count_posts( 'attachment' ), $this->count_original_files() ], 'path repair creates no duplicate attachment or original' );
+					$this->same( $attachment, (int) $wpdb->get_var( $wpdb->prepare( 'SELECT attachment_id FROM %i', StarterSchema::import_images_table() ) ), 'path repair preserves attachment identity' );
+				}
+			);
+		}
 	}
 
 	/* ------------------------------------------------------------------ *
