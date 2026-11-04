@@ -7093,3 +7093,22 @@ Portal request was performed.
   Hall's retry completed after the replacement; individual product fields,
   variations and images have not yet been reviewed. Native Windows lint output
   was not supplied for this replacement. No production deployment is claimed.
+
+### 2026-11-04 — Optional slider headings and Digital-first Play Product forms
+
+- User-approved ADR-045 / BR-084 amendment: homepage slider headings are
+  optional, retaining the 80-character plain-text limit. Blank headings save
+  and reload, render no empty heading element, and use numbered navigation
+  labels and announcements. Supporting text, buttons and image-only slides
+  remain usable. The version-1 option shape and Hall boundaries are unchanged.
+- Bingo Play Product medium dropdowns list Digital first. New products default
+  to Digital; existing products retain their saved medium. The service and
+  requirement for an active Game Type on Digital products are unchanged.
+- Verification: slider PHP **234/234**, slider browser **68/68**, and existing
+  Play Product integration **472/472** assertions passed. Checks include
+  desktop/mobile and no-JavaScript rendering, keyboard navigation, blank-heading
+  persistence, invalid-input refusal, permissions and Hall isolation. Database
+  suites used the guarded `bingocommerce_state_recon` fixture; disposable
+  fixtures were cleaned up. PHP/JavaScript syntax and `git diff --check` passed.
+- These fixes are local only. No database migration, server deployment, commit
+  or push was performed.

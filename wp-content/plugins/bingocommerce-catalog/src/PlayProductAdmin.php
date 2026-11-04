@@ -96,8 +96,8 @@ final class PlayProductAdmin {
 							<th scope="row"><label for="bc-pp-medium"><?php echo esc_html__( 'Medium', 'bingocommerce-catalog' ); ?></label></th>
 							<td>
 								<select id="bc-pp-medium" name="medium">
-									<option value="paper"><?php echo esc_html__( 'Paper', 'bingocommerce-catalog' ); ?></option>
 									<option value="digital"><?php echo esc_html__( 'Digital', 'bingocommerce-catalog' ); ?></option>
+									<option value="paper"><?php echo esc_html__( 'Paper', 'bingocommerce-catalog' ); ?></option>
 								</select>
 							</td>
 						</tr>
@@ -167,8 +167,8 @@ final class PlayProductAdmin {
 									<input type="hidden" name="bingo_play_product_id" value="<?php echo esc_attr( (string) $id ); ?>">
 									<label class="screen-reader-text" for="bc-pp-medium-<?php echo esc_attr( (string) $id ); ?>"><?php echo esc_html__( 'Medium', 'bingocommerce-catalog' ); ?></label>
 									<select id="bc-pp-medium-<?php echo esc_attr( (string) $id ); ?>" name="medium">
-										<option value="paper" <?php selected( 'paper', $row['medium'] ); ?>><?php echo esc_html__( 'Paper', 'bingocommerce-catalog' ); ?></option>
 										<option value="digital" <?php selected( 'digital', $row['medium'] ); ?>><?php echo esc_html__( 'Digital', 'bingocommerce-catalog' ); ?></option>
+										<option value="paper" <?php selected( 'paper', $row['medium'] ); ?>><?php echo esc_html__( 'Paper', 'bingocommerce-catalog' ); ?></option>
 									</select>
 									<label class="screen-reader-text" for="bc-pp-medium-gt-<?php echo esc_attr( (string) $id ); ?>"><?php echo esc_html__( 'Game Type for Digital', 'bingocommerce-catalog' ); ?></label>
 									<select id="bc-pp-medium-gt-<?php echo esc_attr( (string) $id ); ?>" name="game_type_id">

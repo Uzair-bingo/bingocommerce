@@ -43,7 +43,8 @@
 				dots[i].toggleAttribute( 'aria-current', active );
 				if ( active ) { dots[i].setAttribute( 'aria-current', 'true' ); }
 			} );
-			status.textContent = manual ? slides[index].getAttribute( 'aria-label' ) + ': ' + slides[index].querySelector( 'h1' ).textContent : '';
+			var heading = slides[index].querySelector( 'h1' );
+			status.textContent = manual ? slides[index].getAttribute( 'aria-label' ) + ( heading ? ': ' + heading.textContent : '' ) : '';
 			schedule();
 		}
 		slides.forEach( function ( slide ) { slide.hidden = false; } );

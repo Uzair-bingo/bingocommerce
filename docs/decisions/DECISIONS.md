@@ -6215,6 +6215,18 @@ by construction, never deleted by anything.
   selection and all other homepage sections remain separate work. Core's existing
   Store Details option and administration are unchanged. No deployment is claimed.
 
+- **ADR-045 / BR-084 amendment — [2026-11-04] — Optional Homepage Slider Headings (user-approved):**
+
+  This supersedes only the required-heading clause of the 2026-09-30 slider
+  addition above. Each slide's plain-text heading is optional, with the same
+  80-character maximum. Blank headings render no heading element; slide
+  navigation labels and manual-change announcements use the slide number
+  when no heading exists. Supporting text and buttons remain independently
+  optional, so an image-only slide is valid. Images remain required and all
+  other validation, authorization, Hall isolation and slider behavior stay
+  unchanged. The existing version-1 option shape is retained; no migration
+  is required.
+
 - **ADR-045 / BR-084 addition — [2026-10-01] — Hall Shop by Category Display Configuration (user-approved):**
 
   Core's display-configuration exception now also includes ordered homepage

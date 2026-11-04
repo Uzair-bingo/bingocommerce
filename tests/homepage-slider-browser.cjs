@@ -52,7 +52,7 @@ async function routes(context) {
       const frame={on:(event,callback)=>{handlers[event]=callback},state:()=>({get:()=>({first:()=>({toJSON:()=>selection})})}),open:()=>{window.selectFixtureMedia=value=>{selection=value;handlers.select();handlers.close()}}};return frame}};`;
       return route.fulfill({contentType:'text/html',body:'<!doctype html><html><body>'+source+'<script>'+adapter+'</script><script src="/admin.js"></script></body></html>'});
     }
-    if (['zero','one','multiple','long'].includes(u.pathname.slice(1))) return route.fulfill({contentType:'text/html',body:html(u.pathname.slice(1))});
+    if (['zero','one','multiple','long','optional-heading','image-only'].includes(u.pathname.slice(1))) return route.fulfill({contentType:'text/html',body:html(u.pathname.slice(1))});
     return route.fulfill({status:404,body:''});
   });
 }
@@ -71,6 +71,24 @@ async function routes(context) {
   check(await page.locator('.hero').count() === 1 && await page.locator('[data-homepage-slider]').count() === 0, 'zero slides retain banner');
   await page.goto('http://slider.test/one');
   check(await page.locator('[data-slide]').count() === 1 && await page.locator('[data-slider-controls], [data-rotation]').count() === 0, 'one slide has no controls');
+  await page.goto('http://slider.test/image-only');
+  check(await page.locator('[data-slide]').count() === 1 && await page.locator('[data-slide] h1, [data-slider-controls], [data-rotation]').count() === 0, 'one image-only slide has no empty heading or controls');
+  await page.goto('http://slider.test/optional-heading');
+  await advance(); check(await active() === '2 of 3', 'autoplay reaches a slide without a heading');
+  await page.locator('[data-dot="1"]').click();
+  check(await page.locator('[data-slider-status]').innerText() === '2 of 3' && await page.locator('[data-dot="1"]').getAttribute('aria-label') === 'Go to slide 2', 'heading-free slide has numbered navigation and announcement');
+  check(await page.locator('[data-slide].is-active h1').count() === 0 && await page.locator('[data-slide].is-active .bc-home-slider__text').isVisible() && await page.locator('[data-slide].is-active a').count() === 2, 'supporting text and buttons remain usable without a heading');
+  await page.locator('[data-next]').click();
+  check(await active() === '3 of 3' && await page.locator('[data-slider-status]').innerText() === '3 of 3' && await page.locator('[data-slide].is-active h1, [data-slide].is-active p, [data-slide].is-active a').count() === 0, 'manual next reaches an image-only slide without a JavaScript error');
+  await page.locator('[data-next]').press('ArrowRight');
+  check(await active() === '1 of 3' && (await page.locator('[data-slider-status]').innerText()).includes('Early Bird Special'), 'keyboard navigation from image-only slide preserves headed announcements');
+  for (const width of [1440,390]) {
+    await page.setViewportSize({width,height:1000});
+    await page.goto('http://slider.test/image-only');
+    check(await page.locator('[data-homepage-slider]').evaluate(el=>el.getBoundingClientRect().height>0 && document.documentElement.scrollWidth<=innerWidth), `image-only slide remains visible without overflow at ${width}px`);
+    await page.screenshot({path:path.join(preview,`image-only-${width}.png`),fullPage:true});
+  }
+  await page.setViewportSize({width:1440,height:1000});
   await page.goto('http://slider.test/multiple');
   await advance(); check(await active() === '2 of 3', 'six-second autoplay advances');
   await advance(); await advance(); check(await active() === '1 of 3', 'autoplay wraps');
@@ -131,6 +149,8 @@ async function routes(context) {
   const nojs=await browser.newContext({javaScriptEnabled:false,viewport:{width:390,height:844}}); await routes(nojs);
   const plain=await nojs.newPage(); await plain.goto('http://slider.test/multiple');
   check(await plain.locator('[data-slide]:visible').count()===1 && await plain.locator('[data-slider-controls]').isHidden() && await plain.locator('[data-rotation]').isHidden(), 'without JavaScript first slide remains usable and controls hidden');
+  await plain.goto('http://slider.test/image-only');
+  check(await plain.locator('[data-slide]:visible').count()===1 && await plain.locator('[data-slide] h1').count()===0 && await plain.locator('.bc-home-slider__image').isVisible(), 'image-only slide remains visible without JavaScript');
   await nojs.close();
   await page.goto('http://slider.test/admin');
   page.on('dialog', dialog=>dialog.accept());

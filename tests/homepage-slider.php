@@ -123,6 +123,14 @@ final class HomepageSliderTest {
 		$blank_buttons = $valid; $blank_buttons['slides'][0]['buttons'] = [ [ 'label' => '', 'url' => '' ], [ 'label' => '', 'url' => '' ] ];
 		$this->same( true, $this->submit( $blank_buttons )['result'], 'two blank button pairs are valid' );
 		$this->same( [], Slider::stored()['slides'][0]['buttons'], 'blank buttons omitted canonically' );
+		foreach ( [ '', '   ' ] as $heading ) {
+			$optional = $valid; $optional['slides'][0]['heading'] = $heading;
+			$this->same( true, $this->submit( $optional )['result'], 'blank or space-only heading saves' );
+			$optional['slides'][0]['heading'] = '';
+			$this->same( $optional, Slider::stored(), 'blank heading reloads canonically without changing other fields' );
+			$this->same( $optional['slides'], Slider::provide(), 'slide without a heading remains available to the storefront' );
+		}
+		$this->ok( str_contains( $this->screen(), 'Heading (optional, 80 characters)' ), 'admin labels the heading optional' );
 		$max = $valid;
 		foreach ( [ 'heading' => 80, 'text' => 160 ] as $field => $length ) { $max['slides'][0][$field] = str_repeat( 'é', $length ); }
 		$max['slides'][0]['buttons'][0]['label'] = str_repeat( 'é', 32 );
@@ -134,7 +142,7 @@ final class HomepageSliderTest {
 	}
 	private function validation( array $valid ): void {
 		$cases = [];
-		foreach ( [ 'heading' => [ '', '<b>hi</b>', "a\nb", "a\0b", "\x80", str_repeat( 'x', 81 ), [] ], 'text' => [ '<script>x</script>', str_repeat( 'x', 161 ), [] ], 'image_id' => [ 0, -1, '1e5', '900001x', true, 900001.0, [], 9999999 ], 'image_position' => [ 'top', [], 'center; color:red' ] ] as $field => $bad ) {
+		foreach ( [ 'heading' => [ '<b>hi</b>', "a\nb", "a\0b", "\x80", str_repeat( 'x', 81 ), [] ], 'text' => [ '<script>x</script>', str_repeat( 'x', 161 ), [] ], 'image_id' => [ 0, -1, '1e5', '900001x', true, 900001.0, [], 9999999 ], 'image_position' => [ 'top', [], 'center; color:red' ] ] as $field => $bad ) {
 			foreach ( $bad as $v ) { $c = $valid; $c['slides'][0][$field] = $v; $cases[] = $c; }
 		}
 		foreach ( [ 'javascript:alert(1)', 'data:text/html,x', 'ftp://example.com', '//example.com/', '/shop/', 'https://', 'https://user:pass@example.com', 'https://exa mple.com', 'https://example.com/?add-to-cart=1', 'https://example.com/?%61dd-to-cart=1', 'https://example.com/?wc-ajax=add_to_cart', 'https://example.com/?remove_item=x', 'https://example.com/?action=x', 'https://example.com/wp-json/wc/store/v1/cart', 'https://example.com/%77p-admin/admin-post.php', 'https://example.com/%0aX', 'https://example.com/' . str_repeat( 'a', 2048 ), [] ] as $url ) {
@@ -146,6 +154,7 @@ final class HomepageSliderTest {
 		$c = $valid; $c['slides'][0]['buttons'][] = $c['slides'][0]['buttons'][0]; $cases[] = $c;
 		$c = $valid; $c['slides'][0]['buttons'][0]['extra'] = 'x'; $cases[] = $c;
 		$c = $valid; unset( $c['slides'][0]['text'] ); $cases[] = $c;
+		$c = $valid; unset( $c['slides'][0]['heading'] ); $cases[] = $c;
 		$c = $valid; $c['slides'][0]['site_id'] = 4; $cases[] = $c;
 		$c = $valid; $c['version'] = 99; $cases[] = $c;
 		$c = $valid; $c['slides'] = [ 2 => $c['slides'][0] ]; $cases[] = $c;
@@ -225,6 +234,18 @@ final class HomepageSliderTest {
 		$this->same( 2, substr_count( $html, 'hidden inert aria-hidden="true"' ), 'inactive slides excluded before JavaScript' );
 		$this->export( 'multiple', $html );
 		$this->export( 'admin', $this->screen() );
+		$optional = $many; $optional['slides'][1]['heading'] = '';
+		$optional['slides'][2]['heading'] = ''; $optional['slides'][2]['text'] = ''; $optional['slides'][2]['buttons'] = [];
+		$this->same( true, $this->submit( $optional )['result'], 'mixed headed, supporting-text and image-only slides save' );
+		$html = $this->render_front();
+		$this->same( 1, substr_count( $html, '<h1>' ), 'only the populated slide heading renders an h1' );
+		$this->ok( str_contains( $html, 'aria-label="Go to slide 2"' ) && str_contains( $html, 'aria-label="Go to slide 3"' ), 'heading-free slides use numbered dot labels' );
+		$this->export( 'optional-heading', $html );
+		$image_only = [ 'version' => 1, 'slides' => [ $optional['slides'][2] ] ];
+		$this->same( true, $this->submit( $image_only )['result'], 'single image-only slide saves' );
+		$html = $this->render_front();
+		$this->ok( str_contains( $html, 'data-homepage-slider' ) && ! str_contains( $html, '<h1>' ) && ! str_contains( $html, 'data-prev' ), 'single image-only slide renders without an empty heading or controls' );
+		$this->export( 'image-only', $html );
 		$long = $many; $long['slides'] = array_fill( 0, 6, $valid['slides'][0] );
 		foreach ( $long['slides'] as &$slide ) { $slide['heading'] = str_repeat( 'Long heading ', 6 ); $slide['text'] = str_repeat( 'Supporting text ', 10 ); $slide['buttons'][0]['label'] = str_repeat( 'W', 32 ); } unset( $slide );
 		$this->submit( $long ); $this->export( 'long', $this->render_front() );

@@ -38,7 +38,7 @@ $bingothemev1_slides = is_array( $bingothemev1_slides ) ? $bingothemev1_slides :
 				] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- native escaped image markup.
 				?>
 				<div class="container bc-home-slider__content">
-					<h1><?php echo esc_html( $bingothemev1_slide['heading'] ); ?></h1>
+					<?php if ( '' !== $bingothemev1_slide['heading'] ) : ?><h1><?php echo esc_html( $bingothemev1_slide['heading'] ); ?></h1><?php endif; ?>
 					<?php if ( '' !== $bingothemev1_slide['text'] ) : ?><p class="bc-home-slider__text"><?php echo esc_html( $bingothemev1_slide['text'] ); ?></p><?php endif; ?>
 					<?php if ( $bingothemev1_slide['buttons'] ) : ?>
 						<div class="bc-home-slider__actions">
@@ -57,7 +57,9 @@ $bingothemev1_slides = is_array( $bingothemev1_slides ) ? $bingothemev1_slides :
 			<button type="button" class="bc-home-slider__arrow bc-home-slider__arrow--next" data-next aria-label="<?php esc_attr_e( 'Next slide', Theme::TEXT_DOMAIN ); ?>"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M6 3l6 5-6 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
 			<div class="bc-home-slider__dots" role="group" aria-label="<?php esc_attr_e( 'Choose a slide', Theme::TEXT_DOMAIN ); ?>">
 				<?php foreach ( $bingothemev1_slides as $bingothemev1_i => $bingothemev1_slide ) : ?>
-					<button type="button" data-dot="<?php echo esc_attr( (string) $bingothemev1_i ); ?>" aria-label="<?php echo esc_attr( sprintf( __( 'Go to slide %1$d: %2$s', Theme::TEXT_DOMAIN ), $bingothemev1_i + 1, $bingothemev1_slide['heading'] ) ); ?>" <?php if ( 0 === $bingothemev1_i ) : ?>aria-current="true"<?php endif; ?>></button>
+					<button type="button" data-dot="<?php echo esc_attr( (string) $bingothemev1_i ); ?>" aria-label="<?php echo esc_attr( '' !== $bingothemev1_slide['heading']
+						? sprintf( __( 'Go to slide %1$d: %2$s', Theme::TEXT_DOMAIN ), $bingothemev1_i + 1, $bingothemev1_slide['heading'] )
+						: sprintf( __( 'Go to slide %d', Theme::TEXT_DOMAIN ), $bingothemev1_i + 1 ) ); ?>" <?php if ( 0 === $bingothemev1_i ) : ?>aria-current="true"<?php endif; ?>></button>
 				<?php endforeach; ?>
 			</div>
 		</div>

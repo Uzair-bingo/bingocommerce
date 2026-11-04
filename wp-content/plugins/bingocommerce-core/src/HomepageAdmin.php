@@ -173,7 +173,7 @@ final class HomepageAdmin {
 					<option value="right-low" <?php selected( $slide['image_position'], 'right-low' ); ?>><?php esc_html_e( 'Right / lower (90% / 75%)', 'bingocommerce-core' ); ?></option>
 					<option value="center" <?php selected( $slide['image_position'], 'center' ); ?>><?php esc_html_e( 'Center (50% / 40%)', 'bingocommerce-core' ); ?></option>
 				</select><?php self::field_error( $key . 'image_position', $errors ); ?></p>
-			<?php self::input( $name . '[heading]', $key . 'heading', __( 'Heading (required, 80 characters)', 'bingocommerce-core' ), $slide['heading'], 'text', $errors ); ?>
+			<?php self::input( $name . '[heading]', $key . 'heading', __( 'Heading (optional, 80 characters)', 'bingocommerce-core' ), $slide['heading'], 'text', $errors ); ?>
 			<?php self::input( $name . '[text]', $key . 'text', __( 'Supporting text (optional, 160 characters)', 'bingocommerce-core' ), $slide['text'], 'text', $errors ); ?>
 			<?php for ( $b = 0; $b < 2; ++$b ) : ?>
 				<div class="bc-slide__button">

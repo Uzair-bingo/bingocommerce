@@ -91,9 +91,9 @@ final class HomepageSlider {
 			}
 			foreach ( [ 'heading', 'text' ] as $field ) {
 				$slide[ $field ] = is_string( $row[ $field ] ) ? trim( $row[ $field ] ) : '';
-				if ( ! self::text_valid( $row[ $field ], self::LIMITS[ $field ] ) || ( 'heading' === $field && '' === $slide[ $field ] ) ) {
+				if ( ! self::text_valid( $row[ $field ], self::LIMITS[ $field ] ) ) {
 					$errors[ $prefix . $field ] = 'heading' === $field
-						? __( 'Enter a plain-text heading of up to 80 characters.', 'bingocommerce-core' )
+						? __( 'Use a plain-text heading of up to 80 characters, or leave it blank.', 'bingocommerce-core' )
 						: __( 'Use plain supporting text of up to 160 characters, or leave it blank.', 'bingocommerce-core' );
 				}
 			}
