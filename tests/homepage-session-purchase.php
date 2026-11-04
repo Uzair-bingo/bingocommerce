@@ -42,6 +42,12 @@
  *     and forged foreign-Hall metadata; guest and signed-in customers; cart
  *     state, checkout validation (also with the neutral entry) and Remove/Undo
  *     unchanged; saved order labels byte-identical and in their existing format.
+ *  8. The empty Cart page's "New in store" (WooCommerce's Newest Products block on
+ *     Hall A's Cart block page, real php-cgi requests): a product listed while it
+ *     is ordinary merchandise is left out once it is linked as a Package, even
+ *     though linking keeps WooCommerce's cached block result current; every
+ *     other product keeps its place, including a product ID that is a Package
+ *     only in Hall B.
  *
  * Optional: BC_SESSION_PURCHASE_BROWSER=1 with BC_NODE_EXECUTABLE,
  * BC_PLAYWRIGHT_MODULE, BC_CHROME_EXECUTABLE and BC_SESSION_PURCHASE_ARTIFACTS
@@ -130,6 +136,7 @@ final class HomepageSessionPurchaseTest {
 			$labels = $this->label_fixtures( $a, $b );
 			$this->labels( $a, $b, $labels );
 			$this->browser( $a, $b, $labels );
+			$this->new_in_store( $a, $b );
 		} catch ( Throwable $e ) {
 			++$this->failures;
 			fwrite( STDERR, get_class( $e ) . ': ' . $e->getMessage() . "\n" . $e->getTraceAsString() . "\n" );
@@ -1968,6 +1975,88 @@ final class HomepageSessionPurchaseTest {
 	}
 
 	/* ================================================================== *
+	 * 8. The empty Cart page's "New in store" (real php-cgi requests)
+	 * ================================================================== */
+
+	/**
+	 * Runs last, so no earlier group sees these products. Hall A's cart page is the
+	 * Cart block page WooCommerce's installer creates; Hall B's classic cart has no
+	 * such block. Expected grids follow the block's own query (published, catalog
+	 * visible, newest by date then ID, four products) minus Hall A's Packages,
+	 * read straight from its Catalog table.
+	 */
+	private function new_in_store( array $a, array $b ): void {
+		global $wpdb;
+		$this->group( 'Empty Cart “New in store” (Hall-local Package membership)' );
+		$grid = '//*[contains(concat(" ", normalize-space(@class), " "), " wp-block-woocommerce-product-new ")]//li//*[contains(concat(" ", normalize-space(@class), " "), " wc-block-grid__product-title ")]';
+		$path = (string) wp_parse_url( $a['cart_url'], PHP_URL_PATH );
+		$expected = static function () use ( $wpdb ): array {
+			$packages = array_map( 'intval', $wpdb->get_col( $wpdb->prepare( 'SELECT wc_product_id FROM %i', CatalogMigrations::packages_table() ) ) );
+			$hidden   = [ 'exclude-from-catalog' ];
+			if ( 'yes' === get_option( 'woocommerce_hide_out_of_stock_items' ) ) { $hidden[] = 'outofstock'; }
+			$newest   = get_posts( [ 'post_type' => 'product', 'post_status' => 'publish', 'fields' => 'ids', 'posts_per_page' => -1, 'orderby' => 'date ID', 'order' => 'DESC', 'suppress_filters' => true, 'tax_query' => [ [ 'taxonomy' => 'product_visibility', 'field' => 'slug', 'terms' => $hidden, 'operator' => 'NOT IN' ] ] ] );
+			$listed   = array_slice( array_values( array_diff( array_map( 'intval', $newest ), $packages ) ), 0, 4 );
+			return [ array_map( static fn( int $id ): string => (string) wc_get_product( $id )->get_name(), $listed ), array_map( 'intval', $newest ), $packages ];
+		};
+
+		switch_to_blog( $a['site'] );
+		try {
+			$this->same( 'block', $a['cart_mode'], 'Hall A’s cart page is the Cart block page WooCommerce’s installer creates' );
+			$this->ok( str_contains( (string) get_post_field( 'post_content', $a['cart_page'] ), '<!-- wp:woocommerce/product-new {"columns":4,"rows":1} /-->' ), 'its empty-cart content holds WooCommerce’s four-product Newest Products block (“New in store”)' );
+		} finally {
+			restore_current_blog();
+		}
+
+		// One product ID free in both Halls: the newest merchandise in Hall A, a Package in Hall B.
+		$free = 10 + max( array_map( static fn( array $hall ): int => (int) $wpdb->get_var( $wpdb->prepare( 'SELECT MAX(ID) FROM %i', $wpdb->get_blog_prefix( $hall['site'] ) . 'posts' ) ), [ $a, $b ] ) );
+		foreach ( [ $a, $b ] as $hall ) {
+			switch_to_blog( $hall['site'] );
+			wp_set_current_user( $this->admin );
+			try {
+				$this->product_with_id( $free, 'a' === $hall['label'] ? 'Hall A newest merchandise' : 'Hall B colliding Package', $hall['category'] );
+				if ( 'b' === $hall['label'] && is_wp_error( ( new PackageService( $this->audit ) )->create( $free, [ [ 'bingo_play_product_id' => $hall['plays']['paper_base'], 'quantity' => 1 ] ] ) ) ) { throw new RuntimeException( 'Colliding Package fixture failed.' ); }
+			} finally {
+				wp_set_current_user( 0 );
+				restore_current_blog();
+			}
+		}
+
+		// Star Hall's sequence: the newest product is listed while ordinary, then linked as a Package.
+		switch_to_blog( $a['site'] );
+		wp_set_current_user( $this->admin );
+		try {
+			$newest = $this->product( 'Newest Night Pack', [ 'price' => '9.00' ] );
+			[ $before_expected ] = $expected();
+		} finally {
+			wp_set_current_user( 0 );
+			restore_current_blog();
+		}
+		[ $status, $before ] = $this->shop_titles( $a, $path, '', $grid );
+		$this->same( [ 200, $before_expected ], [ $status, $before ], 'before the link: the block lists the four newest products, led by the new product while it is ordinary merchandise' );
+		$this->same( [ 'Newest Night Pack', 'Hall A newest merchandise' ], array_slice( $before, 0, 2 ), 'the two newest products lead the grid' );
+
+		switch_to_blog( $a['site'] );
+		wp_set_current_user( $this->admin );
+		try {
+			$version = static fn(): ?string => $wpdb->get_var( $wpdb->prepare( 'SELECT option_value FROM %i WHERE option_name = %s', $wpdb->options, '_transient_product_query-transient-version' ) );
+			$cached  = $version();
+			if ( is_wp_error( ( new PackageService( $this->audit ) )->create( $newest, [ [ 'bingo_play_product_id' => $a['plays']['paper_base'], 'quantity' => 1 ] ] ) ) ) { throw new RuntimeException( 'Package link fixture failed.' ); }
+			$this->ok( null !== $cached && $cached === $version(), 'linking it as a Package saves no product, so WooCommerce’s cached block result stays current' );
+			[ $after_expected, $by_date, $packages ] = $expected();
+			$this->ok( $newest === $by_date[0] && in_array( $newest, $packages, true ), 'the Hall’s newest published product is now a Catalog Package' );
+			$this->ok( ! in_array( $free, $packages, true ), "product {$free} is not a Package in Hall A" );
+		} finally {
+			wp_set_current_user( 0 );
+			restore_current_blog();
+		}
+		[ $status, $after ] = $this->shop_titles( $a, $path, '', $grid );
+		$this->same( [ 200, $after_expected ], [ $status, $after ], 'after the link: the block leaves out the Package; every other product keeps its place' );
+		$this->ok( ! in_array( 'Newest Night Pack', $after, true ), 'the newly linked Package is not listed' );
+		$this->ok( in_array( 'Hall A newest merchandise', $after, true ), "Hall A’s merchandise {$free} stays listed although that ID is a Package in Hall B" );
+		$this->notes[] = 'Hall A “New in store” after the Package link: ' . implode( ' | ', $after );
+	}
+
+	/* ================================================================== *
 	 * Helpers
 	 * ================================================================== */
 
@@ -2124,14 +2213,14 @@ final class HomepageSessionPurchaseTest {
 		return $states;
 	}
 
-	/** @return array{0:int,1:array<int,string>,2:string} One real php-cgi GET of a Shop listing: status, listed product titles and body. */
-	private function shop_titles( array $hall, string $path, string $query ): array {
+	/** @return array{0:int,1:array<int,string>,2:string} One real php-cgi GET of a Shop listing (or another product list): status, listed product titles and body. */
+	private function shop_titles( array $hall, string $path, string $query, string $items = '//ul[contains(concat(" ", normalize-space(@class), " "), " products ")]/li//*[contains(concat(" ", normalize-space(@class), " "), " woocommerce-loop-product__title ")]' ): array {
 		[ $status, $body ] = $this->cgi( $hall, $path, $query );
 		$dom      = new DOMDocument();
 		$internal = libxml_use_internal_errors( true );
 		try { $dom->loadHTML( '<?xml encoding="UTF-8">' . $body, LIBXML_NONET ); }
 		finally { libxml_clear_errors(); libxml_use_internal_errors( $internal ); }
-		$titles = array_map( static fn( DOMElement $h ): string => trim( $h->textContent ), iterator_to_array( ( new DOMXPath( $dom ) )->query( '//ul[contains(concat(" ", normalize-space(@class), " "), " products ")]/li//*[contains(concat(" ", normalize-space(@class), " "), " woocommerce-loop-product__title ")]' ) ) );
+		$titles = array_map( static fn( DOMElement $h ): string => trim( $h->textContent ), iterator_to_array( ( new DOMXPath( $dom ) )->query( $items ) ) );
 		return [ $status, $titles, $body ];
 	}
 

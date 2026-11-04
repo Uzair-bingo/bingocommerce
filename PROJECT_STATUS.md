@@ -7112,3 +7112,31 @@ Portal request was performed.
   fixtures were cleaned up. PHP/JavaScript syntax and `git diff --check` passed.
 - These fixes are local only. No database migration, server deployment, commit
   or push was performed.
+
+### 2026-11-04 — Empty Cart "New in store" leaves out Bingo Packages
+
+- Observed in Star Bingo Hall: a new Package was listed on the empty Cart page's
+  "New in store", WooCommerce's Newest Products block. That block runs its own
+  product query, so the Shop's Catalog-membership exclusion never applied. Its
+  result is also cached, and linking a product as a Package saves no product,
+  so a grid cached while the product was ordinary stays current.
+- `ShopListing` now wraps only that block's render and leaves out the current
+  Hall's Catalog Packages, read from its own `bingo_packages` table, while the
+  block's query is parsed; the cached result therefore varies with them. Play
+  Products are not left out there (user decision for this fix), so a Play
+  Product can still appear among the newest products. Ordinary merchandise
+  keeps its order. If the Catalog cannot be read, the block is left as
+  WooCommerce builds it. The Shop exclusion, the Session → Package purchase
+  step, CustomerCart's direct-purchase guard and cart/checkout validation are
+  unchanged. No WooCommerce file was edited.
+- Verification on PHP **8.4.24** / WooCommerce **11.1.2**, guarded
+  `bingocommerce_state_recon` fixture: the new real-request group in
+  `tests/homepage-session-purchase.php` failed **2** assertions before the fix
+  (the linked Package still led the grid) and the suite passed **577/577**
+  after it, including a product ID that is a Package only in the other Hall.
+  Customer cart **140/140**, homepage Session calendar **357/357**, storefront
+  **106/106** and starter-import scale **62/62** also passed. Star Bingo Hall's
+  local empty Cart page now lists Dab O Ink, 1on Bingo Paper, Paper Maritni
+  product and Paper Bingo Regular (no Package 3).
+- The 2026-10-02 decision-log note that product blocks are unchanged has not
+  been amended. Local only; no commit, push or deployment.

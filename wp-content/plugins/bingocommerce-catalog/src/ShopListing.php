@@ -32,14 +32,51 @@ final class ShopListing {
 	public static function register(): void {
 		// Late, after other changes to WooCommerce's product query.
 		add_action( 'woocommerce_product_query', [ self::class, 'exclude' ], 100 );
+		add_filter( 'register_block_type_args', [ self::class, 'newest_products_block' ], 10, 2 );
 	}
 
 	/** @param mixed $query WooCommerce's main product query. */
 	public static function exclude( $query ): void {
-		if ( ! $query instanceof \WP_Query ) {
-			return;
+		if ( $query instanceof \WP_Query ) {
+			self::leave_out( $query, self::bingo_product_ids() );
 		}
-		$ids = self::bingo_product_ids();
+	}
+
+	/**
+	 * WooCommerce's Newest Products block ("New in store" on the empty Cart page)
+	 * leaves out the current Hall's Packages; Play Products stay as WooCommerce
+	 * lists them there. The block runs its own query, not the main product query,
+	 * and caches the results under a hash of that query's variables, so the
+	 * exclusion is set while the query is parsed, before the hash is taken.
+	 *
+	 * @param mixed $args Block type arguments.
+	 * @param mixed $name Block type name.
+	 * @return mixed
+	 */
+	public static function newest_products_block( $args, $name ) {
+		if ( 'woocommerce/product-new' !== $name || ! is_array( $args ) || ! is_callable( $args['render_callback'] ?? null ) ) {
+			return $args;
+		}
+		$render                  = $args['render_callback'];
+		$args['render_callback'] = static function ( ...$params ) use ( $render ) {
+			$ids   = self::bingo_product_ids( play_products: false );
+			$leave = static function ( $query ) use ( $ids ): void {
+				if ( $query instanceof \WP_Query && 'product' === $query->get( 'post_type' ) ) {
+					self::leave_out( $query, $ids );
+				}
+			};
+			add_action( 'parse_query', $leave );
+			try {
+				return $render( ...$params );
+			} finally {
+				remove_action( 'parse_query', $leave );
+			}
+		};
+		return $args;
+	}
+
+	/** @param array<int,int> $ids */
+	private static function leave_out( \WP_Query $query, array $ids ): void {
 		if ( [] === $ids ) {
 			return;
 		}
@@ -56,18 +93,21 @@ final class ShopListing {
 	}
 
 	/**
-	 * The current Hall's Package and Bingo Play Product WooCommerce product IDs,
-	 * from its own per-site tables; an empty list when they cannot be read.
+	 * The current Hall's Package and (unless $play_products is false) Bingo Play
+	 * Product WooCommerce product IDs, from its own per-site tables; an empty list
+	 * when they cannot be read.
 	 *
 	 * @return array<int,int>
 	 */
-	public static function bingo_product_ids(): array {
+	public static function bingo_product_ids( bool $play_products = true ): array {
 		if ( ! class_exists( HallContext::class ) || ! HallContext::is_hall() || ! Migrations::is_current() ) {
 			return [];
 		}
 		global $wpdb;
 		$ids = $wpdb->get_col(
-			$wpdb->prepare( 'SELECT wc_product_id FROM %i UNION SELECT wc_product_id FROM %i', Migrations::packages_table(), Migrations::play_products_table() )
+			$play_products
+				? $wpdb->prepare( 'SELECT wc_product_id FROM %i UNION SELECT wc_product_id FROM %i', Migrations::packages_table(), Migrations::play_products_table() )
+				: $wpdb->prepare( 'SELECT wc_product_id FROM %i', Migrations::packages_table() )
 		);
 		if ( ! is_array( $ids ) || '' !== (string) $wpdb->last_error ) {
 			return [];
